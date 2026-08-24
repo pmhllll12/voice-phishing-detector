@@ -1,0 +1,6 @@
+# apps/mcp-server 최소 의존성
+# TODO: 버전 핀 고정
+mcp[cli]
+httpx
+fastapi        # rest_server.py: docker-compose 네트워크에서 apps/api가 호출하는 REST 어댑터
+uvicorn[standard]

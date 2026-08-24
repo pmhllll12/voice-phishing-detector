@@ -1,0 +1,17 @@
+# Grafana dashboard 자동 프로비저닝 뼈대
+# gpu-fleet-ops의 dashboards/ 폴더 패턴을 재사용할 예정.
+#
+# TODO: 이 프로젝트의 grafana/dashboards/*.json 파일들을 만들고 아래 path에 배치
+#       (참고할 패널: vps_calls_analyzed_total, vps_risk_score_distribution,
+#        vps_deepvoice_detected_total, vps_analysis_duration_seconds(N-05 SLA),
+#        vps_reports_submitted_total)
+
+apiVersion: 1
+
+providers:
+  - name: "voice-phishing-detector"
+    type: file
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      # TODO: 실제 대시보드 JSON 파일 경로로 조정 (gpu-fleet-ops 대시보드 export 참고)

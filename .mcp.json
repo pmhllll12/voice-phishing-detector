@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "voice-phishing-tools": {
+      "command": "/home/hi/projects/voice-phishing-detector/apps/mcp-server/.venv/bin/python",
+      "args": ["/home/hi/projects/voice-phishing-detector/apps/mcp-server/src/server.py"]
+    }
+  }
+}

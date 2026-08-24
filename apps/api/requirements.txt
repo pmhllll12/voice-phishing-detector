@@ -1,0 +1,12 @@
+# apps/api 최소 의존성
+# TODO: 버전 핀 고정 (pip freeze 후 반영)
+fastapi
+uvicorn[standard]
+prometheus-client
+pydantic
+httpx
+python-multipart  # F-03: /api/v1/calls/deepvoice-check 오디오 업로드(UploadFile)에 필요
+numpy  # F-03: 음향 특징(피치/스펙트럼) 계산 (infrastructure/adapters/deepvoice_adapter.py)
+
+# TODO: DB 연동 시 추가 (예: sqlalchemy, psycopg2-binary 또는 asyncpg)
+# TODO: 개인정보 마스킹(N-03) 구현 시 필요한 라이브러리 검토

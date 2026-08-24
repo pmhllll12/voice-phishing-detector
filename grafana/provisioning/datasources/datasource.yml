@@ -1,0 +1,14 @@
+# Grafana datasource 자동 프로비저닝 뼈대
+# gpu-fleet-ops에서 검증한 패턴과 동일한 구조. Prometheus를 기본 datasource로 등록.
+#
+# TODO: uid, editable 여부 등 세부 옵션 확정
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    # TODO: jsonData (예: timeInterval) 필요 여부 검토
