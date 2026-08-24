@@ -6,9 +6,9 @@ AI 데이터센터/AI 인프라 엔지니어 직무 취업을 위한 개인 포�
 가상 발주처(금융감독원 산하 금융사기대응센터)의 RFP를 기반으로, 제안서 → 요구사항정의서/설계서 →
 구현 → 시험(검수)계획서로 이어지는 공공/금융 SI 엔드투엔드 시뮬레이션을 1인이 수행합니다.
 
-> **현재 상태**: F-01/F-02/F-03/F-04/F-05/F-06 구현 및 로컬 검증 완료. F-07(신고연동)과
-> 인프라(docker-compose 실제 기동, EC2 배포)는 아직 스캐폴딩 단계입니다. 자세한 건
-> 아래 "진행 현황" 참고.
+> **현재 상태**: F-01~F-07 기능 요구사항 구현 및 로컬 검증 완료. 문서(요구사항정의서/
+> 설계서/시험계획서)와 인프라(docker-compose 실제 기동, EC2 배포)는 아직 스캐폴딩
+> 단계입니다. 자세한 건 아래 "진행 현황" 참고.
 
 ## 문서
 
@@ -163,6 +163,6 @@ npm run dev
 - [x] F-05 판정 근거 자연어 설명 (`apps/mcp-server`의 `ExplanationService`, F-01/F-02 결과를 근거로 템플릿 기반 문장 생성 — 아직 F-04와는 미결합)
 - [x] F-03 딥보이스 판별 (`apps/api`, 음향 특징 휴리스틱 v1 — 피치 안정성/스펙트럼 평탄도/묵음 규칙성. **정확도 미검증, 실제 데이터로 임계값 보정 필요** — 상세: `infrastructure/adapters/deepvoice_adapter.py` 상단 주석)
 - [x] F-06 관제 대시보드 (`apps/frontend`, 탐지 현황 테이블 + 위험도 분포 + 카테고리별 통계 + 통화 분석 폼. `apps/mcp-server/rest_server.py`를 새로 추가해 api가 판정 로직을 HTTP로 호출하도록 연결, api에 인메모리 감사증적 저장소 + 통계 집계 엔드포인트 추가)
-- [ ] F-07 신고 연동 (`apps/mcp-server`의 `submit_report` 툴, 현재 stub)
+- [x] F-07 신고 연동 (`apps/mcp-server`의 `submit_report` 툴 — mock. risk_level이 high면 auto, 그 외엔 manual 채널로 분류해 인메모리에 기록. **실제 112/경찰청 API 호출 없음** — RFP 데이터 제약, `ReportSubmissionService` 상단 주석 참고. 알림 발송은 아직 미구현)
 - [ ] `docs/requirements.md`, `docs/design.md`, `docs/test-plan.md` 작성
 - [ ] 인프라(`docker-compose.yaml`, `prometheus/prometheus.yml`, `infra/`)는 직접 손으로 채워나가기

@@ -1,6 +1,7 @@
 # domain 계층: 외부 의존성 없는 순수 모델. mcp 패키지도 import하지 않는다.
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 
 
@@ -98,3 +99,19 @@ class RiskExplanation:
     summary: str
     reasons: list[str] = field(default_factory=list)
     narrative: str = ""
+
+
+@dataclass
+class ReportRecord:
+    """F-07: 신고 접수 기록 (mock).
+
+    RFP 데이터 제약상 실제 112/경찰청 신고 API는 호출하지 않는다 — 이 레코드는
+    "신고 접수 프로세스가 개시됐다"는 사실 자체를 감사증적으로 남기는 데 목적이 있다.
+    """
+
+    report_id: str
+    case_summary: str
+    risk_level: RiskLevel
+    channel: str  # "auto" | "manual" — TODO: 채널이 늘어나면 Enum으로 승격 검토
+    status: str  # 지금은 항상 "submitted" (mock이라 상태 전이가 없음)
+    submitted_at: datetime

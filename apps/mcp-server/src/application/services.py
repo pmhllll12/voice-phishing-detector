@@ -1,10 +1,14 @@
-# application 계층: F-01/F-02 유스케이스.
+# application 계층: F-01/F-02/F-05/F-07 유스케이스.
 # domain의 규칙만 사용하고 mcp 패키지 등 외부 프레임워크는 모른다 — 그래야 이
 # 서비스만 따로 단위 테스트할 수 있다 (tests/ 참고).
+
+import uuid
+from datetime import datetime, timezone
 
 from domain.entities import (
     DetectedPattern,
     PatternDetectionResult,
+    ReportRecord,
     RiskAssessment,
     RiskExplanation,
     RiskLevel,
@@ -13,6 +17,7 @@ from domain.entities import (
     RISK_LEVEL_THRESHOLDS,
 )
 from domain.pattern_rules import CATEGORY_WEIGHTS, PATTERN_RULES
+from domain.ports import ReportRepositoryPort
 
 
 class PatternDetectionService:
@@ -113,3 +118,35 @@ class ExplanationService:
         if remaining > 0:
             keyword_text += f" 외 {remaining}건"
         return f"[{pattern.category_label}] 관련 표현이 감지되었습니다 (예: {keyword_text}) — 가중치 {weight}점"
+
+
+class ReportSubmissionService:
+    """F-07: 고위험 판정 시 신고 접수 프로세스를 개시한다 (mock).
+
+    RFP 데이터 제약: 가상 프로젝트이므로 실제 112/경찰청 신고 API는 호출하지 않는다.
+    "신고 접수 프로세스가 개시됐다"는 사실을 감사증적(현재는 인메모리)에 남기고
+    report_id를 발급하는 수준까지만 구현한다.
+
+    TODO:
+      1. 실제 배포라면 채널 라우팅 정책을 명확히 정의 (지금은 risk_level == HIGH만
+         "auto", 나머지는 "manual"로 단순 분기)
+      2. 알림 발송(이메일/슬랙 등) 연동 — F-07의 "알림" 부분은 아직 mock에 없음
+      3. N-01 감사증적과 통합 — 지금은 mcp-server 프로세스 메모리에만 별도로 쌓임
+         (apps/api의 CallAnalysisResult 감사로그와 분리되어 있음)
+    """
+
+    def __init__(self, report_repository: ReportRepositoryPort):
+        self._report_repository = report_repository
+
+    def submit(self, case_summary: str, risk_level: RiskLevel) -> ReportRecord:
+        channel = "auto" if risk_level == RiskLevel.HIGH else "manual"
+        record = ReportRecord(
+            report_id=str(uuid.uuid4()),
+            case_summary=case_summary,
+            risk_level=risk_level,
+            channel=channel,
+            status="submitted",
+            submitted_at=datetime.now(timezone.utc),
+        )
+        self._report_repository.add(record)
+        return record

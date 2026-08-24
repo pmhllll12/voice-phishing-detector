@@ -1,7 +1,7 @@
 # apps/mcp-server 진입점 — Claude Code(.mcp.json)가 stdio로 붙는 MCP 툴 서버.
 #
 # 도구 분리(원문 4번): 통화분석(analyze_call_pattern) / 사기패턴DB조회(lookup_fraud_pattern_db)
-# / 신고연동(submit_report, 아직 stub) 3개 MCP 툴을 노출한다.
+# / 신고연동(submit_report) 3개 MCP 툴을 노출한다.
 #
 # 여기는 헥사고날 구조의 "infrastructure(MCP 어댑터)" 계층이다. 실제 판정 로직은
 # application/services.py에 있고, 이 파일은 그 로직을 MCP 툴 형태로 감싸기만 한다.
@@ -26,13 +26,21 @@ import httpx
 from mcp.server import MCPServer
 
 from application.dto import serialize_analysis
-from application.services import ExplanationService, PatternDetectionService, RiskScoringService
+from application.services import (
+    ExplanationService,
+    PatternDetectionService,
+    ReportSubmissionService,
+    RiskScoringService,
+)
+from domain.entities import RiskLevel
+from infrastructure.adapters.in_memory_report_repository import InMemoryReportRepository
 
 mcp = MCPServer("voice-phishing-tools")
 
 pattern_detection_service = PatternDetectionService()
 risk_scoring_service = RiskScoringService()
 explanation_service = ExplanationService()
+report_submission_service = ReportSubmissionService(InMemoryReportRepository())
 
 # F-04: rag-worker HTTP 서비스 주소. docker-compose로 묶이면 컨테이너 네트워크 주소
 # (예: http://rag-worker:8200)로 오버라이드하면 되도록 환경변수로 뺐다.
@@ -87,15 +95,31 @@ def lookup_fraud_pattern_db(transcript: str, top_k: int = 3) -> dict:
 
 @mcp.tool()
 def submit_report(case_summary: str, risk_level: str) -> dict:
-    """F-07: 고위험 판정 시 신고 접수 프로세스를 개시한다.
+    """F-07: 고위험 판정 시 신고 접수 프로세스를 개시한다 (mock).
 
-    TODO: 실제 신고 접수 채널 연동은 시뮬레이션 범위 정의 필요
-          (가상 프로젝트이므로 실제 112/경찰청 신고 API 호출은 하지 않음 — mock 처리)
+    risk_level은 "low"/"medium"/"high" 중 하나여야 한다 (analyze_call_pattern의
+    risk_level 출력과 동일한 값 체계). risk_level이 "high"이면 자동 접수(auto),
+    그 외에는 수동 검토(manual) 채널로 분류한다.
+
+    ⚠️ RFP 데이터 제약: 실제 112/경찰청 신고 API는 호출하지 않는다. 이 툴은
+    "신고 접수 프로세스가 개시됐다"는 사실을 기록하고 report_id를 발급하는 mock이다.
     """
+    try:
+        level = RiskLevel(risk_level)
+    except ValueError:
+        return {
+            "report_id": None,
+            "status": "rejected",
+            "error": f"알 수 없는 risk_level '{risk_level}' — low/medium/high 중 하나여야 합니다.",
+        }
+
+    record = report_submission_service.submit(case_summary, level)
     return {
-        "report_id": None,
-        "status": "not_implemented",
-        "note": "TODO: 신고 접수 mock 프로세스 구현 필요",
+        "report_id": record.report_id,
+        "status": record.status,
+        "channel": record.channel,
+        "submitted_at": record.submitted_at.isoformat(),
+        "note": "MOCK: 실제 112/경찰청 신고 API 연동 없음 (RFP 데이터 제약, docs/RFP.md 4장 참고)",
     }
 
 
