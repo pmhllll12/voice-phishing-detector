@@ -1,5 +1,7 @@
 # Voice Phishing Detector (보이스피싱 실시간 탐지 및 대응 시스템)
 
+Repo: https://github.com/pmhllll12/voice-phishing-detector
+
 AI 데이터센터/AI 인프라 엔지니어 직무 취업을 위한 개인 포트폴리오 프로젝트.
 가상 발주처(금융감독원 산하 금융사기대응센터)의 RFP를 기반으로, 제안서 → 요구사항정의서/설계서 →
 구현 → 시험(검수)계획서로 이어지는 공공/금융 SI 엔드투엔드 시뮬레이션을 1인이 수행합니다.
