@@ -62,7 +62,30 @@ scrape_configs:
   - job_name: "vps-rag-worker"
     static_configs:
       - targets: ["rag-worker:8200"]
-    # TODO: 임베딩/검색 지연시간, 캐시 히트율 등 메트릭 정의
+    # rag-worker가 apps/rag-worker/src/infrastructure/metrics.py에서 노출하는 메트릭:
+    #
+    #   vps_rag_embedding_inference_duration_seconds
+    #     - Histogram
+    #     - F-04 쿼리 1건을 임베딩 벡터로 변환하는 데 걸린 시간 (GPU/CPU 추론 성능 관측)
+    #
+    #   vps_rag_embedding_search_requests_total
+    #     - Counter, label: result(success/error)
+    #     - F-04 유사사례 검색 요청 수
+    #
+    #   vps_rag_gpu_memory_allocated_bytes
+    #     - Gauge
+    #     - 이 프로세스가 점유 중인 GPU 메모리 (CPU 폴백 중이면 0)
+    #
+    #   vps_rag_model_load_duration_seconds
+    #     - Gauge
+    #     - 서버 시작 시 임베딩 모델 로딩에 걸린 시간 (1회성)
+    #
+    #   vps_rag_embedding_model_info
+    #     - Info, label: model_name, device
+    #     - 현재 떠 있는 모델/디바이스 구성
+    #
+    # TODO: 캐시 히트율 — 지금은 요청마다 쿼리를 새로 인코딩하므로 캐시 개념이 없음.
+    #       동일 쿼리 반복이 잦아지면 LRU 캐시 도입 검토.
 
   # ---------------------------------------------------------------------------
   # prometheus 자체 모니터링 (기본 제공)

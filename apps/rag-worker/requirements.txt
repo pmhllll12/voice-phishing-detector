@@ -4,10 +4,27 @@ uvicorn[standard]
 prometheus-client
 httpx
 
-# F-04 v1은 외부 임베딩 없이 문자 bigram TF-IDF(순수 Python, stdlib만 사용)로 구현됨
-# (infrastructure/adapters/tfidf_similarity_adapter.py 참고) — 추가 의존성 없음.
+# F-04 v2: sentence-transformers 로컬 임베딩 모델(jhgan/ko-sroberta-multitask) +
+# 코사인 유사도로 교체 (infrastructure/adapters/embedding_similarity_adapter.py 참고).
 #
-# TODO: 검색 품질이 부족하면 아래로 교체 검토
-#   - 로컬 오픈소스: sentence-transformers
-#   - 외부 API: anthropic / openai 등 embedding endpoint 사용 클라이언트
-# TODO: pgvector 연동 (asyncpg 또는 sqlalchemy + pgvector 확장)
+# torch는 이 서버(WSL2 + RTX 3050, 드라이버가 CUDA 12.6까지 지원)에 맞춰 별도
+# 인덱스에서 설치해야 한다. requirements.txt만 보고 `pip install -r requirements.txt`를
+# 실행하면 PyPI 기본 인덱스의 torch(CUDA 13 계열 의존성)가 깔려서 이 드라이버에서는
+# GPU를 인식하지 못한다 (드라이버가 지원하는 것보다 새 CUDA 런타임을 깔게 됨).
+# 반드시 아래 두 줄로 나눠서 설치할 것:
+#
+#   pip install torch --index-url https://download.pytorch.org/whl/cu126
+#   pip install -r requirements.txt
+#
+# 다른 GPU/드라이버 환경으로 옮기면 `nvidia-smi`로 지원 CUDA 버전을 확인하고
+# https://pytorch.org/get-started/locally/ 에서 맞는 인덱스로 바꿔야 한다.
+# GPU가 없는 환경(예: CI)이면 위 torch 설치 줄 없이 `pip install -r requirements.txt`만
+# 해도 CPU용 torch가 깔리고, 코드가 자동으로 CPU로 폴백한다.
+sentence-transformers
+numpy
+
+# 이전 TF-IDF v1(infrastructure/adapters/tfidf_similarity_adapter.py)은 디버그 비교
+# 모드(RAG_DEBUG_COMPARE=1)에서 계속 쓰이므로 별도 의존성 추가 없이 유지.
+# TODO: pgvector 연동 (asyncpg 또는 sqlalchemy + pgvector 확장) — 임베딩을 pgvector에
+#       저장하면 지금처럼 매 요청마다 전체 코퍼스와 코사인 유사도를 계산하지 않고
+#       인덱스 기반 근사 검색(ANN)으로 바꿀 수 있음 (코퍼스가 지금처럼 10건이면 불필요).
