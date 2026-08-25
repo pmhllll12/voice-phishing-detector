@@ -20,26 +20,38 @@
 # 보고 import한다 (apps/api, apps/rag-worker는 uvicorn으로 실행되어 cwd가
 # apps/xxx 이므로 "src.xxx" 방식을 그대로 쓸 수 있어 서로 다르다).
 
+import logging
 import os
 
 import httpx
 from mcp.server import MCPServer
 
 from application.dto import serialize_analysis
-from application.services import (
-    ExplanationService,
-    PatternDetectionService,
-    ReportSubmissionService,
-    RiskScoringService,
-)
+from application.services import CallAnalysisService, ReportSubmissionService
 from domain.entities import RiskLevel
+from infrastructure.adapters.debug_compare_adapter import DebugCompareAdapter
 from infrastructure.adapters.in_memory_report_repository import InMemoryReportRepository
+from infrastructure.adapters.ollama_call_analysis_adapter import OllamaCallAnalysisAdapter
+from infrastructure.adapters.rule_based_call_analysis_adapter import RuleBasedCallAnalysisAdapter
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
 mcp = MCPServer("voice-phishing-tools")
 
-pattern_detection_service = PatternDetectionService()
-risk_scoring_service = RiskScoringService()
-explanation_service = ExplanationService()
+# F-01/F-02 v2: 기본은 Ollama(로컬 LLM), 실패 시 규칙 기반(v1)으로 자동 폴백.
+# CALL_ANALYSIS_BACKEND=rule로 강제로 v1만 쓸 수 있고(Ollama가 아예 없는 환경 등),
+# LLM_DEBUG_COMPARE=1이면 v1/v2를 동시에 돌려서 점수 차이를 로그로 비교한다.
+_rule_based_adapter = RuleBasedCallAnalysisAdapter()
+_ollama_adapter = OllamaCallAnalysisAdapter(fallback=_rule_based_adapter)
+
+if os.environ.get("CALL_ANALYSIS_BACKEND", "llm").lower() == "rule":
+    _call_analysis_adapter = _rule_based_adapter
+elif os.environ.get("LLM_DEBUG_COMPARE", "").lower() in ("1", "true", "yes"):
+    _call_analysis_adapter = DebugCompareAdapter(_ollama_adapter, _rule_based_adapter)
+else:
+    _call_analysis_adapter = _ollama_adapter
+
+call_analysis_service = CallAnalysisService(_call_analysis_adapter)
 report_submission_service = ReportSubmissionService(InMemoryReportRepository())
 
 # F-04: rag-worker HTTP 서비스 주소. docker-compose로 묶이면 컨테이너 네트워크 주소
@@ -51,16 +63,15 @@ RAG_WORKER_URL = os.environ.get("RAG_WORKER_URL", "http://localhost:8200")
 def analyze_call_pattern(transcript: str) -> dict:
     """F-01/F-02/F-05: 통화/문자 텍스트에서 보이스피싱 패턴(공포조성/기관사칭/긴급송금유도 등)을
     탐지하고, 탐지된 패턴을 근거로 0~100점 위험도 점수와 저/중/고 등급을 산출한 뒤,
-    "왜 이렇게 판단했는지"를 근거(매칭 키워드 + 가중치)를 인용한 자연어 설명으로 제공한다
+    "왜 이렇게 판단했는지"를 근거를 인용한 자연어 설명으로 제공한다
     (N-04 설명가능성: 블랙박스 판정 금지).
 
-    현재는 키워드 기반 규칙 탐지 + 카테고리별 고정 가중치 합산 + 템플릿 기반 문장 생성으로
-    구현되어 있다 (domain/pattern_rules.py, application/services.py의 ExplanationService 참고).
+    기본은 로컬 Ollama LLM(문맥 이해 기반 판단)이고, 호출 실패 시 키워드 규칙 기반(v1)으로
+    자동 폴백한다 (infrastructure/adapters/ollama_call_analysis_adapter.py,
+    rule_based_call_analysis_adapter.py 참고).
     """
-    detection = pattern_detection_service.detect(transcript)
-    risk = risk_scoring_service.score(detection)
-    explanation = explanation_service.generate(detection, risk)
-    return serialize_analysis(detection, risk, explanation)
+    result = call_analysis_service.execute(transcript)
+    return serialize_analysis(result.detection, result.risk, result.explanation)
 
 
 @mcp.tool()

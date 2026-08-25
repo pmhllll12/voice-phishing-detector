@@ -54,7 +54,32 @@ scrape_configs:
   - job_name: "vps-mcp-server"
     static_configs:
       - targets: ["mcp-server:8100"]
-    # TODO: MCP 툴 호출 횟수/지연시간 메트릭 노출 여부 결정
+    # mcp-server(rest_server.py)가 apps/mcp-server/src/infrastructure/metrics.py에서
+    # 노출하는 메트릭 (F-01/F-02 v2, Ollama 로컬 LLM 기반):
+    #
+    #   vps_mcp_llm_inference_duration_seconds
+    #     - Histogram
+    #     - LLM 호출 1건(콜드 스타트 로딩 포함) 소요 시간
+    #
+    #   vps_mcp_llm_analysis_requests_total
+    #     - Counter, label: result(success/fallback)
+    #     - fallback이 계속 올라가면 Ollama 쪽에 문제가 있다는 신호로 알림에 쓸 수 있음
+    #
+    #   vps_mcp_llm_gpu_memory_bytes
+    #     - Gauge
+    #     - Ollama가 GET /api/ps로 보고하는, 로드된 모델의 GPU 메모리 점유량.
+    #       rag-worker의 vps_rag_gpu_memory_allocated_bytes와 이 값을 더하면
+    #       RTX 3050 한 장을 두 프로세스(임베딩/LLM)가 얼마나 나눠 쓰는지 보임.
+    #
+    #   vps_mcp_llm_model_load_duration_seconds
+    #     - Gauge
+    #     - 콜드 스타트 모델 로딩 시간 (캐시 히트면 0에 가까움)
+    #
+    #   vps_mcp_llm_model_info
+    #     - Info, label: model_name, base_url
+    #
+    # TODO: N-05(응답 5초 이내) SLA와 LLM 콜드 스타트 지연시간이 충돌할 수 있음
+    #       (OLLAMA_KEEP_ALIVE로 모델을 계속 warm하게 유지하는 정책 검토 필요).
 
   # ---------------------------------------------------------------------------
   # rag-worker 서비스

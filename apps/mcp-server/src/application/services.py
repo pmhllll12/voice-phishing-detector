@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime, timezone
 
 from domain.entities import (
+    CallAnalysisResult,
     DetectedPattern,
     PatternDetectionResult,
     ReportRecord,
@@ -17,7 +18,7 @@ from domain.entities import (
     RISK_LEVEL_THRESHOLDS,
 )
 from domain.pattern_rules import CATEGORY_WEIGHTS, PATTERN_RULES
-from domain.ports import ReportRepositoryPort
+from domain.ports import CallAnalysisPort, ReportRepositoryPort
 
 
 class PatternDetectionService:
@@ -118,6 +119,20 @@ class ExplanationService:
         if remaining > 0:
             keyword_text += f" 외 {remaining}건"
         return f"[{pattern.category_label}] 관련 표현이 감지되었습니다 (예: {keyword_text}) — 가중치 {weight}점"
+
+
+class CallAnalysisService:
+    """F-01/F-02/F-05 진입점. CallAnalysisPort 구현체(규칙 기반 v1 또는 LLM 기반 v2,
+    혹은 둘을 비교 로깅하는 래퍼)에 실제 판단을 위임한다 — F-04의
+    SimilarCaseSearchService와 동일하게, 이 서비스 자체는 로직을 모르고 포트만 안다.
+    server.py/rest_server.py는 이 서비스 하나만 호출하면 된다.
+    """
+
+    def __init__(self, port: CallAnalysisPort):
+        self._port = port
+
+    def execute(self, transcript: str) -> CallAnalysisResult:
+        return self._port.analyze(transcript)
 
 
 class ReportSubmissionService:

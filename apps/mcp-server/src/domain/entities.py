@@ -102,6 +102,22 @@ class RiskExplanation:
 
 
 @dataclass
+class CallAnalysisResult:
+    """F-01/F-02/F-05 결과를 하나로 묶은 것. CallAnalysisPort.analyze()의 반환 타입.
+
+    detection/risk/explanation을 따로따로 넘기지 않고 묶어두면, 나중에 CallAnalysisPort
+    구현체가 하나 더 늘어나도(예: 다른 LLM 제공자) application/infrastructure 양쪽에서
+    이 타입 하나만 주고받으면 된다. serialize_analysis()는 이 세 필드를 그대로
+    풀어서 기존 API 응답 형식(JSON 키)에 맞춰 직렬화한다 — 즉 어댑터가 바뀌어도
+    바깥으로 나가는 JSON 모양은 그대로다.
+    """
+
+    detection: PatternDetectionResult
+    risk: RiskAssessment
+    explanation: RiskExplanation
+
+
+@dataclass
 class ReportRecord:
     """F-07: 신고 접수 기록 (mock).
 
