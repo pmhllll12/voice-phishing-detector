@@ -1,0 +1,8 @@
+{
+  "name": "run-voice-phishing-detector-driver",
+  "private": true,
+  "description": "Playwright driver for the run-voice-phishing-detector skill. Not part of the app itself.",
+  "dependencies": {
+    "playwright": "^1.62.1"
+  }
+}
