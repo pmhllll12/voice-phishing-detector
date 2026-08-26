@@ -13,7 +13,7 @@ import os
 import httpx
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
@@ -74,6 +74,47 @@ def _serialize_call_result(result: CallAnalysisResult) -> dict:
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok"}
+
+
+READY_CHECK_TIMEOUT_SECONDS = 2.0
+
+
+def _check_mcp_server_ready() -> dict:
+    """api의 유일한 실제 의존 서비스(mcp-server)만 확인한다. mcp-server의 얕은
+    /health만 호출한다 — mcp-server의 /ready를 부르면 연쇄 호출이 되고, 나중에
+    다른 서비스가 늘어날 때 순환 의존이 생길 여지를 만든다.
+
+    postgres/rag-worker/stt-worker는 이 서비스가 실제로 호출하지 않으므로 여기서
+    "체크"하지 않는다 — 체크해봤자 항상 통과하거나(호출도 안 하니까) 거짓 실패만
+    낼 뿐, 실제 의존관계를 반영하지 못한다.
+    """
+    try:
+        resp = httpx.get(f"{MCP_SERVER_URL}/health", timeout=READY_CHECK_TIMEOUT_SECONDS)
+        resp.raise_for_status()
+        return {"status": "ok", "detail": MCP_SERVER_URL}
+    except httpx.HTTPError as e:
+        return {"status": "error", "detail": f"{type(e).__name__}: {e}"}
+
+
+@app.get("/ready")
+def ready() -> JSONResponse:
+    """/health와 달리 실제 의존 서비스 상태를 확인한다. mcp-server가 응답하지 않으면
+    F-01/F-02/F-05 전체가 동작할 수 없으므로 이 경우에만 503을 반환한다.
+    """
+    checks = {
+        "mcp_server": _check_mcp_server_ready(),
+        # N-01 감사증적을 아직 postgres가 아니라 인메모리로만 쌓고 있다 — 있는 척
+        # 체크를 만들지 않고 미구현 상태임을 명시적으로 알린다.
+        "database": {
+            "status": "not_configured",
+            "detail": "postgres 미연동 (인메모리 저장소 사용 중, N-01 참고)",
+        },
+    }
+    overall_ok = checks["mcp_server"]["status"] == "ok"
+    return JSONResponse(
+        content={"status": "ok" if overall_ok else "error", "checks": checks},
+        status_code=200 if overall_ok else 503,
+    )
 
 
 class AnalyzeCallRequest(BaseModel):

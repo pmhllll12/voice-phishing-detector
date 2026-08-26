@@ -14,7 +14,7 @@ import logging
 import os
 
 from fastapi import FastAPI
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel
 
@@ -23,6 +23,7 @@ from src.infrastructure.adapters.debug_compare_adapter import DebugCompareAdapte
 from src.infrastructure.adapters.embedding_similarity_adapter import EmbeddingSimilarityAdapter
 from src.infrastructure.adapters.tfidf_similarity_adapter import TfidfSimilarityAdapter
 from src.infrastructure.data_loader import load_fraud_cases
+from src.infrastructure.readiness import check_embedding_search_ready
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
@@ -50,6 +51,16 @@ async def health() -> dict:
         "embedding_model": _embedding_adapter.model_name,
         "device": _embedding_adapter.device,
     }
+
+
+@app.get("/ready")
+def ready() -> JSONResponse:
+    check = check_embedding_search_ready(similar_case_search_service, _embedding_adapter.device)
+    status_code = 200 if check["status"] == "ok" else 503
+    return JSONResponse(
+        content={"status": "ok" if check["status"] == "ok" else "error", "checks": {"embedding_search": check}},
+        status_code=status_code,
+    )
 
 
 @app.get("/metrics")

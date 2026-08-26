@@ -11,15 +11,19 @@
 import logging
 import os
 
+import httpx
 from fastapi import FastAPI
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel
 
 from application.dto import serialize_analysis
 from application.services import CallAnalysisService
 from infrastructure.adapters.debug_compare_adapter import DebugCompareAdapter
-from infrastructure.adapters.ollama_call_analysis_adapter import OllamaCallAnalysisAdapter
+from infrastructure.adapters.ollama_call_analysis_adapter import (
+    OllamaCallAnalysisAdapter,
+    _resolve_base_url,
+)
 from infrastructure.adapters.rule_based_call_analysis_adapter import RuleBasedCallAnalysisAdapter
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -44,6 +48,42 @@ call_analysis_service = CallAnalysisService(_call_analysis_adapter)
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok"}
+
+
+READY_CHECK_TIMEOUT_SECONDS = 2.0
+_OLLAMA_BACKEND_ACTIVE = os.environ.get("CALL_ANALYSIS_BACKEND", "llm").lower() != "rule"
+
+
+def _check_ollama_ready() -> dict:
+    """CALL_ANALYSIS_BACKEND=rule이면 이 프로세스는 Ollama를 아예 쓰지 않으므로
+    체크 대상이 아니다(LLM_DEBUG_COMPARE 모드에서는 실제 응답이 여전히 Ollama
+    결과이므로 이 경우엔 체크한다 — 위 _OLLAMA_BACKEND_ACTIVE 조건과 rest_server.py
+    상단의 어댑터 선택 로직이 동일 조건을 쓴다).
+    """
+    if not _OLLAMA_BACKEND_ACTIVE:
+        return {"status": "not_applicable", "detail": "CALL_ANALYSIS_BACKEND=rule (Ollama 미사용)"}
+
+    base_url = _resolve_base_url()
+    try:
+        resp = httpx.get(f"{base_url}/api/version", timeout=READY_CHECK_TIMEOUT_SECONDS)
+        resp.raise_for_status()
+        return {"status": "ok", "detail": base_url}
+    except httpx.HTTPError as e:
+        return {"status": "error", "detail": f"{type(e).__name__}: {e} — 규칙 기반(v1)으로 자동 폴백 중"}
+
+
+@app.get("/ready")
+def ready() -> JSONResponse:
+    """Ollama가 죽어있어도 이 서비스는 규칙 기반(v1)으로 자동 폴백해 계속 판정을
+    내릴 수 있다(ollama_call_analysis_adapter.py 참고) — 그래서 Ollama 다운은
+    503(error)이 아니라 status="degraded"와 함께 200을 반환한다: "여전히 요청을
+    처리할 수 있지만 판정 품질이 v1 수준으로 낮아졌다"는 뜻. 이 서비스가 진짜로
+    503을 반환해야 할 상황(둘 다 실패)은 현재 구조상 없다 — 규칙 기반은 외부
+    의존이 없어 항상 동작한다.
+    """
+    ollama_check = _check_ollama_ready()
+    overall = "ok" if ollama_check["status"] in ("ok", "not_applicable") else "degraded"
+    return JSONResponse(content={"status": overall, "checks": {"ollama": ollama_check}}, status_code=200)
 
 
 @app.get("/metrics")

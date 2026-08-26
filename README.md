@@ -193,6 +193,34 @@ npm run dev
 현재 저장소는 postgres 없이 **api 프로세스 메모리**에만 기록을 쌓습니다(N-01 감사증적의
 아주 단순한 v1) — api를 재시작하면 기록이 초기화됩니다. TODO: postgres로 교체.
 
+## Health Check (`/health` vs `/ready`)
+
+4개 백엔드 서비스(api/mcp-server/rag-worker/stt-worker) 모두 `/health`와 `/ready`를
+둘 다 제공합니다. 역할이 다릅니다:
+
+- **`/health`**: "프로세스가 살아있는가"만 본다. 항상 `{"status": "ok"}` 계열 응답,
+  항상 200. 이 프로세스 안에서 완결되는 정보만 보여준다(모델 로드 시점의
+  device/compute_type 등).
+- **`/ready`**: "지금 실제로 요청을 처리할 수 있는가"를 실제 의존 서비스 호출/자가
+  점검으로 확인한다. 응답 형식은 `{"status": "ok"|"degraded"|"error", "checks": {...}}`.
+
+실제로 배선된 의존관계(`frontend → api → mcp-server → Ollama`)만 확인합니다 — rag-worker는
+아직 이 REST 경로에 연결되어 있지 않고(Claude Code MCP 툴 전용), stt-worker도 아직
+api가 호출하지 않아서, api/mcp-server의 `/ready`가 이 둘을 체크 대상에 넣지 않습니다
+(체크해봤자 실제 의존관계를 반영 못 하는 거짓 정보라서). postgres도 아직 아무 서비스가
+연결하지 않으므로 api의 `/ready`는 `"database": "not_configured"`라고 명시적으로
+알립니다 — 있는 척 200을 주지 않습니다.
+
+| 서비스 | `/ready`가 확인하는 것 | 실패 시 |
+|---|---|---|
+| api | mcp-server의 `/health` (얕은 호출, 순환 방지) | `status="error"`, HTTP 503 |
+| mcp-server | Ollama `/api/version` (`CALL_ANALYSIS_BACKEND=rule`이면 `not_applicable`) | `status="degraded"`, **HTTP 200** — 규칙 기반(v1) 자동 폴백이 있어 서비스 자체는 계속 요청을 처리할 수 있으므로 503이 아니다 |
+| rag-worker | 자기 자신의 검색 서비스로 실제 검색 1건 self-test | `status="error"`, HTTP 503 |
+| stt-worker | 자기 자신의 STT 서비스로 무음 0.5초 오디오 실제 transcribe self-test | `status="error"`, HTTP 503 |
+
+`/health`는 기존 그대로이므로 `run-voice-phishing-detector` 스킬의 기동 확인 폴링,
+프런트엔드 에러 처리 등 기존 동작에 영향이 없습니다.
+
 ## GPU 자원 사용
 
 RTX 3050(8GB VRAM) 한 장에서 임베딩 모델(rag-worker)과 LLM(mcp-server가 호출하는 Ollama)을
@@ -268,5 +296,8 @@ Prometheus/Grafana입니다 — 자세한 내용은 위 "재사용한 인프라 
 - [ ] (진행 중) 모바일 실시간 감지 파이프라인용 STT (`apps/stt-worker`, faster-whisper 기반
       오디오→텍스트 변환. 헥사고날 구조/Prometheus 메트릭(`vps_stt_*`)까지는 완성했으나
       `docker-compose.yaml`/`apps/api` 연동은 아직 — 다음 단계)
+- [x] Health Check 고도화 (`/health`는 그대로 두고 4개 백엔드 서비스 모두에 `/ready` 신규
+      추가 — 실제 의존 서비스(mcp-server→Ollama) 호출/자가 점검 기반, 위 "Health Check"
+      절 참고. 단위 테스트 9건 추가, 실제 서비스 재시작 후 정상/장애 양쪽 경로 curl로 검증)
 <img width="1900" height="1014" alt="Screenshot 2026-08-26 151128_edited" src="https://github.com/user-attachments/assets/5bf57efc-0385-4623-8cec-82461d236ffd" />
 <img width="1910" height="1046" alt="Screenshot 2026-08-26 151151_edited" src="https://github.com/user-attachments/assets/4b36260b-be9d-400e-bbbb-15154a82a299" />
