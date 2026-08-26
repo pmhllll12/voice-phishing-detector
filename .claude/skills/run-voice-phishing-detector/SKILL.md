@@ -59,9 +59,12 @@ curl -sf http://localhost:8300/health || {
   cd -
 }
 
-# 3) mcp-server REST adapter (8100)
-cd apps/mcp-server && nohup .venv/bin/uvicorn rest_server:app --app-dir src --port 8100 > /tmp/mcp-server.log 2>&1 & disown
-cd -
+# 3) mcp-server REST adapter (8100) — usually already running as a systemd user service here
+systemctl --user start mcp-server 2>/dev/null || true
+curl -sf http://localhost:8100/health || {
+  cd apps/mcp-server && nohup .venv/bin/uvicorn rest_server:app --app-dir src --port 8100 > /tmp/mcp-server.log 2>&1 & disown
+  cd -
+}
 
 # 4) api (8000) — defaults to MCP_SERVER_URL=http://localhost:8100, no env needed
 cd apps/api && nohup .venv/bin/uvicorn src.main:app --port 8000 > /tmp/api.log 2>&1 & disown
@@ -100,11 +103,11 @@ declaring success, not just that the process exited 0.
 Stop everything (`fuser`, not `lsof -ti` — see Gotchas):
 
 ```bash
-for p in 8100 8000; do fuser -k $p/tcp 2>/dev/null; done
+fuser -k 8000/tcp 2>/dev/null
 FRONTEND_PORT=$(grep -oP 'localhost:\K[0-9]+' /tmp/frontend.log | tail -1)
 fuser -k "${FRONTEND_PORT:-3000}/tcp" 2>/dev/null
-# rag-worker and stt-worker are systemd — leave them running, or:
-# systemctl --user stop rag-worker stt-worker
+# rag-worker, stt-worker, and mcp-server are systemd — leave them running, or:
+# systemctl --user stop rag-worker stt-worker mcp-server
 ```
 
 ## Run (human path)
@@ -155,7 +158,7 @@ No test suite exists yet in any of the 5 apps as of this writing.
 
 - **`curl http://localhost:8000/health` connection refused after starting api**: check
   `/tmp/api.log` — it fails fast with a clear message if mcp-server (8100) isn't up yet;
-  start mcp-server first and restart api.
+  `systemctl --user status mcp-server` (or start it) then restart api.
 - **Driver prints `WARNING: 총 분석 건수가 늘지 않았습니다`**: the POST to
   `/api/v1/calls/analyze` didn't complete in 25s or errored. Check `/tmp/api.log` and
   `/tmp/mcp-server.log` for the actual request — most likely Ollama isn't running
