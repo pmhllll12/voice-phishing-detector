@@ -1,3 +1,5 @@
+<img width="1910" height="1046" alt="Screenshot 2026-08-26 151151_edited" src="https://github.com/user-attachments/assets/dc6040c0-1a7d-47a2-8e51-df4b95ec105e" />
+<img width="1900" height="1014" alt="Screenshot 2026-08-26 151128_edited" src="https://github.com/user-attachments/assets/15731636-a269-467a-9478-106b258dd16e" />
 # Voice Phishing Detector (보이스피싱 실시간 탐지 및 대응 시스템)
 
 Repo: https://github.com/pmhllll12/voice-phishing-detector
@@ -151,6 +153,7 @@ npm run dev
 아주 단순한 v1) — api를 재시작하면 기록이 초기화됩니다. TODO: postgres로 교체.
 
 ## 데이터
+<img width="1900" height="1014" alt="Screenshot 2026-08-26 151128_edited" src="https://github.com/user-attachments/assets/606a74fc-6a51-44db-8f45-c57688b047e2" />
 
 실제 보이스피싱 통화 녹음 데이터는 사용하지 않습니다. 공개된 뉴스/경찰청 공개자료/시나리오
 기반의 합성 데이터셋을 직접 제작해서 사용합니다. 자세한 제약사항은 [docs/RFP.md](docs/RFP.md) 4장 참고.
@@ -166,3 +169,7 @@ npm run dev
 - [x] F-07 신고 연동 (`apps/mcp-server`의 `submit_report` 툴 — mock. risk_level이 high면 auto, 그 외엔 manual 채널로 분류해 인메모리에 기록. **실제 112/경찰청 API 호출 없음** — RFP 데이터 제약, `ReportSubmissionService` 상단 주석 참고. 알림 발송은 아직 미구현)
 - [ ] `docs/requirements.md`, `docs/design.md`, `docs/test-plan.md` 작성
 - [ ] 인프라(`docker-compose.yaml`, `prometheus/prometheus.yml`, `infra/`)는 직접 손으로 채워나가기
+<img width="1900" height="1014" alt="Screenshot 2026-08-26 151128_edited" src="https://github.com/user-attachments/assets/5bf57efc-0385-4623-8cec-82461d236ffd" />
+<img width="1910" height="1046" alt="Screenshot 2026-08-26 151151_edited" src="https://github.com/user-attachments/assets/4b36260b-be9d-400e-bbbb-15154a82a299" />
+
+
