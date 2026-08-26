@@ -48,12 +48,16 @@ curl -sf http://localhost:8200/health || {
   cd apps/rag-worker && nohup .venv/bin/uvicorn src.main:app --port 8200 > /tmp/rag-worker.log 2>&1 & disown
 }
 
-# 2) stt-worker (8300) — NOT a systemd service, always start manually.
-#    Needs cuBLAS/cuDNN on LD_LIBRARY_PATH or it silently runs on CPU (see Gotchas).
-cd apps/stt-worker
-export LD_LIBRARY_PATH="$(pwd)/.venv/lib/python3.14/site-packages/nvidia/cublas/lib:$(pwd)/.venv/lib/python3.14/site-packages/nvidia/cudnn/lib"
-nohup .venv/bin/uvicorn src.main:app --port 8300 > /tmp/stt-worker.log 2>&1 & disown
-cd -
+# 2) stt-worker (8300) — usually already running as a systemd user service here
+#    (unit bakes in LD_LIBRARY_PATH for cuBLAS/cuDNN — see Gotchas). Manual fallback
+#    below only if the unit isn't installed on this machine.
+systemctl --user start stt-worker 2>/dev/null || true
+curl -sf http://localhost:8300/health || {
+  cd apps/stt-worker
+  export LD_LIBRARY_PATH="$(pwd)/.venv/lib/python3.14/site-packages/nvidia/cublas/lib:$(pwd)/.venv/lib/python3.14/site-packages/nvidia/cudnn/lib"
+  nohup .venv/bin/uvicorn src.main:app --port 8300 > /tmp/stt-worker.log 2>&1 & disown
+  cd -
+}
 
 # 3) mcp-server REST adapter (8100)
 cd apps/mcp-server && nohup .venv/bin/uvicorn rest_server:app --app-dir src --port 8100 > /tmp/mcp-server.log 2>&1 & disown
@@ -96,10 +100,11 @@ declaring success, not just that the process exited 0.
 Stop everything (`fuser`, not `lsof -ti` — see Gotchas):
 
 ```bash
-for p in 8300 8100 8000; do fuser -k $p/tcp 2>/dev/null; done
+for p in 8100 8000; do fuser -k $p/tcp 2>/dev/null; done
 FRONTEND_PORT=$(grep -oP 'localhost:\K[0-9]+' /tmp/frontend.log | tail -1)
 fuser -k "${FRONTEND_PORT:-3000}/tcp" 2>/dev/null
-# rag-worker is systemd — leave it running, or: systemctl --user stop rag-worker
+# rag-worker and stt-worker are systemd — leave them running, or:
+# systemctl --user stop rag-worker stt-worker
 ```
 
 ## Run (human path)
@@ -116,12 +121,13 @@ No test suite exists yet in any of the 5 apps as of this writing.
 ## Gotchas
 
 - **stt-worker reports `device: cuda` even when it can't actually use the GPU** unless
-  `LD_LIBRARY_PATH` above is set — the pip wheel for faster-whisper/ctranslate2 doesn't
-  bundle cuBLAS, and this container has no system-wide `libcublas.so.12`. As of this
-  writing the adapter (`apps/stt-worker/src/infrastructure/adapters/faster_whisper_adapter.py`)
+  `LD_LIBRARY_PATH` is set — the pip wheel for faster-whisper/ctranslate2 doesn't bundle
+  cuBLAS, and this container has no system-wide `libcublas.so.12`. The systemd unit
+  (`~/.config/systemd/user/stt-worker.service`) bakes this in via `Environment=`, so the
+  systemd path above just works — this only bites the manual-fallback `uvicorn` command.
+  Either way, the adapter (`apps/stt-worker/src/infrastructure/adapters/faster_whisper_adapter.py`)
   warms up with a real inference call at startup and falls back to CPU if that fails, so
-  `curl http://localhost:8300/health` is honest either way — but you only get GPU if the
-  path above is set before launch.
+  `curl http://localhost:8300/health` is honest about which one it's actually using.
 - **Frontend port is not reliably 3000 in this container.** A `gpu-fleet-ops-grafana`
   Docker container (unrelated project) already binds `0.0.0.0:3000`, so Next.js silently
   bumps to 3001. Always read the actual port from `/tmp/frontend.log`'s `Local:` line —
@@ -154,7 +160,9 @@ No test suite exists yet in any of the 5 apps as of this writing.
   `/api/v1/calls/analyze` didn't complete in 25s or errored. Check `/tmp/api.log` and
   `/tmp/mcp-server.log` for the actual request — most likely Ollama isn't running
   (`curl http://localhost:11434/api/version`) or is still cold-starting.
-- **stt-worker `/health` shows `"device":"cpu"` unexpectedly**: `LD_LIBRARY_PATH` wasn't
-  set before launch, or points at the wrong venv's site-packages. Re-check the export
+- **stt-worker `/health` shows `"device":"cpu"` unexpectedly**: if it's running under
+  systemd, check `systemctl --user show stt-worker -p Environment` for the
+  `LD_LIBRARY_PATH` value; if running via the manual fallback, `LD_LIBRARY_PATH` wasn't
+  set before launch or points at the wrong venv's site-packages — re-check the export
   line matches the venv you're actually launching (`pwd` inside `apps/stt-worker` at
   export time).
