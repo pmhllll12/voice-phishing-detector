@@ -4,10 +4,12 @@ description: Build, run, and drive the voice-phishing-detector full local stack 
 ---
 
 This is a 5-process local system (no docker-compose yet — `docker-compose.yaml` is
-still a skeleton, see README). Start each process, then drive the frontend with the
-Playwright script at `.claude/skills/run-voice-phishing-detector/driver.mjs` — it
-fills the "통화 분석해보기" form and screenshots the result. All paths below are
-relative to the repo root.
+still a skeleton, see README). rag-worker, stt-worker, mcp-server, and api are usually
+already running as systemd user services (`~/.config/systemd/user/{rag-worker,stt-worker,
+mcp-server,api}.service`); only the frontend needs a manual `npm run dev` each time.
+Start/verify each process, then drive the frontend with the Playwright script at
+`.claude/skills/run-voice-phishing-detector/driver.mjs` — it fills the "통화 분석해보기"
+form and screenshots the result. All paths below are relative to the repo root.
 
 ## Prerequisites
 
@@ -66,9 +68,13 @@ curl -sf http://localhost:8100/health || {
   cd -
 }
 
-# 4) api (8000) — defaults to MCP_SERVER_URL=http://localhost:8100, no env needed
-cd apps/api && nohup .venv/bin/uvicorn src.main:app --port 8000 > /tmp/api.log 2>&1 & disown
-cd -
+# 4) api (8000) — usually already running as a systemd user service here
+#    (defaults to MCP_SERVER_URL=http://localhost:8100, no env needed)
+systemctl --user start api 2>/dev/null || true
+curl -sf http://localhost:8000/health || {
+  cd apps/api && nohup .venv/bin/uvicorn src.main:app --port 8000 > /tmp/api.log 2>&1 & disown
+  cd -
+}
 
 # 5) frontend — defaults to NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
 cd apps/frontend && nohup npm run dev > /tmp/frontend.log 2>&1 & disown
@@ -103,11 +109,10 @@ declaring success, not just that the process exited 0.
 Stop everything (`fuser`, not `lsof -ti` — see Gotchas):
 
 ```bash
-fuser -k 8000/tcp 2>/dev/null
 FRONTEND_PORT=$(grep -oP 'localhost:\K[0-9]+' /tmp/frontend.log | tail -1)
 fuser -k "${FRONTEND_PORT:-3000}/tcp" 2>/dev/null
-# rag-worker, stt-worker, and mcp-server are systemd — leave them running, or:
-# systemctl --user stop rag-worker stt-worker mcp-server
+# rag-worker, stt-worker, mcp-server, and api are systemd — leave them running, or:
+# systemctl --user stop rag-worker stt-worker mcp-server api
 ```
 
 ## Run (human path)
@@ -149,6 +154,9 @@ No test suite exists yet in any of the 5 apps as of this writing.
   the frontend's port even with `ss -tlnp` confirming something was listening there;
   worked fine for the plain uvicorn processes). Use `fuser -k PORT/tcp` instead, which
   killed it reliably in every test here.
+- **Restarting api (systemd `Restart=on-failure`, or a manual `systemctl restart api`)
+  wipes its audit trail** — it's in-memory only (see gotcha above), so a total-count
+  check across a restart will read as 0 again, not a failure of the request itself.
 - **mcp-server's first LLM call can be slow** (Ollama cold-start loading the model onto
   GPU, up to ~10s+) — `apps/api`'s timeout to mcp-server was bumped 10s→30s for this
   reason (see git history). The driver waits up to 25s for the count to increment;
