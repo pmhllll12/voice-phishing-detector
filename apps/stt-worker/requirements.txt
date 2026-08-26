@@ -1,0 +1,25 @@
+# apps/stt-worker 최소 의존성
+# TODO: 버전 핀 고정 (pip freeze 후 반영)
+fastapi
+uvicorn[standard]
+prometheus-client
+python-multipart   # 모바일 앱이 보내는 오디오 청크(UploadFile) 파싱에 필요
+faster-whisper      # STT: CTranslate2 기반 로컬 Whisper 구현체 (infrastructure/adapters/faster_whisper_adapter.py 참고)
+nvidia-ml-py        # GPU 메모리 관측용. faster-whisper(ctranslate2)는 rag-worker의 torch처럼
+                    # 자기 프로세스 메모리를 조회하는 API가 없어서, NVML로 전체 GPU 사용량을
+                    # 직접 조회한다 (infrastructure/metrics.py 상단 주석 참고).
+
+# GPU(CUDA)에서 faster-whisper(ctranslate2)를 쓰려면 cuBLAS/cuDNN이 실제로 필요하다.
+# WhisperModel(device="cuda") 생성자 자체는 시스템에 이 라이브러리가 없어도 예외 없이
+# 통과하고, 실전 첫 transcribe() 호출에서야 "Library libcublas.so.12 is not found"로
+# 실패한다(이 환경 — WSL2 + RTX 3050 — 에서 직접 재현/확인함). 그래서 이 pip 패키지들로
+# cuBLAS/cuDNN을 받고, 아래 두 디렉터리를 LD_LIBRARY_PATH에 추가해야 한다
+# (Dockerfile 참고. 로컬에서 uvicorn을 직접 띄울 때도 동일하게 필요 — README
+# "rag-worker 로컬 실행" 절과 달리 이쪽은 pip install만으로는 부족하다):
+#   $(python -c "import os,nvidia.cublas,nvidia.cudnn;print(os.path.dirname(nvidia.cublas.__file__)+'/lib')")
+#   $(python -c "import os,nvidia.cudnn;print(os.path.dirname(nvidia.cudnn.__file__)+'/lib')")
+# 이 라이브러리들 없이 GPU 로드/워밍업이 실패해도 서비스가 죽지는 않는다 —
+# infrastructure/adapters/faster_whisper_adapter.py의 _load_and_warm_up()이 생성자뿐
+# 아니라 무음 버퍼로 실제 추론까지 태워보고, 그때 실패하면 CPU(int8)로 자동 폴백한다.
+nvidia-cublas-cu12
+nvidia-cudnn-cu12
