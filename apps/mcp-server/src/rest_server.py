@@ -17,9 +17,11 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel
 
-from application.dto import serialize_analysis
-from application.services import CallAnalysisService
+from application.dto import serialize_analysis, serialize_report
+from application.services import CallAnalysisService, ReportSubmissionService
+from domain.entities import RiskLevel
 from infrastructure.adapters.debug_compare_adapter import DebugCompareAdapter
+from infrastructure.adapters.in_memory_report_repository import InMemoryReportRepository
 from infrastructure.adapters.ollama_call_analysis_adapter import (
     OllamaCallAnalysisAdapter,
     _resolve_base_url,
@@ -43,6 +45,7 @@ else:
     _call_analysis_adapter = _ollama_adapter
 
 call_analysis_service = CallAnalysisService(_call_analysis_adapter)
+report_submission_service = ReportSubmissionService(InMemoryReportRepository())
 
 
 @app.get("/health")
@@ -100,3 +103,18 @@ async def analyze(req: AnalyzeRequest) -> dict:
     """F-01/F-02/F-05: analyze_call_pattern MCP 툴과 동일한 판정 결과를 REST로 제공한다."""
     result = call_analysis_service.execute(req.transcript)
     return serialize_analysis(result.detection, result.risk, result.explanation)
+
+
+class ReportRequest(BaseModel):
+    case_summary: str
+    risk_level: RiskLevel
+
+
+@app.post("/api/v1/reports")
+async def submit_report(req: ReportRequest) -> dict:
+    """F-07: submit_report MCP 툴과 동일한 신고 접수(mock) 결과를 REST로 제공한다.
+    risk_level이 low/medium/high가 아니면 pydantic이 자동으로 422를 반환한다 (MCP
+    툴 쪽의 수동 RiskLevel(risk_level) 검증과 달리, REST는 pydantic 검증으로 충분).
+    """
+    record = report_submission_service.submit(req.case_summary, req.risk_level)
+    return serialize_report(record)

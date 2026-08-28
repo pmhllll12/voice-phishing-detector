@@ -1,7 +1,7 @@
 # infrastructure 계층: Prometheus 클라이언트 연동.
 # 아래 5개 메트릭은 prometheus/prometheus.yml에 이미 문서화해둔 커스텀 메트릭과 이름을
-# 맞춰뒀다. 실제로 .inc()/.observe() 호출하는 지점은 application 계층 로직이 완성된 뒤
-# 연결한다 (TODO로 표시).
+# 맞춰뒀다. reports_submitted_total은 main.py의 submit_report(F-07)에서 이미 .inc()로
+# 연결됨. 나머지 4개는 아직 application 계층 로직에 연결 전이라 TODO로 남겨둔다.
 
 from prometheus_client import Counter, Histogram
 

@@ -7,7 +7,13 @@ from datetime import datetime, timezone
 
 from src.domain.deepvoice import DeepvoiceVerdict
 from src.domain.entities import CallAnalysisResult, DetectedPatternSummary, RiskLevel, StatsSummary
-from src.domain.ports import CallAnalysisPort, CallLogPort, DeepvoiceDetectionPort, TranscriptionPort
+from src.domain.ports import (
+    CallAnalysisPort,
+    CallLogPort,
+    DeepvoiceDetectionPort,
+    ReportPort,
+    TranscriptionPort,
+)
 
 
 class AnalyzeCallService:
@@ -80,6 +86,23 @@ class CallLogQueryService:
 
     def stats_summary(self) -> StatsSummary:
         return self._call_log_port.stats_summary()
+
+
+class ReportSubmissionService:
+    """F-07 유스케이스: 신고 접수(mock)를 mcp-server(submit_report)에 위임한다.
+
+    실제 접수 로직(채널 분기, report_id 발급 등)은 mcp-server가 갖고 있고, 여기는
+    AnalyzeCallService와 동일하게 순수 오케스트레이션만 한다. mcp-server의 신고
+    기록과 apps/api의 CallAnalysisResult 감사로그는 아직 연결되어 있지 않다
+    (mcp-server ReportSubmissionService 상단 TODO 참고) — 지금은 call_id 없이
+    case_summary/risk_level만 전달한다.
+    """
+
+    def __init__(self, report_port: ReportPort):
+        self._report_port = report_port
+
+    def execute(self, case_summary: str, risk_level: str) -> dict:
+        return self._report_port.submit(case_summary, risk_level)
 
 
 class DeepvoiceDetectionService:

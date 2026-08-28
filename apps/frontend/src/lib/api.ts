@@ -1,4 +1,4 @@
-// apps/api 호출용 클라이언트. F-06 대시보드가 쓰는 3개 엔드포인트를 감싼다.
+// apps/api 호출용 클라이언트. F-06 대시보드가 쓰는 엔드포인트를 감싼다.
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
@@ -85,6 +85,27 @@ export async function listCalls(limit = 20): Promise<CallAnalysis[]> {
 
 export async function getStatsSummary(): Promise<StatsSummary> {
   const res = await fetch(`${API_BASE_URL}/api/v1/stats/summary`);
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+  return res.json();
+}
+
+export interface ReportResult {
+  report_id: string;
+  status: string;
+  channel: "auto" | "manual";
+  submitted_at: string;
+  note: string;
+}
+
+// F-07: 신고 접수(mock) — 실제 112/경찰청 신고 API는 호출하지 않는다 (docs/RFP.md 4장).
+export async function submitReport(caseSummary: string, riskLevel: RiskLevel): Promise<ReportResult> {
+  const res = await fetch(`${API_BASE_URL}/api/v1/reports`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ case_summary: caseSummary, risk_level: riskLevel }),
+  });
   if (!res.ok) {
     throw new ApiError(await parseErrorDetail(res), res.status);
   }

@@ -26,7 +26,7 @@ import os
 import httpx
 from mcp.server import MCPServer
 
-from application.dto import serialize_analysis
+from application.dto import serialize_analysis, serialize_report
 from application.services import CallAnalysisService, ReportSubmissionService
 from domain.entities import RiskLevel
 from infrastructure.adapters.debug_compare_adapter import DebugCompareAdapter
@@ -125,13 +125,7 @@ def submit_report(case_summary: str, risk_level: str) -> dict:
         }
 
     record = report_submission_service.submit(case_summary, level)
-    return {
-        "report_id": record.report_id,
-        "status": record.status,
-        "channel": record.channel,
-        "submitted_at": record.submitted_at.isoformat(),
-        "note": "MOCK: 실제 112/경찰청 신고 API 연동 없음 (RFP 데이터 제약, docs/RFP.md 4장 참고)",
-    }
+    return serialize_report(record)
 
 
 if __name__ == "__main__":

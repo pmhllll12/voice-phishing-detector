@@ -21,13 +21,16 @@ from src.application.services import (
     AnalyzeCallService,
     CallLogQueryService,
     DeepvoiceDetectionService,
+    ReportSubmissionService,
     TranscribeAndAnalyzeCallService,
 )
 from src.domain.entities import CallAnalysisResult
 from src.infrastructure.adapters.deepvoice_adapter import HeuristicDeepvoiceAdapter
 from src.infrastructure.adapters.in_memory_call_log import InMemoryCallLogRepository
 from src.infrastructure.adapters.mcp_client_adapter import McpServerCallAnalysisAdapter
+from src.infrastructure.adapters.report_client_adapter import McpServerReportAdapter
 from src.infrastructure.adapters.stt_client_adapter import SttWorkerTranscriptionAdapter
+from src.infrastructure.metrics import reports_submitted_total
 
 # F-01/F-02/F-05: mcp-server REST 어댑터 주소. docker-compose로 묶이면 컨테이너 네트워크
 # 주소(예: http://mcp-server:8100)로 오버라이드하면 되도록 환경변수로 뺐다.
@@ -57,6 +60,7 @@ transcribe_and_analyze_call_service = TranscribeAndAnalyzeCallService(
 )
 call_log_query_service = CallLogQueryService(call_log_repository)
 deepvoice_detection_service = DeepvoiceDetectionService(HeuristicDeepvoiceAdapter())
+report_submission_service = ReportSubmissionService(McpServerReportAdapter(MCP_SERVER_URL))
 
 
 def _serialize_call_result(result: CallAnalysisResult) -> dict:
@@ -248,11 +252,40 @@ async def check_deepvoice(audio: UploadFile) -> dict:
     }
 
 
+class ReportRequest(BaseModel):
+    case_summary: str
+    risk_level: str
+
+
+@app.post("/api/v1/reports")
+async def submit_report(req: ReportRequest) -> dict:
+    """F-07: 고위험 판정 시 신고 접수(mock)를 mcp-server(submit_report)에 위임한다.
+    실제 112/경찰청 신고 API는 호출하지 않는다 (RFP 데이터 제약, docs/RFP.md 4장 참고).
+    """
+    try:
+        result = report_submission_service.execute(req.case_summary, req.risk_level)
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(
+            status_code=422,
+            detail=f"mcp-server가 신고 접수 요청을 거부했습니다: {e}",
+        ) from e
+    except httpx.HTTPError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"mcp-server({MCP_SERVER_URL}) 연결 실패: {e}. 먼저 mcp-server REST 어댑터를 "
+                "실행하세요 (cd apps/mcp-server && source .venv/bin/activate && "
+                "uvicorn rest_server:app --app-dir src --port 8100)."
+            ),
+        ) from e
+    reports_submitted_total.labels(channel=result["channel"]).inc()
+    return result
+
+
 @app.get("/metrics")
 async def metrics() -> PlainTextResponse:
     # TODO: 인증 없이 노출해도 되는지 검토 (내부망 전용이면 OK, 아니면 N-02와 연결)
     return PlainTextResponse(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
-# TODO: F-07 신고 접수 엔드포인트 (/api/v1/reports)
 # TODO: N-02 RBAC 미들웨어/의존성 추가 (조회/처리/관리자 권한 분리)

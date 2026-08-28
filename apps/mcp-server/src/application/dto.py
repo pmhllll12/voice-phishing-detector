@@ -5,7 +5,7 @@
 # ExplanationService)를 감싸면서 이 함수를 공유한다 — 판정 로직과 응답 형식이 두 어댑터
 # 사이에서 벌어지지 않도록.
 
-from domain.entities import PatternDetectionResult, RiskAssessment, RiskExplanation
+from domain.entities import PatternDetectionResult, ReportRecord, RiskAssessment, RiskExplanation
 
 
 def serialize_analysis(
@@ -27,4 +27,16 @@ def serialize_analysis(
         "explanation_summary": explanation.summary,
         "explanation_reasons": explanation.reasons,
         "explanation": explanation.narrative,
+    }
+
+
+def serialize_report(record: ReportRecord) -> dict:
+    """F-07: server.py(MCP 툴)와 rest_server.py(REST) 두 어댑터가 같은 응답 형식을
+    쓰도록 공유한다 — serialize_analysis와 동일한 목적."""
+    return {
+        "report_id": record.report_id,
+        "status": record.status,
+        "channel": record.channel,
+        "submitted_at": record.submitted_at.isoformat(),
+        "note": "MOCK: 실제 112/경찰청 신고 API 연동 없음 (RFP 데이터 제약, docs/RFP.md 4장 참고)",
     }
