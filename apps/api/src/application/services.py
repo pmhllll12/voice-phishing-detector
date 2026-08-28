@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 from src.domain.deepvoice import DeepvoiceVerdict
 from src.domain.entities import CallAnalysisResult, DetectedPatternSummary, RiskLevel, StatsSummary
-from src.domain.ports import CallAnalysisPort, CallLogPort, DeepvoiceDetectionPort
+from src.domain.ports import CallAnalysisPort, CallLogPort, DeepvoiceDetectionPort, TranscriptionPort
 
 
 class AnalyzeCallService:
@@ -51,6 +51,22 @@ class AnalyzeCallService:
         )
         self._call_log_port.add(result)
         return result
+
+
+class TranscribeAndAnalyzeCallService:
+    """F-05 유스케이스: 모바일 앱이 올린 오디오 청크를 stt-worker로 텍스트 변환한 뒤,
+    AnalyzeCallService에 그대로 위임한다. 판정 로직을 다시 구현하지 않고 기존
+    text-경로(AnalyzeCallService)를 재사용해, 텍스트 입력과 오디오 입력이 항상 같은
+    판정 결과를 내도록 한다.
+    """
+
+    def __init__(self, transcription_port: TranscriptionPort, analyze_call_service: AnalyzeCallService):
+        self._transcription_port = transcription_port
+        self._analyze_call_service = analyze_call_service
+
+    async def execute(self, audio_bytes: bytes) -> CallAnalysisResult:
+        transcript = self._transcription_port.transcribe(audio_bytes)
+        return await self._analyze_call_service.execute(transcript)
 
 
 class CallLogQueryService:

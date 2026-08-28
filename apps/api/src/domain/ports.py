@@ -19,6 +19,13 @@ class CallAnalysisPort(Protocol):
     def analyze(self, transcript: str) -> dict: ...
 
 
+class TranscriptionPort(Protocol):
+    """F-05 모바일 실시간 감지: 오디오 청크를 stt-worker(/api/v1/transcribe)에 넘겨
+    텍스트로 변환하는 포트."""
+
+    def transcribe(self, audio_bytes: bytes) -> str: ...
+
+
 class CallLogPort(Protocol):
     """N-01 감사증적(현재는 인메모리) + F-06 대시보드 조회용 저장소 포트."""
 
