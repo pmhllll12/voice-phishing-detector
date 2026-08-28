@@ -64,7 +64,8 @@ RISK_LEVEL_LABELS: dict[RiskLevel, str] = {
 
 
 # 점수 -> 등급 매핑. 내림차순으로 훑으며 처음으로 score >= threshold인 항목을 채택한다.
-# TODO: 합성 데이터셋으로 점수 분포를 확인한 뒤 경계값(40/70)을 보정할 것.
+# 2026-08-28: data/synthetic_call_transcripts.json으로 검증 완료 — 경계값(40/70) 그대로
+# 유지 (pattern_rules.py의 CATEGORY_WEIGHTS 상단 주석 참고).
 RISK_LEVEL_THRESHOLDS: list[tuple[int, RiskLevel]] = [
     (70, RiskLevel.HIGH),
     (40, RiskLevel.MEDIUM),
