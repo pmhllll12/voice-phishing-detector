@@ -11,6 +11,7 @@
 import os
 
 import httpx
+import psycopg
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
@@ -26,8 +27,8 @@ from src.application.services import (
 )
 from src.domain.entities import CallAnalysisResult
 from src.infrastructure.adapters.deepvoice_adapter import HeuristicDeepvoiceAdapter
-from src.infrastructure.adapters.in_memory_call_log import InMemoryCallLogRepository
 from src.infrastructure.adapters.mcp_client_adapter import McpServerCallAnalysisAdapter
+from src.infrastructure.adapters.postgres_call_log_repository import PostgresCallLogRepository
 from src.infrastructure.adapters.report_client_adapter import McpServerReportAdapter
 from src.infrastructure.adapters.stt_client_adapter import SttWorkerTranscriptionAdapter
 from src.infrastructure.metrics import reports_submitted_total
@@ -38,6 +39,13 @@ MCP_SERVER_URL = os.environ.get("MCP_SERVER_URL", "http://localhost:8100")
 # F-05: stt-worker REST 어댑터 주소. run-voice-phishing-detector 스킬 기준 로컬 기본 포트는
 # 8300 (apps/stt-worker/src/main.py 상단 주석 참고).
 STT_WORKER_URL = os.environ.get("STT_WORKER_URL", "http://localhost:8300")
+# N-01: 감사증적(call_analysis_results) postgres 주소. 로컬 기본값은 docker로 띄운
+# vps-postgres 컨테이너 기준(infra/db/init.sql, run-voice-phishing-detector 스킬 참고).
+# 프로덕션에서는 반드시 환경변수로 실제 비밀번호를 오버라이드할 것 — 아래 기본값은
+# 로컬 개발 전용이다.
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL", "postgresql://vps_app:vps_dev_password@localhost:5432/vps_detector"
+)
 
 app = FastAPI(title="Voice Phishing Detector API")
 
@@ -51,7 +59,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-call_log_repository = InMemoryCallLogRepository()
+call_log_repository = PostgresCallLogRepository(DATABASE_URL)
 analyze_call_service = AnalyzeCallService(
     McpServerCallAnalysisAdapter(MCP_SERVER_URL), call_log_repository
 )
@@ -107,16 +115,29 @@ def _check_mcp_server_ready() -> dict:
     /health만 호출한다 — mcp-server의 /ready를 부르면 연쇄 호출이 되고, 나중에
     다른 서비스가 늘어날 때 순환 의존이 생길 여지를 만든다.
 
-    postgres/rag-worker는 이 서비스가 실제로 호출하지 않으므로 여기서 "체크"하지
-    않는다 — 체크해봤자 항상 통과하거나(호출도 안 하니까) 거짓 실패만 낼 뿐, 실제
-    의존관계를 반영하지 못한다. stt-worker는 F-05 오디오 경로에서 실제로 호출하므로
-    별도로 _check_stt_worker_ready에서 체크한다.
+    rag-worker는 이 서비스가 실제로 호출하지 않으므로 여기서 "체크"하지 않는다 —
+    체크해봤자 항상 통과하거나(호출도 안 하니까) 거짓 실패만 낼 뿐, 실제 의존관계를
+    반영하지 못한다. postgres는 _check_database_ready에서, stt-worker는
+    _check_stt_worker_ready에서 각각 따로 체크한다(둘 다 이 서비스가 실제로 호출함).
     """
     try:
         resp = httpx.get(f"{MCP_SERVER_URL}/health", timeout=READY_CHECK_TIMEOUT_SECONDS)
         resp.raise_for_status()
         return {"status": "ok", "detail": MCP_SERVER_URL}
     except httpx.HTTPError as e:
+        return {"status": "error", "detail": f"{type(e).__name__}: {e}"}
+
+
+def _check_database_ready() -> dict:
+    """N-01 감사증적(call_analysis_results)의 실제 저장소. analyze_call이 매 호출마다
+    이 저장소에 쓰기 때문에(AnalyzeCallService.execute), mcp-server와 마찬가지로
+    다운되면 503을 반환한다 — degraded로 두면 "판정은 되는데 감사증적이 안 남는" 상태를
+    정상처럼 보고하게 되어 N-01 요구사항과 맞지 않는다(stt_worker와 달리 우회 경로가 없음).
+    """
+    try:
+        call_log_repository.ping()
+        return {"status": "ok", "detail": "postgres"}
+    except psycopg.Error as e:
         return {"status": "error", "detail": f"{type(e).__name__}: {e}"}
 
 
@@ -136,24 +157,20 @@ def _check_stt_worker_ready() -> dict:
 
 @app.get("/ready")
 def ready() -> JSONResponse:
-    """/health와 달리 실제 의존 서비스 상태를 확인한다. mcp-server가 응답하지 않으면
-    F-01/F-02/F-05 전체가 동작할 수 없으므로 이 경우에만 503을 반환한다. stt-worker는
-    오디오 경로에만 필요해 다운돼도 503이 아니라 degraded로 표시한다(위
+    """/health와 달리 실제 의존 서비스 상태를 확인한다. mcp-server 또는 postgres(N-01
+    감사증적)가 응답하지 않으면 analyze_call 자체가 실패하므로 503을 반환한다.
+    stt-worker는 오디오 경로에만 필요해 다운돼도 503이 아니라 degraded로 표시한다(위
     _check_stt_worker_ready 주석 참고).
     """
     mcp_check = _check_mcp_server_ready()
+    db_check = _check_database_ready()
     stt_check = _check_stt_worker_ready()
     checks = {
         "mcp_server": mcp_check,
+        "database": db_check,
         "stt_worker": stt_check,
-        # N-01 감사증적을 아직 postgres가 아니라 인메모리로만 쌓고 있다 — 있는 척
-        # 체크를 만들지 않고 미구현 상태임을 명시적으로 알린다.
-        "database": {
-            "status": "not_configured",
-            "detail": "postgres 미연동 (인메모리 저장소 사용 중, N-01 참고)",
-        },
     }
-    if mcp_check["status"] != "ok":
+    if mcp_check["status"] != "ok" or db_check["status"] != "ok":
         overall = "error"
     elif stt_check["status"] != "ok":
         overall = "degraded"
@@ -171,7 +188,7 @@ class AnalyzeCallRequest(BaseModel):
 
 @app.post("/api/v1/calls/analyze")
 async def analyze_call(req: AnalyzeCallRequest) -> dict:
-    """F-01/F-02/F-05: mcp-server에 판정을 위임하고 결과를 감사증적(현재는 인메모리)에 적재한다."""
+    """F-01/F-02/F-05: mcp-server에 판정을 위임하고 결과를 감사증적(postgres, N-01)에 적재한다."""
     try:
         result = await analyze_call_service.execute(req.transcript)
     except httpx.HTTPError as e:

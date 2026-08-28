@@ -2,12 +2,25 @@
 # serialize_report(dto.py)로 공유한다. 여기서는 REST 어댑터 배선(라우팅, pydantic
 # 검증)만 확인한다 — 채널 분기/영속화 로직 자체는 test_report_submission.py에서
 # ReportSubmissionService 단위로 이미 검증한다.
+#
+# rest_server.report_submission_service는 기본적으로 postgres(PostgresReportRepository)에
+# 연결되지만, 이 파일은 라우팅/검증만 확인하는 목적이라 실제 postgres가 떠 있을 필요가
+# 없도록 인메모리 저장소로 바꿔치기한다 (postgres 연동 자체는
+# tests/test_postgres_report_repository.py에서 실제 DB로 검증한다).
 
+import pytest
 from fastapi.testclient import TestClient
 
-from rest_server import app
+import rest_server
+from application.services import ReportSubmissionService
+from infrastructure.adapters.in_memory_report_repository import InMemoryReportRepository
 
-client = TestClient(app)
+client = TestClient(rest_server.app)
+
+
+@pytest.fixture(autouse=True)
+def _use_in_memory_report_repository(monkeypatch):
+    monkeypatch.setattr(rest_server, "report_submission_service", ReportSubmissionService(InMemoryReportRepository()))
 
 
 def test_high_risk_report_is_submitted_via_rest():

@@ -2,6 +2,7 @@
 # 헥사고날 아키텍처에서 가장 안쪽 계층 — 여기는 "무엇을 판단하는가"만 정의하고
 # "어떻게 저장/조회하는가"는 모른다.
 
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -73,11 +74,36 @@ class CategoryCount:
 
 @dataclass
 class StatsSummary:
-    """F-06 관제 대시보드용 집계. N-01 감사증적 로그(현재는 인메모리)에서 계산한다."""
+    """F-06 관제 대시보드용 집계. N-01 감사증적 로그(postgres)에서 계산한다."""
 
     total_analyzed: int
     risk_level_counts: dict[str, int]
     category_counts: list[CategoryCount] = field(default_factory=list)
+
+
+def compute_stats_summary(records: list[CallAnalysisResult]) -> StatsSummary:
+    """CallLogPort 구현체(InMemoryCallLogRepository/PostgresCallLogRepository)가 공유하는
+    순수 집계 로직 — SQL로 집계하지 않고, 조회된 레코드를 파이썬에서 계산한다(지금 규모에서는
+    이쪽이 더 단순하고 두 구현체의 결과가 항상 일치함을 보장하기 쉽다)."""
+    risk_level_counts = Counter(r.risk_level.value for r in records)
+
+    category_counter: Counter = Counter()
+    category_labels: dict[str, str] = {}
+    for record in records:
+        for pattern in record.detected_patterns:
+            category_counter[pattern.category] += 1
+            category_labels[pattern.category] = pattern.category_label
+
+    category_counts = [
+        CategoryCount(category=category, category_label=category_labels[category], count=count)
+        for category, count in category_counter.most_common()
+    ]
+
+    return StatsSummary(
+        total_analyzed=len(records),
+        risk_level_counts={level.value: risk_level_counts.get(level.value, 0) for level in RiskLevel},
+        category_counts=category_counts,
+    )
 
 
 # TODO: 감사증적(N-01)을 위한 AuditLogEntry 도메인 모델 정의

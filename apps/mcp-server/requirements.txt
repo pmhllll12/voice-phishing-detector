@@ -5,6 +5,7 @@ httpx
 fastapi        # rest_server.py: docker-compose 네트워크에서 apps/api가 호출하는 REST 어댑터
 uvicorn[standard]
 prometheus-client   # F-01/F-02 v2(Ollama) 추론 시간/GPU 메모리 메트릭 노출
+psycopg[binary]     # N-01: 감사증적(postgres) — infrastructure/adapters/postgres_report_repository.py
 
 # F-01/F-02 v2는 Ollama를 별도 프로세스로 띄워두고 HTTP(/api/generate)로만 통신한다
 # (ollama_call_analysis_adapter.py 참고) — 이 requirements.txt에 ollama 관련 pip

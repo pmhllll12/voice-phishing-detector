@@ -1,20 +1,23 @@
 ---
 name: run-voice-phishing-detector
-description: Build, run, and drive the voice-phishing-detector full local stack (rag-worker, stt-worker, mcp-server, api, frontend) and take a screenshot of the F-06 dashboard actually detecting a scam call. Use when asked to run/start/launch this project locally, test the dashboard, take a screenshot, or verify the F-01/F-02/F-04/F-06 pipeline end-to-end.
+description: Build, run, and drive the voice-phishing-detector full local stack (postgres, rag-worker, stt-worker, mcp-server, api, frontend) and take a screenshot of the F-06 dashboard actually detecting a scam call. Use when asked to run/start/launch this project locally, test the dashboard, take a screenshot, or verify the F-01/F-02/F-04/F-06 pipeline end-to-end.
 ---
 
-This is a 5-process local system (no docker-compose yet — `docker-compose.yaml` is
-still a skeleton, see README). rag-worker, stt-worker, mcp-server, and api are usually
-already running as systemd user services (`~/.config/systemd/user/{rag-worker,stt-worker,
-mcp-server,api}.service`); only the frontend needs a manual `npm run dev` each time.
-Start/verify each process, then drive the frontend with the Playwright script at
+This is a 5-process local system plus a postgres container (no full docker-compose yet
+for the apps — `docker-compose.yaml` is still a skeleton, see README). rag-worker,
+stt-worker, mcp-server, and api are usually already running as systemd user services
+(`~/.config/systemd/user/{rag-worker,stt-worker,mcp-server,api}.service`); postgres runs
+as a plain docker container (`vps-postgres`, not systemd — this container has no
+passwordless sudo for `systemctl` unit registration, but the `docker` group works
+without sudo); only the frontend needs a manual `npm run dev` each time. Start/verify
+each process, then drive the frontend with the Playwright script at
 `.claude/skills/run-voice-phishing-detector/driver.mjs` — it fills the "통화 분석해보기"
 form and screenshots the result. All paths below are relative to the repo root.
 
 ## Prerequisites
 
 No system packages needed beyond what's already in this container (Node, Python 3.14,
-an NVIDIA GPU + driver). Each `apps/*/` already has its own `.venv` — if one is
+an NVIDIA GPU + driver, docker). Each `apps/*/` already has its own `.venv` — if one is
 missing, create it with `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`
 inside that app's directory.
 
@@ -24,6 +27,24 @@ Ollama must already be running (mcp-server's LLM calls depend on it):
 curl -s http://localhost:11434/api/version   # must return JSON, not connection-refused
 # if not running and it's a systemd user service here: systemctl --user start ollama
 ```
+
+postgres (N-01 audit trail for api/mcp-server, `infra/db/init.sql` schema) must be up too —
+api's `/ready` and `/api/v1/calls/analyze` both fail without it (unlike stt-worker/Ollama,
+there's no graceful degrade here, see apps/api/src/main.py `_check_database_ready`):
+
+```bash
+docker exec vps-postgres pg_isready -U vps_app -d vps_detector 2>/dev/null || {
+  docker start vps-postgres 2>/dev/null || docker run -d --name vps-postgres \
+    -e POSTGRES_USER=vps_app -e POSTGRES_PASSWORD=vps_dev_password -e POSTGRES_DB=vps_detector \
+    -p 5432:5432 -v vps_postgres_data:/var/lib/postgresql/data pgvector/pgvector:pg16
+  until docker exec vps-postgres pg_isready -U vps_app -d vps_detector 2>/dev/null; do sleep 1; done
+  PGPASSWORD=vps_dev_password psql -h localhost -U vps_app -d vps_detector -f infra/db/init.sql
+}
+```
+
+The schema (`CREATE TABLE IF NOT EXISTS` + `DROP TRIGGER IF EXISTS`/`CREATE TRIGGER`) is
+idempotent, so re-running `init.sql` against an already-initialized DB is safe — no need
+to guard that last line beyond the container-didn't-exist-yet case above.
 
 ## Setup
 
@@ -40,8 +61,9 @@ npx playwright install chromium   # NOT --with-deps: this container has no sudo 
 
 ## Run (agent path)
 
-Start all 5 services, in this order (each is `nohup ... & disown` so it survives
-between tool calls):
+Start postgres first (see Prerequisites — mcp-server and api both need it up before
+they'll report ready), then all 5 services in this order (each is `nohup ... & disown`
+so it survives between tool calls):
 
 ```bash
 # 1) rag-worker (8200) — usually already running as a systemd user service here
@@ -113,6 +135,9 @@ FRONTEND_PORT=$(grep -oP 'localhost:\K[0-9]+' /tmp/frontend.log | tail -1)
 fuser -k "${FRONTEND_PORT:-3000}/tcp" 2>/dev/null
 # rag-worker, stt-worker, mcp-server, and api are systemd — leave them running, or:
 # systemctl --user stop rag-worker stt-worker mcp-server api
+# vps-postgres holds the audit trail — leave the container running too (docker stop
+# vps-postgres is safe if you really need to, data survives in the named volume either
+# way; only `docker rm -f` + `docker volume rm vps_postgres_data` actually wipes it).
 ```
 
 ## Run (human path)
@@ -140,12 +165,14 @@ No test suite exists yet in any of the 5 apps as of this writing.
   Docker container (unrelated project) already binds `0.0.0.0:3000`, so Next.js silently
   bumps to 3001. Always read the actual port from `/tmp/frontend.log`'s `Local:` line —
   don't hardcode 3000 in the driver invocation.
-- **apps/api's audit trail is in-memory only** (no postgres yet — see README). Re-running
-  the driver against a stack that already has prior data will NOT show a fresh "고위험"
-  string appearing (it's already there from the last run), so the driver checks the "총
-  분석 건수" tile's number incrementing, not text presence. If you write your own smoke
-  check, do the same — checking for risk-level text alone gives a false pass on a repeat
-  run.
+- **apps/api's audit trail is postgres now (N-01), not in-memory** — it survives an api
+  restart. Re-running the driver against a stack that already has prior data will NOT
+  show a fresh "고위험" string appearing (it's already there from a previous run), so the
+  driver checks the "총 분석 건수" tile's number incrementing, not text presence. If you
+  write your own smoke check, do the same — checking for risk-level text alone gives a
+  false pass on a repeat run. The count only resets if you drop/recreate the postgres
+  volume (`docker rm -f vps-postgres && docker volume rm vps_postgres_data`), not on an
+  api restart.
 - **`npx playwright install chromium --with-deps` fails here** with "sudo: a terminal is
   required for authentication" (no interactive sudo in this container). Drop `--with-deps`
   — the browser binary alone is enough for this driver; no missing shared libs were hit
@@ -154,9 +181,10 @@ No test suite exists yet in any of the 5 apps as of this writing.
   the frontend's port even with `ss -tlnp` confirming something was listening there;
   worked fine for the plain uvicorn processes). Use `fuser -k PORT/tcp` instead, which
   killed it reliably in every test here.
-- **Restarting api (systemd `Restart=on-failure`, or a manual `systemctl restart api`)
-  wipes its audit trail** — it's in-memory only (see gotcha above), so a total-count
-  check across a restart will read as 0 again, not a failure of the request itself.
+- **Restarting api no longer wipes its audit trail** (see gotcha above — it moved to
+  postgres). If a total-count check ever reads as 0 right after a restart, that's now a
+  real signal something's wrong (e.g. `DATABASE_URL` pointing at the wrong DB), not
+  expected behavior.
 - **mcp-server's first LLM call can be slow** (Ollama cold-start loading the model onto
   GPU, up to ~10s+) — `apps/api`'s timeout to mcp-server was bumped 10s→30s for this
   reason (see git history). The driver waits up to 25s for the count to increment;
@@ -167,6 +195,14 @@ No test suite exists yet in any of the 5 apps as of this writing.
 - **`curl http://localhost:8000/health` connection refused after starting api**: check
   `/tmp/api.log` — it fails fast with a clear message if mcp-server (8100) isn't up yet;
   `systemctl --user status mcp-server` (or start it) then restart api.
+- **`/ready` on api or mcp-server shows `"database": {"status": "error", ...}`, or
+  `POST /api/v1/calls/analyze` 500s**: postgres isn't reachable. `docker ps --filter
+  name=vps-postgres` — if it's not there or not `Up`, follow the Prerequisites step
+  above to (re)create/start it. If it's up but still erroring, check the connection
+  string matches (`DATABASE_URL`, default `postgresql://vps_app:vps_dev_password@
+  localhost:5432/vps_detector`) and that `infra/db/init.sql` was actually applied
+  (`PGPASSWORD=vps_dev_password psql -h localhost -U vps_app -d vps_detector -c '\dt'`
+  should list `call_analysis_results` and `report_records`).
 - **Driver prints `WARNING: 총 분석 건수가 늘지 않았습니다`**: the POST to
   `/api/v1/calls/analyze` didn't complete in 25s or errored. Check `/tmp/api.log` and
   `/tmp/mcp-server.log` for the actual request — most likely Ollama isn't running

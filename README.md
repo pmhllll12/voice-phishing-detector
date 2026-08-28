@@ -187,11 +187,14 @@ npm run dev
 
 브라우저에서 http://localhost:3000 (포트가 이미 사용 중이면 Next.js가 자동으로 3001 등으로
 올립니다 — 터미널에 뜨는 실제 URL을 확인하세요). 대시보드 상단 폼에 통화 내용을 입력해
-"분석하기"를 누르면 mcp-server가 판정하고, api가 그 결과를 인메모리에 적재하고,
+"분석하기"를 누르면 mcp-server가 판정하고, api가 그 결과를 postgres 감사증적에 적재하고,
 10초마다 자동 갱신되는 통계/최근 탐지 목록에 반영됩니다.
 
-현재 저장소는 postgres 없이 **api 프로세스 메모리**에만 기록을 쌓습니다(N-01 감사증적의
-아주 단순한 v1) — api를 재시작하면 기록이 초기화됩니다. TODO: postgres로 교체.
+N-01 감사증적(api의 통화 판정 로그, mcp-server의 신고 접수 기록)은 postgres에 저장됩니다
+(`infra/db/init.sql`) — api를 재시작해도 기록이 남습니다. UPDATE/DELETE는 DB 트리거로
+아예 거부되어 애플리케이션 코드와 무관하게 append-only가 보장됩니다(`infra/db/init.sql`의
+`reject_audit_log_mutation`). 로컬 postgres는 systemd가 아니라 별도 docker 컨테이너로
+띄웁니다 — 기동 방법은 `run-voice-phishing-detector` 스킬의 Prerequisites 참고.
 
 ## Health Check (`/health` vs `/ready`)
 
@@ -204,17 +207,18 @@ npm run dev
 - **`/ready`**: "지금 실제로 요청을 처리할 수 있는가"를 실제 의존 서비스 호출/자가
   점검으로 확인한다. 응답 형식은 `{"status": "ok"|"degraded"|"error", "checks": {...}}`.
 
-실제로 배선된 의존관계(`frontend → api → mcp-server → Ollama`)만 확인합니다 — rag-worker는
-아직 이 REST 경로에 연결되어 있지 않고(Claude Code MCP 툴 전용), stt-worker도 아직
-api가 호출하지 않아서, api/mcp-server의 `/ready`가 이 둘을 체크 대상에 넣지 않습니다
-(체크해봤자 실제 의존관계를 반영 못 하는 거짓 정보라서). postgres도 아직 아무 서비스가
-연결하지 않으므로 api의 `/ready`는 `"database": "not_configured"`라고 명시적으로
-알립니다 — 있는 척 200을 주지 않습니다.
+실제로 배선된 의존관계만 확인합니다 — rag-worker는 아직 REST 경로에서 analyze_call_pattern에
+결합될 때만 간접적으로 쓰이고(F-04, 실패해도 그냥 유사사례 없이 진행) 별도 헬스체크
+대상은 아닙니다. 각 서비스가 실제로 호출하는 대상만 체크 대상에 넣습니다(체크해봤자 실제
+의존관계를 반영 못 하는 거짓 정보는 만들지 않는다는 원칙).
 
 | 서비스 | `/ready`가 확인하는 것 | 실패 시 |
 |---|---|---|
-| api | mcp-server의 `/health` (얕은 호출, 순환 방지) | `status="error"`, HTTP 503 |
+| api | mcp-server `/health`(얕은 호출, 순환 방지) — 다운되면 F-01/F-02/F-05 전체 불가 | `status="error"`, HTTP 503 |
+| api | postgres(N-01 감사증적) — analyze_call이 매번 여기 쓰기 때문에 mcp-server와 동급 | `status="error"`, HTTP 503 |
+| api | stt-worker `/health` — F-05 오디오 업로드 경로에만 필요, 텍스트 경로는 무관 | `status="degraded"`, **HTTP 200** |
 | mcp-server | Ollama `/api/version` (`CALL_ANALYSIS_BACKEND=rule`이면 `not_applicable`) | `status="degraded"`, **HTTP 200** — 규칙 기반(v1) 자동 폴백이 있어 서비스 자체는 계속 요청을 처리할 수 있으므로 503이 아니다 |
+| mcp-server | postgres(N-01, F-07 신고 접수 기록) — `/api/v1/analyze`는 이것 없이도 동작 | `status="degraded"`, **HTTP 200** |
 | rag-worker | 자기 자신의 검색 서비스로 실제 검색 1건 self-test | `status="error"`, HTTP 503 |
 | stt-worker | 자기 자신의 STT 서비스로 무음 0.5초 오디오 실제 transcribe self-test | `status="error"`, HTTP 503 |
 
@@ -299,5 +303,23 @@ Prometheus/Grafana입니다 — 자세한 내용은 위 "재사용한 인프라 
 - [x] Health Check 고도화 (`/health`는 그대로 두고 4개 백엔드 서비스 모두에 `/ready` 신규
       추가 — 실제 의존 서비스(mcp-server→Ollama) 호출/자가 점검 기반, 위 "Health Check"
       절 참고. 단위 테스트 9건 추가, 실제 서비스 재시작 후 정상/장애 양쪽 경로 curl로 검증)
+- [x] 모바일 실시간 감지 파이프라인용 STT를 apps/api에 연결 (오디오 업로드 →
+      stt-worker `/api/v1/transcribe` → 기존 텍스트 판정 경로 재사용. `/ready`에
+      stt-worker 체크도 추가, 다운돼도 degraded로만 표시)
+- [x] F-07 신고 연동을 REST/대시보드까지 연결 (mcp-server `submit_report`가 MCP 툴로만
+      있던 것을 `POST /api/v1/reports`로 노출, api에도 동일 엔드포인트 추가. 프런트
+      대시보드의 고위험 판정 행에 "신고 접수" 버튼 노출)
+- [x] F-04 유사사례를 F-05 판정 근거에 결합 (위험 정황이 감지되면 rag-worker 검색 결과를
+      근거 문장에 자동 인용 — rag-worker가 죽어도 analyze_call_pattern 자체는 계속
+      동작하도록 예외를 삼키고 빈 결과로 폴백)
+- [x] F-01/F-02 합성 통화 시나리오 데이터셋 26건으로 가중치/임계값 검증 (`apps/mcp-server/
+      data/synthetic_call_transcripts.json`) — 정상 통화 오탐 없음, 카테고리 조합별
+      위험도 등급이 설계 의도대로 나옴을 확인해 가중치/임계값은 그대로 유지. 키워드가
+      못 잡는 자연어 표현 사각지대도 문서화(LLM 백엔드가 대부분 커버)
+- [x] N-01 감사증적을 postgres로 전환 (`infra/db/init.sql` — api의 통화 판정 로그,
+      mcp-server의 신고 접수 기록. UPDATE/DELETE를 DB 트리거로 거부해 append-only를
+      애플리케이션 코드가 아니라 DB 레벨에서 강제. 로컬은 systemd가 아니라 docker
+      컨테이너로 실행 — `run-voice-phishing-detector` 스킬 Prerequisites 참고. F-04
+      rag-worker의 pgvector 이전은 범위 밖으로 남겨둠)
 <img width="1900" height="1014" alt="Screenshot 2026-08-26 151128_edited" src="https://github.com/user-attachments/assets/5bf57efc-0385-4623-8cec-82461d236ffd" />
 <img width="1910" height="1046" alt="Screenshot 2026-08-26 151151_edited" src="https://github.com/user-attachments/assets/4b36260b-be9d-400e-bbbb-15154a82a299" />

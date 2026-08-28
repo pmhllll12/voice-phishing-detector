@@ -20,8 +20,10 @@ services:
     ports:
       - "8000:8000"
     environment:
-      # TODO: .env 파일로 분리하고 docker-compose에는 ${VAR} 형태로만 참조하기
-      - DATABASE_URL=postgresql://TODO:TODO@postgres:5432/vps_detector
+      # TODO: .env 파일로 분리하고 docker-compose에는 ${VAR} 형태로만 참조하기 —
+      # 아래 비밀번호는 로컬 개발 전용 값(apps/api/src/main.py DATABASE_URL 기본값과
+      # 동일)이며 프로덕션에서는 반드시 실제 시크릿으로 교체해야 한다.
+      - DATABASE_URL=postgresql://vps_app:vps_dev_password@postgres:5432/vps_detector
       - REDIS_URL=redis://redis:6379/0
       - MCP_SERVER_URL=http://mcp-server:8100
       - RAG_WORKER_URL=http://rag-worker:8200
@@ -44,7 +46,7 @@ services:
     ports:
       - "8100:8100"
     environment:
-      - DATABASE_URL=postgresql://TODO:TODO@postgres:5432/vps_detector
+      - DATABASE_URL=postgresql://vps_app:vps_dev_password@postgres:5432/vps_detector
     depends_on:
       - postgres
     # TODO: MCP transport 방식 결정 (stdio vs SSE vs streamable-http) 후
@@ -62,26 +64,34 @@ services:
     ports:
       - "8200:8200"
     environment:
-      - DATABASE_URL=postgresql://TODO:TODO@postgres:5432/vps_detector
+      # 아직 사용 안 함: rag-worker는 지금 postgres+pgvector가 아니라 로컬 JSON(F-04,
+      # data/fraud_cases.json)으로 유사사례를 검색한다 — N-01(api 통화로그/mcp-server
+      # 신고기록)만 먼저 postgres로 옮겼고, pgvector 이전은 별도 후속 작업으로 남아있다
+      # (infra/db/init.sql 상단 주석 참고). 이 값은 그 작업을 시작할 때 실제로 쓰인다.
+      - DATABASE_URL=postgresql://vps_app:vps_dev_password@postgres:5432/vps_detector
       # TODO: 임베딩 모델/API 키 설정 (로컬 임베딩 모델 vs 외부 API)
     depends_on:
       - postgres
 
   # ---------------------------------------------------------------------------
-  # postgres: 판정 로그(N-01 감사증적) + pgvector(F-04 RAG) 겸용
+  # postgres: 판정 로그(N-01 감사증적, api/mcp-server) + pgvector(F-04 RAG, 아직 미사용)
+  # 겸용. 초기 스키마는 infra/db/init.sql — call_analysis_results/report_records
+  # 테이블과 append-only 강제 트리거를 만든다 (컨테이너 최초 기동 시 1회 자동 실행,
+  # postgres 공식 이미지의 /docker-entrypoint-initdb.d/ 관례).
   # ---------------------------------------------------------------------------
   postgres:
     image: pgvector/pgvector:pg16
     ports:
       - "5432:5432"
     environment:
-      # TODO: 운영/개발 환경변수 분리, secrets 관리 방식 결정
-      - POSTGRES_USER=TODO
-      - POSTGRES_PASSWORD=TODO
+      # 로컬 개발 전용 값 — 프로덕션에서는 반드시 실제 시크릿으로 교체할 것
+      # (TODO: 운영/개발 환경변수 분리, secrets 관리 방식 결정).
+      - POSTGRES_USER=vps_app
+      - POSTGRES_PASSWORD=vps_dev_password
       - POSTGRES_DB=vps_detector
     volumes:
+      - ./infra/db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
       - postgres_data:/var/lib/postgresql/data
-      # TODO: 초기 스키마/마이그레이션 스크립트 마운트 (예: ./infra/db/init.sql)
 
   # ---------------------------------------------------------------------------
   # redis: 세션/캐시/큐 용도 (예: 신고 알림 큐, rate limiting 등)

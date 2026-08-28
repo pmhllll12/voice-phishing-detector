@@ -12,6 +12,7 @@ import logging
 import os
 
 import httpx
+import psycopg
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse, PlainTextResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
@@ -21,11 +22,11 @@ from application.dto import serialize_analysis, serialize_report
 from application.services import CallAnalysisService, ReportSubmissionService
 from domain.entities import RiskLevel
 from infrastructure.adapters.debug_compare_adapter import DebugCompareAdapter
-from infrastructure.adapters.in_memory_report_repository import InMemoryReportRepository
 from infrastructure.adapters.ollama_call_analysis_adapter import (
     OllamaCallAnalysisAdapter,
     _resolve_base_url,
 )
+from infrastructure.adapters.postgres_report_repository import PostgresReportRepository
 from infrastructure.adapters.rag_worker_search_adapter import RagWorkerSearchAdapter
 from infrastructure.adapters.rule_based_call_analysis_adapter import RuleBasedCallAnalysisAdapter
 
@@ -47,9 +48,15 @@ else:
 
 # F-04: server.py와 동일한 근거로 환경변수로 뺐다 (rest_server.py 상단 주석 참고).
 RAG_WORKER_URL = os.environ.get("RAG_WORKER_URL", "http://localhost:8200")
+# N-01: 감사증적(report_records) postgres 주소 — apps/api/src/main.py와 동일한 기본값
+# (로컬 개발 전용, infra/db/init.sql 참고).
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL", "postgresql://vps_app:vps_dev_password@localhost:5432/vps_detector"
+)
 
 call_analysis_service = CallAnalysisService(_call_analysis_adapter, RagWorkerSearchAdapter(RAG_WORKER_URL))
-report_submission_service = ReportSubmissionService(InMemoryReportRepository())
+_report_repository = PostgresReportRepository(DATABASE_URL)
+report_submission_service = ReportSubmissionService(_report_repository)
 
 
 @app.get("/health")
@@ -79,18 +86,34 @@ def _check_ollama_ready() -> dict:
         return {"status": "error", "detail": f"{type(e).__name__}: {e} — 규칙 기반(v1)으로 자동 폴백 중"}
 
 
+def _check_database_ready() -> dict:
+    """N-01 감사증적(report_records)은 F-07(/api/v1/reports)에서만 쓰인다 — F-01/F-02의
+    핵심 경로인 /api/v1/analyze는 postgres 없이도 동작하므로, stt_worker를 다루는
+    apps/api의 /ready와 동일하게 degraded로만 표시하고 503으로 막지 않는다.
+    """
+    try:
+        _report_repository.ping()
+        return {"status": "ok", "detail": "postgres"}
+    except psycopg.Error as e:
+        return {"status": "error", "detail": f"{type(e).__name__}: {e} — 신고 접수 경로만 영향받음"}
+
+
 @app.get("/ready")
 def ready() -> JSONResponse:
     """Ollama가 죽어있어도 이 서비스는 규칙 기반(v1)으로 자동 폴백해 계속 판정을
     내릴 수 있다(ollama_call_analysis_adapter.py 참고) — 그래서 Ollama 다운은
     503(error)이 아니라 status="degraded"와 함께 200을 반환한다: "여전히 요청을
-    처리할 수 있지만 판정 품질이 v1 수준으로 낮아졌다"는 뜻. 이 서비스가 진짜로
-    503을 반환해야 할 상황(둘 다 실패)은 현재 구조상 없다 — 규칙 기반은 외부
-    의존이 없어 항상 동작한다.
+    처리할 수 있지만 판정 품질이 v1 수준으로 낮아졌다"는 뜻. postgres 다운도 같은
+    이유로 degraded다 — F-07(신고 접수)만 영향받고 핵심 경로(F-01/F-02)는 항상 동작한다.
+    이 서비스가 진짜로 503을 반환해야 할 상황은 현재 구조상 없다.
     """
     ollama_check = _check_ollama_ready()
-    overall = "ok" if ollama_check["status"] in ("ok", "not_applicable") else "degraded"
-    return JSONResponse(content={"status": overall, "checks": {"ollama": ollama_check}}, status_code=200)
+    db_check = _check_database_ready()
+    overall = "ok" if ollama_check["status"] in ("ok", "not_applicable") and db_check["status"] == "ok" else "degraded"
+    return JSONResponse(
+        content={"status": overall, "checks": {"ollama": ollama_check, "database": db_check}},
+        status_code=200,
+    )
 
 
 @app.get("/metrics")

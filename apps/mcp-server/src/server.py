@@ -30,8 +30,8 @@ from application.dto import serialize_analysis, serialize_report
 from application.services import CallAnalysisService, ReportSubmissionService
 from domain.entities import RiskLevel
 from infrastructure.adapters.debug_compare_adapter import DebugCompareAdapter
-from infrastructure.adapters.in_memory_report_repository import InMemoryReportRepository
 from infrastructure.adapters.ollama_call_analysis_adapter import OllamaCallAnalysisAdapter
+from infrastructure.adapters.postgres_report_repository import PostgresReportRepository
 from infrastructure.adapters.rag_worker_search_adapter import RagWorkerSearchAdapter
 from infrastructure.adapters.rule_based_call_analysis_adapter import RuleBasedCallAnalysisAdapter
 
@@ -55,9 +55,14 @@ else:
 # F-04: rag-worker HTTP 서비스 주소. docker-compose로 묶이면 컨테이너 네트워크 주소
 # (예: http://rag-worker:8200)로 오버라이드하면 되도록 환경변수로 뺐다.
 RAG_WORKER_URL = os.environ.get("RAG_WORKER_URL", "http://localhost:8200")
+# N-01: 감사증적(report_records) postgres 주소 — apps/api/src/main.py와 동일한 기본값
+# (로컬 개발 전용, infra/db/init.sql 참고).
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL", "postgresql://vps_app:vps_dev_password@localhost:5432/vps_detector"
+)
 
 call_analysis_service = CallAnalysisService(_call_analysis_adapter, RagWorkerSearchAdapter(RAG_WORKER_URL))
-report_submission_service = ReportSubmissionService(InMemoryReportRepository())
+report_submission_service = ReportSubmissionService(PostgresReportRepository(DATABASE_URL))
 
 
 @mcp.tool()
