@@ -26,16 +26,30 @@ class DetectedPatternSummary:
 
 
 @dataclass
+class SimilarCaseSummary:
+    """F-04: mcp-server가 rag-worker에서 검색해 판정 근거에 결합한 유사 사기 사례 1건.
+    mcp-server 응답(similar_cases)을 그대로 옮겨 담는다."""
+
+    case_id: str
+    title: str
+    category: str
+    summary: str
+    source_note: str
+    similarity: float
+
+
+@dataclass
 class CallAnalysisResult:
     """F-01~F-05의 결과를 표현하는 핵심 도메인 모델.
 
     실제 판정(F-01/F-02/F-05)은 mcp-server가 수행하고, api는 그 결과를 받아
     call_id/analyzed_at을 부여해 감사증적/대시보드용으로 저장·제공하는 오케스트레이터 역할이다.
+    similar_cases(F-04)도 mcp-server가 이미 판정 근거에 결합해서 내려주므로 그대로 옮겨 담는다
+    (mcp-server CallAnalysisService 참고) — api 쪽에서 rag-worker를 직접 부르지 않는다.
 
     TODO:
       - is_deepvoice: bool | None — F-03 (지금은 /api/v1/calls/deepvoice-check가 별도 엔드포인트로
         분리되어 있음, 하나의 통화 판정으로 결합할지는 F-06 대시보드 요구사항 보고 결정)
-      - similar_cases: list[...] — F-04 (rag-worker 결과 결합)
       - masked_transcript: str — N-03 (개인정보 마스킹된 통화 텍스트, raw_transcript 대신 노출)
     """
 
@@ -47,6 +61,7 @@ class CallAnalysisResult:
     explanation_summary: str
     explanation: str
     analyzed_at: datetime
+    similar_cases: list[SimilarCaseSummary] = field(default_factory=list)
 
 
 @dataclass

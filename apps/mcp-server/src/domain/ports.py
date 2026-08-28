@@ -3,7 +3,7 @@
 
 from typing import Protocol
 
-from .entities import CallAnalysisResult, ReportRecord
+from .entities import CallAnalysisResult, ReportRecord, SimilarCase
 
 
 class ReportRepositoryPort(Protocol):
@@ -18,3 +18,11 @@ class CallAnalysisPort(Protocol):
     그대로 유지된다 (F-04의 FraudCaseSearchPort와 동일한 목적)."""
 
     def analyze(self, transcript: str) -> CallAnalysisResult: ...
+
+
+class FraudCaseSearchPort(Protocol):
+    """F-04: rag-worker(/api/v1/similar-cases)에서 유사 사기 사례를 검색한다.
+    CallAnalysisService가 판정 근거(F-05)에 결합할 때 쓰는 포트 — lookup_fraud_pattern_db
+    MCP 툴이 같은 rag-worker를 부르는 것과는 별개 경로다(server.py 참고)."""
+
+    def search(self, transcript: str, top_k: int) -> list[SimilarCase]: ...

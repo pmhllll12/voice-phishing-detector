@@ -6,7 +6,13 @@ import uuid
 from datetime import datetime, timezone
 
 from src.domain.deepvoice import DeepvoiceVerdict
-from src.domain.entities import CallAnalysisResult, DetectedPatternSummary, RiskLevel, StatsSummary
+from src.domain.entities import (
+    CallAnalysisResult,
+    DetectedPatternSummary,
+    RiskLevel,
+    SimilarCaseSummary,
+    StatsSummary,
+)
 from src.domain.ports import (
     CallAnalysisPort,
     CallLogPort,
@@ -25,7 +31,8 @@ class AnalyzeCallService:
     모델로 매핑하고 CallLogPort에 적재하는 오케스트레이션만 한다.
 
     TODO:
-      1. F-04 rag-worker 유사사례 결과를 결합할지 검토 (지금은 별도 MCP 툴로만 존재)
+      1. (완료) F-04 rag-worker 유사사례 결과 결합 — mcp-server가 이미 결합해서
+         내려주므로(raw["similar_cases"]) 여기서는 그대로 옮겨 담기만 한다.
       2. N-05 응답시간(5초) SLA 계측 — infrastructure/metrics.py의
          vps_analysis_duration_seconds 로 계측
       3. N-03 개인정보 마스킹 — mcp-server에 넘기기 전 또는 저장 전에 적용
@@ -54,6 +61,18 @@ class AnalyzeCallService:
             explanation_summary=raw["explanation_summary"],
             explanation=raw["explanation"],
             analyzed_at=datetime.now(timezone.utc),
+            # .get(): 구버전 mcp-server(이 필드 추가 전)와의 호환을 위해 방어적으로 처리
+            similar_cases=[
+                SimilarCaseSummary(
+                    case_id=c["case_id"],
+                    title=c["title"],
+                    category=c["category"],
+                    summary=c["summary"],
+                    source_note=c["source_note"],
+                    similarity=c["similarity"],
+                )
+                for c in raw.get("similar_cases", [])
+            ],
         )
         self._call_log_port.add(result)
         return result

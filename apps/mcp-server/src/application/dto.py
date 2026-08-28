@@ -5,11 +5,14 @@
 # ExplanationService)를 감싸면서 이 함수를 공유한다 — 판정 로직과 응답 형식이 두 어댑터
 # 사이에서 벌어지지 않도록.
 
-from domain.entities import PatternDetectionResult, ReportRecord, RiskAssessment, RiskExplanation
+from domain.entities import PatternDetectionResult, ReportRecord, RiskAssessment, RiskExplanation, SimilarCase
 
 
 def serialize_analysis(
-    result: PatternDetectionResult, risk: RiskAssessment, explanation: RiskExplanation
+    result: PatternDetectionResult,
+    risk: RiskAssessment,
+    explanation: RiskExplanation,
+    similar_cases: list[SimilarCase] | None = None,
 ) -> dict:
     return {
         "detected_patterns": [
@@ -27,6 +30,19 @@ def serialize_analysis(
         "explanation_summary": explanation.summary,
         "explanation_reasons": explanation.reasons,
         "explanation": explanation.narrative,
+        # F-04: 위험 정황이 없거나 rag-worker 검색이 실패하면 빈 리스트 — CallAnalysisService
+        # 상단 주석 참고.
+        "similar_cases": [
+            {
+                "case_id": c.case_id,
+                "title": c.title,
+                "category": c.category,
+                "summary": c.summary,
+                "source_note": c.source_note,
+                "similarity": c.similarity,
+            }
+            for c in (similar_cases or [])
+        ],
     }
 
 

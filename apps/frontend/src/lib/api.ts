@@ -10,6 +10,15 @@ export interface DetectedPattern {
   matched_keywords: string[];
 }
 
+export interface SimilarCase {
+  case_id: string;
+  title: string;
+  category: string;
+  summary: string;
+  source_note: string;
+  similarity: number;
+}
+
 export interface CallAnalysis {
   call_id: string;
   analyzed_at: string;
@@ -19,6 +28,7 @@ export interface CallAnalysis {
   detected_patterns: DetectedPattern[];
   explanation_summary: string;
   explanation: string;
+  similar_cases: SimilarCase[];
 }
 
 export interface CategoryCount {

@@ -14,11 +14,12 @@ from domain.entities import (
     RiskExplanation,
     RiskLevel,
     RiskScoreBreakdownItem,
+    SimilarCase,
     RISK_LEVEL_LABELS,
     RISK_LEVEL_THRESHOLDS,
 )
 from domain.pattern_rules import CATEGORY_WEIGHTS, PATTERN_RULES
-from domain.ports import CallAnalysisPort, ReportRepositoryPort
+from domain.ports import CallAnalysisPort, FraudCaseSearchPort, ReportRepositoryPort
 
 
 class PatternDetectionService:
@@ -91,9 +92,10 @@ class ExplanationService:
 
     TODO (고도화 순서 제안):
       1. (완료) 템플릿 기반 규칙형 문장 생성으로 1차 구현
-      2. F-04(유사사례) 결과를 근거 문장에 추가 결합하는 옵션 검토
-         (지금은 analyze_call_pattern이 rag-worker 없이도 독립적으로 동작하도록
-          의도적으로 F-04와 분리해뒀다)
+      2. (완료) F-04(유사사례) 결과를 근거 문장에 추가 결합 — 다만 이 서비스 자체는
+         여전히 rag-worker를 모른다. 결합은 CallAnalysisService.execute()가 이
+         메서드의 결과를 받은 뒤 별도로 수행한다(아래 참고) — analyze_call_pattern이
+         rag-worker 없이도 독립적으로 동작해야 한다는 원칙은 그대로 유지된다.
       3. LLM 기반으로 더 자연스러운 문장 생성 검토 (단, 매칭 근거 인용은 계속 유지해야 함)
     """
 
@@ -121,18 +123,60 @@ class ExplanationService:
         return f"[{pattern.category_label}] 관련 표현이 감지되었습니다 (예: {keyword_text}) — 가중치 {weight}점"
 
 
+_MAX_SIMILAR_CASES_IN_EXPLANATION = 2
+
+
+def _merge_similar_cases_into_explanation(
+    explanation: RiskExplanation, similar_cases: list[SimilarCase]
+) -> RiskExplanation:
+    """F-04 검색 결과를 F-05 근거 문장에 추가 인용한다 (N-04: 유사도까지 그대로 노출해
+    추적 가능하게)."""
+    case_reasons = [
+        f"유사 사례: 「{c.title}」(유사도 {c.similarity:.0%}) — {c.summary}" for c in similar_cases
+    ]
+    narrative = explanation.narrative + "\n\n유사 사례:\n" + "\n".join(f"- {r}" for r in case_reasons)
+    return RiskExplanation(
+        summary=explanation.summary,
+        reasons=explanation.reasons + case_reasons,
+        narrative=narrative,
+    )
+
+
 class CallAnalysisService:
     """F-01/F-02/F-05 진입점. CallAnalysisPort 구현체(규칙 기반 v1 또는 LLM 기반 v2,
     혹은 둘을 비교 로깅하는 래퍼)에 실제 판단을 위임한다 — F-04의
     SimilarCaseSearchService와 동일하게, 이 서비스 자체는 로직을 모르고 포트만 안다.
     server.py/rest_server.py는 이 서비스 하나만 호출하면 된다.
+
+    fraud_case_search_port가 주어지면(F-04), 위험 정황이 감지된 경우에 한해 유사
+    사례를 검색해 판정 근거(F-05)에 결합한다. 포트를 안 주거나(None) 검색이
+    실패하면(RagWorkerSearchAdapter가 빈 리스트로 폴백) F-01/F-02/F-05만으로 정상
+    동작한다 — rag-worker 의존은 어디까지나 "있으면 근거를 더 풍부하게" 수준이지
+    필수 의존이 아니다.
     """
 
-    def __init__(self, port: CallAnalysisPort):
+    def __init__(self, port: CallAnalysisPort, fraud_case_search_port: FraudCaseSearchPort | None = None):
         self._port = port
+        self._fraud_case_search_port = fraud_case_search_port
 
     def execute(self, transcript: str) -> CallAnalysisResult:
-        return self._port.analyze(transcript)
+        result = self._port.analyze(transcript)
+
+        if self._fraud_case_search_port is None or not result.detection.has_risk_indicators:
+            return result
+
+        similar_cases = self._fraud_case_search_port.search(
+            transcript, top_k=_MAX_SIMILAR_CASES_IN_EXPLANATION
+        )
+        if not similar_cases:
+            return result
+
+        return CallAnalysisResult(
+            detection=result.detection,
+            risk=result.risk,
+            explanation=_merge_similar_cases_into_explanation(result.explanation, similar_cases),
+            similar_cases=similar_cases,
+        )
 
 
 class ReportSubmissionService:

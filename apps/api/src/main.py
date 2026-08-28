@@ -80,6 +80,17 @@ def _serialize_call_result(result: CallAnalysisResult) -> dict:
         ],
         "explanation_summary": result.explanation_summary,
         "explanation": result.explanation,
+        "similar_cases": [
+            {
+                "case_id": c.case_id,
+                "title": c.title,
+                "category": c.category,
+                "summary": c.summary,
+                "source_note": c.source_note,
+                "similarity": c.similarity,
+            }
+            for c in result.similar_cases
+        ],
     }
 
 

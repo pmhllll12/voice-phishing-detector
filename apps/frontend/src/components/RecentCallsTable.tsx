@@ -131,6 +131,15 @@ export function RecentCallsTable({ calls }: { calls: CallAnalysis[] }) {
                 </td>
                 <td style={{ padding: "8px", color: "var(--text-secondary)" }}>
                   {call.explanation_summary}
+                  {call.similar_cases.length > 0 && (
+                    <ul style={{ margin: "4px 0 0", paddingLeft: "16px", fontSize: "12px", color: "var(--text-muted)" }}>
+                      {call.similar_cases.map((c) => (
+                        <li key={c.case_id}>
+                          유사 사례: {c.title} ({Math.round(c.similarity * 100)}%)
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </td>
                 <td style={{ padding: "8px", whiteSpace: "nowrap" }}>
                   <ReportButton call={call} />

@@ -102,6 +102,19 @@ class RiskExplanation:
 
 
 @dataclass
+class SimilarCase:
+    """F-04: rag-worker가 검색한 유사 사기 사례 1건. rag-worker의 /api/v1/similar-cases
+    응답을 그대로 옮겨 담는다 (필드명도 동일하게 맞춤)."""
+
+    case_id: str
+    title: str
+    category: str
+    summary: str
+    source_note: str
+    similarity: float
+
+
+@dataclass
 class CallAnalysisResult:
     """F-01/F-02/F-05 결과를 하나로 묶은 것. CallAnalysisPort.analyze()의 반환 타입.
 
@@ -110,11 +123,16 @@ class CallAnalysisResult:
     이 타입 하나만 주고받으면 된다. serialize_analysis()는 이 세 필드를 그대로
     풀어서 기존 API 응답 형식(JSON 키)에 맞춰 직렬화한다 — 즉 어댑터가 바뀌어도
     바깥으로 나가는 JSON 모양은 그대로다.
+
+    similar_cases는 CallAnalysisPort 구현체가 채우지 않는다(F-04는 F-01/F-02와 독립적으로
+    동작해야 하므로) — CallAnalysisService.execute()가 판정 이후에 별도로 채워 넣는다
+    (application/services.py 참고).
     """
 
     detection: PatternDetectionResult
     risk: RiskAssessment
     explanation: RiskExplanation
+    similar_cases: list[SimilarCase] = field(default_factory=list)
 
 
 @dataclass

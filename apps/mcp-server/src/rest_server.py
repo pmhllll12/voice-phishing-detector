@@ -26,6 +26,7 @@ from infrastructure.adapters.ollama_call_analysis_adapter import (
     OllamaCallAnalysisAdapter,
     _resolve_base_url,
 )
+from infrastructure.adapters.rag_worker_search_adapter import RagWorkerSearchAdapter
 from infrastructure.adapters.rule_based_call_analysis_adapter import RuleBasedCallAnalysisAdapter
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -44,7 +45,10 @@ elif os.environ.get("LLM_DEBUG_COMPARE", "").lower() in ("1", "true", "yes"):
 else:
     _call_analysis_adapter = _ollama_adapter
 
-call_analysis_service = CallAnalysisService(_call_analysis_adapter)
+# F-04: server.py와 동일한 근거로 환경변수로 뺐다 (rest_server.py 상단 주석 참고).
+RAG_WORKER_URL = os.environ.get("RAG_WORKER_URL", "http://localhost:8200")
+
+call_analysis_service = CallAnalysisService(_call_analysis_adapter, RagWorkerSearchAdapter(RAG_WORKER_URL))
 report_submission_service = ReportSubmissionService(InMemoryReportRepository())
 
 
@@ -100,9 +104,12 @@ class AnalyzeRequest(BaseModel):
 
 @app.post("/api/v1/analyze")
 async def analyze(req: AnalyzeRequest) -> dict:
-    """F-01/F-02/F-05: analyze_call_pattern MCP 툴과 동일한 판정 결과를 REST로 제공한다."""
+    """F-01/F-02/F-05: analyze_call_pattern MCP 툴과 동일한 판정 결과를 REST로 제공한다.
+    F-04: 위험 정황이 감지되면 rag-worker 유사 사례도 함께 검색해 근거에 결합한다
+    (CallAnalysisService 참고). rag-worker가 꺼져 있어도 이 엔드포인트는 정상 동작한다.
+    """
     result = call_analysis_service.execute(req.transcript)
-    return serialize_analysis(result.detection, result.risk, result.explanation)
+    return serialize_analysis(result.detection, result.risk, result.explanation, result.similar_cases)
 
 
 class ReportRequest(BaseModel):
