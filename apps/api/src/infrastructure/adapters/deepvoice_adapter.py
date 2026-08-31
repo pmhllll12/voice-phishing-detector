@@ -37,9 +37,12 @@
 # TODO (고도화 순서):
 #   1. ~~실제 음성 샘플로 임계값 보정~~ 완료(위 참고) — 다만 표본이 작아(16건) 계속
 #      키워나가야 함, 특히 pause_regularity용 긴 자연 발화 샘플
-#   2. 검증된 오픈소스 스푸핑 탐지 모델(ASVspoof 계열 등)로 교체 검토
-#      — DeepvoiceDetectionPort 인터페이스는 그대로 유지
+#   2. ~~검증된 오픈소스 스푸핑 탐지 모델로 교체 검토~~ 완료 —
+#      wav2vec2_deepvoice_adapter.py(v2)가 기본값이 됐고, 이 파일(v1)은 그 v2의
+#      fallback이자 N-04 보조 지표(모델 판정과 별개로 확인 가능한 근거) 제공용으로
+#      계속 쓰인다. DeepvoiceDetectionPort 인터페이스는 그대로 유지됨(0줄 변경).
 #   3. 현재는 16-bit PCM WAV만 지원 — mp3 등 다른 포맷은 서버 단에서 변환 필요
+#      (v2도 동일한 제약 — wav2vec2_deepvoice_adapter.py가 이 파일의 _read_wav를 재사용함)
 
 import io
 import wave

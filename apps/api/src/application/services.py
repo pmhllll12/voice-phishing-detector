@@ -139,9 +139,11 @@ class DeepvoiceDetectionService:
     TODO (고도화 순서 제안):
       1. (완료) 음향 특징(피치 안정성/스펙트럼 평탄도/묵음 규칙성) 기반 휴리스틱 v1
          (infrastructure/adapters/deepvoice_adapter.py 참고)
-      2. 실제 음성 샘플(합성 음성 vs 육성)로 임계값 보정 — 지금 임계값은 미검증 초기값
-      3. 검증된 오픈소스 스푸핑 탐지 모델로 교체 검토 (DeepvoiceDetectionPort 유지)
-      4. N-05(5초 이내) SLA 계측
+      2. (완료) 실제 음성 샘플(합성 음성 vs 육성)로 임계값 보정
+      3. (완료) 검증된 오픈소스 스푸핑 탐지 모델로 교체 —
+         infrastructure/adapters/wav2vec2_deepvoice_adapter.py(v2, 기본값).
+         DeepvoiceDetectionPort는 그대로 유지됨(N-06, 0줄 변경)
+      4. (완료) N-05(5초 이내) SLA 계측 — main.py의 _record_analysis_metrics
     """
 
     def __init__(self, detection_port: DeepvoiceDetectionPort):

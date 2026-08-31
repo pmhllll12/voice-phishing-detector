@@ -40,6 +40,7 @@ from src.infrastructure.adapters.mcp_client_adapter import McpServerCallAnalysis
 from src.infrastructure.adapters.postgres_call_log_repository import PostgresCallLogRepository
 from src.infrastructure.adapters.report_client_adapter import McpServerReportAdapter
 from src.infrastructure.adapters.stt_client_adapter import SttWorkerTranscriptionAdapter
+from src.infrastructure.adapters.wav2vec2_deepvoice_adapter import Wav2Vec2DeepvoiceAdapter
 from src.infrastructure.metrics import (
     analysis_duration_seconds,
     calls_analyzed_total,
@@ -86,7 +87,11 @@ transcribe_and_analyze_call_service = TranscribeAndAnalyzeCallService(
     SttWorkerTranscriptionAdapter(STT_WORKER_URL), analyze_call_service
 )
 call_log_query_service = CallLogQueryService(call_log_repository)
-deepvoice_detection_service = DeepvoiceDetectionService(HeuristicDeepvoiceAdapter())
+# F-03 v2(wav2vec2_deepvoice_adapter.py): 모델 로드/추론 실패 시 v1(휴리스틱)로 자동
+# 폴백한다 — Ollama(F-01/F-02 v2)와 동일한 패턴.
+deepvoice_detection_service = DeepvoiceDetectionService(
+    Wav2Vec2DeepvoiceAdapter(fallback=HeuristicDeepvoiceAdapter())
+)
 report_submission_service = ReportSubmissionService(McpServerReportAdapter(MCP_SERVER_URL, MCP_SERVICE_API_KEY))
 
 

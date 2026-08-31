@@ -30,6 +30,7 @@ permalink: /07-개발구현계획/
 | 1 | F-01/F-02 판정 알고리즘 | `CallAnalysisPort` | `RuleBasedCallAnalysisAdapter`(폴백용 유지) | `OllamaCallAnalysisAdapter`(기본값, `360ffde`) | — | 0줄 |
 | 2 | F-04 유사사례 검색 | `FraudCaseSearchPort` | `TfidfSimilarityAdapter`(디버그 비교용) | `EmbeddingSimilarityAdapter`(`2d60b87`) | `PgvectorSimilarityAdapter`(기본값, `960e96e`) | 0줄 |
 | 3 | N-01 감사증적 저장소 | `CallLogPort`/`ReportRepositoryPort` | `InMemory*`(테스트 전용) | `Postgres*`(운영, `bd68902`) | — | 0줄 |
+| 4 | F-03 딥보이스 판별기 | `DeepvoiceDetectionPort` | `HeuristicDeepvoiceAdapter`(폴백 겸 N-04 보조 지표용 유지) | `Wav2Vec2DeepvoiceAdapter`(기본값, 2026-08-31) | — | 0줄 |
 
 "application 계층 diff 0줄"은 실제 커밋 메시지에 명시돼 있다. 예를 들어 F-04 v1→v2
 교체 커밋(`2d60b87`)은 "인터페이스를 그대로 유지해 application/services.py와 기존

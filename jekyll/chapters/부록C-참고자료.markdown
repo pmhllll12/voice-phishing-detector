@@ -18,7 +18,7 @@ permalink: /부록C-참고자료/
 | 판정(F-01/F-02, v2) | Ollama · EXAONE 3.5 2.4B Instruct (Q4_K_M) | 통화 텍스트 패턴 분석, JSON Schema 강제 출력 |
 | 유사사례 검색(F-04, v2/v3) | sentence-transformers · `jhgan/ko-sroberta-multitask` | 768차원 한국어 문장 임베딩, pgvector 코사인 유사도로 검색 |
 | 모바일 STT(F-05) | faster-whisper (CTranslate2 기반 Whisper) | 오디오 청크 → 텍스트 변환 |
-| 딥보이스 판별(F-03, v1) | 자체 휴리스틱 (피치 안정성/스펙트럼 평탄도/묵음 규칙성, numpy 기반) | AI 합성 음성 여부 판별 |
+| 딥보이스 판별(F-03, v2) | HuggingFace Hub · `mo-thecreator/Deepfake-audio-detection` (wav2vec2-base 파인튜닝) | AI 합성 음성 여부 판별 (기본값). v1(자체 휴리스틱 — 피치 안정성/스펙트럼 평탄도/묵음 규칙성, numpy 기반)은 폴백 겸 N-04 보조 지표로 유지 |
 
 ## C.3 재사용한 이전 프로젝트
 

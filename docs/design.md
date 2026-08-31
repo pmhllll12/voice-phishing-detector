@@ -27,7 +27,7 @@ infrastructure/  "실제로 어떻게 하는가" — 포트를 구현하는 어�
 
 확장성의 근거는 단순하다 — **domain과 application은 infrastructure를 모르므로,
 infrastructure를 통째로 갈아끼워도(알고리즘 교체, 저장소 교체, 새 카테고리 추가) 위쪽
-계층은 파급을 받지 않는다.** 아래는 이게 이론이 아니라 이 프로젝트에서 **이미 3번
+계층은 파급을 받지 않는다.** 아래는 이게 이론이 아니라 이 프로젝트에서 **이미 4번
 실제로 일어난 일**이라는 근거다.
 
 ### 확장 지점별 현황
@@ -37,7 +37,7 @@ infrastructure를 통째로 갈아끼워도(알고리즘 교체, 저장소 교�
 | 1 | F-01/F-02 판정 알고리즘 | `CallAnalysisPort` | `RuleBasedCallAnalysisAdapter`(v1, 폴백용으로 유지) / `OllamaCallAnalysisAdapter`(v2, 기본값) | v1→v2 (커밋 `360ffde`) | 0줄 |
 | 2 | F-04 유사사례 검색 알고리즘 | `FraudCaseSearchPort` | `TfidfSimilarityAdapter`(v1, 디버그 비교용) / `EmbeddingSimilarityAdapter`(v2) / `PgvectorSimilarityAdapter`(v3, 기본값) | v1→v2 (`2d60b87`), v2→v3 (`960e96e`) | 0줄 |
 | 3 | N-01 감사증적 저장소 | `CallLogPort` / `ReportRepositoryPort` | `InMemory*`(테스트 전용) / `Postgres*`(운영) | InMemory→Postgres (`bd68902`) | 0줄 |
-| 4 | F-03 딥보이스 판별기 | `DeepvoiceDetectionPort` | `HeuristicDeepvoiceAdapter`(v1, 실측 데이터로 임계값 보정됨) | 아직 v1뿐 — v2(검증된 스푸핑 탐지 모델)는 TODO | 예정 — 아직 미검증 |
+| 4 | F-03 딥보이스 판별기 | `DeepvoiceDetectionPort` | `HeuristicDeepvoiceAdapter`(v1, 폴백 겸 N-04 보조 지표용으로 유지) / `Wav2Vec2DeepvoiceAdapter`(v2, 기본값) | v1→v2 (2026-08-31, `wav2vec2_deepvoice_adapter.py`) | 0줄 |
 | 5 | F-01 사기유형 카테고리 | `PatternCategory` enum + `PATTERN_RULES` dict | 4종(기관사칭/공포조성/긴급송금유도/개인정보요구) | 스캐폴딩 초기 커밋부터 4번째 카테고리를 "확장 예시"로 포함 | 0줄 |
 | 6 | N-02 접근권한 역할 | `Role` enum + `role_satisfies` 계층 | VIEWER/HANDLER/ADMIN 3단계, apps/api·mcp-server 양쪽에 동일 구조 | apps/api 도입 → mcp-server로 확장(`c9799af`, 같은 패턴 복붙) | 0줄 |
 
@@ -83,11 +83,11 @@ F-01/F-02 합성 데이터셋 검증(`767eac1`)에서 나머지 3개 카테고�
   `PatternCategory` 등)은 그대로다.
 - application은 domain의 포트에만 의존하므로, 포트 뒤의 구현체가 바뀌어도 유스케이스
   (`AnalyzeCallService`, `SimilarCaseSearchService` 등)의 코드는 안 바뀐다.
-- 이건 "설계상 가능하다"는 주장이 아니라, 이 프로젝트에서 서로 다른 3개 축(판정
-  알고리즘/검색 알고리즘/감사증적 저장소)에서 **각각 실제로 어댑터를 교체했고, 매번
-  application 계층 diff가 0줄이었다**는 실측 결과다(위 표의 커밋 참고). "새 사기유형
-  추가"라는 N-06의 원래 시나리오도 같은 패턴(카테고리 enum + 규칙 dict 확장)으로
-  이미 검증됐다.
+- 이건 "설계상 가능하다"는 주장이 아니라, 이 프로젝트에서 서로 다른 4개 축(판정
+  알고리즘/검색 알고리즘/감사증적 저장소/딥보이스 판별기)에서 **각각 실제로 어댑터를
+  교체했고, 매번 application 계층 diff가 0줄이었다**는 실측 결과다(위 표의 커밋 참고).
+  "새 사기유형 추가"라는 N-06의 원래 시나리오도 같은 패턴(카테고리 enum + 규칙 dict
+  확장)으로 이미 검증됐다.
 
 ### 확장성이 아직 검증 안 된 지점 (정직하게 밝힘)
 
@@ -105,6 +105,13 @@ F-01/F-02 합성 데이터셋 검증(`767eac1`)에서 나머지 3개 카테고�
   제외했다 — "모든 진입점에 인증을 강제"까지 검증된 건 아니다.
 - Prometheus 메트릭 네이밍(`vps_` 접두사)은 컨벤션 수준의 확장성이라 코드가 강제하지
   않는다 — 새 메트릭을 추가할 때 접두사를 빼먹어도 아무것도 막지 않는다.
-- F-03 딥보이스 판별기는 포트(`DeepvoiceDetectionPort`)만 준비돼 있고 아직 실제
-  교체(v1 휴리스틱 → v2 검증된 모델)는 일어나지 않았다 — "포트가 있다"는 것과
-  "실제로 교체해봤다"는 것은 다른 수준의 증거이므로 구분해서 밝힌다.
+- ~~F-03 딥보이스 판별기는 포트(`DeepvoiceDetectionPort`)만 준비돼 있고 아직 실제
+  교체는 일어나지 않았다~~ — 해결됨(2026-08-31). HuggingFace Hub의 공개 스푸핑 탐지
+  모델(wav2vec2 기반) 두 개를 F-03 실측 데이터셋(16건)에 직접 태워 비교한 뒤
+  `Wav2Vec2DeepvoiceAdapter`(v2)를 기본값으로 교체했다(`wav2vec2_deepvoice_adapter.py`
+  상단 주석 참고). 다만 이 교체로 새로 드러난 한계가 있다 — 첫 번째로 시도한 모델
+  (ASVspoof 계열로 추정)은 재현율 3/8에 그쳤다(영어 스푸핑 위주 학습 데이터가 한국어
+  gTTS 합성 음성에 일반화되지 않음). 채택한 두 번째 모델은 16건 전부를 신뢰도 0.99
+  이상으로 정확히 분류했지만, 학습 데이터셋이 모델 카드에 명시돼 있지 않아 우리
+  데이터셋과 겹칠 가능성을 배제할 수 없다 — "포트가 있다"에서 "실제로 교체해봤다"로는
+  올라섰지만, "이 정확도가 일반화된다"는 아직 별개의 증명되지 않은 주장이다.
