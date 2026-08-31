@@ -34,7 +34,9 @@ def repository():
     schema = f"test_{uuid.uuid4().hex[:8]}"
     setup_conn = psycopg.connect(TEST_DSN, autocommit=True)
     setup_conn.execute(f"CREATE SCHEMA {schema}")
-    setup_conn.execute(f"SET search_path TO {schema}")
+    # public도 search_path에 넣어야 한다 — init.sql이 fraud_cases(F-04, rag-worker
+    # 소관이지만 이 파일 스키마에 함께 적용됨)에서 쓰는 vector 타입이 public에 있다.
+    setup_conn.execute(f"SET search_path TO {schema}, public")
     setup_conn.execute(INIT_SQL)
     setup_conn.close()
 

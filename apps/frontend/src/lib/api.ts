@@ -2,6 +2,15 @@
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
+// N-02: api의 조회/처리 엔드포인트는 X-API-Key를 요구한다(apps/api/src/infrastructure/
+// adapters/api_key_role_auth.py 참고). 대시보드는 조회(목록/통계)와 처리(분석 실행/신고
+// 접수)를 모두 하므로 handler 키가 필요하다. NEXT_PUBLIC_*는 브라우저 번들에 그대로
+// 노출되므로 이건 "진짜" 비밀키가 아니라 로그인 시스템이 없는 지금 단계의 데모용
+// 타협이다 — 실제 서비스라면 사용자별 세션을 Next.js 서버(BFF)가 들고 api를 대신
+// 호출해야 한다(TODO, 아직 미착수).
+const API_KEY = process.env.NEXT_PUBLIC_API_KEY ?? "dev-handler-key";
+const AUTH_HEADERS = { "X-API-Key": API_KEY };
+
 export type RiskLevel = "low" | "medium" | "high";
 
 export interface DetectedPattern {
@@ -75,7 +84,7 @@ export async function checkApiHealth(): Promise<boolean> {
 export async function analyzeCall(transcript: string): Promise<CallAnalysis> {
   const res = await fetch(`${API_BASE_URL}/api/v1/calls/analyze`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...AUTH_HEADERS },
     body: JSON.stringify({ transcript }),
   });
   if (!res.ok) {
@@ -85,7 +94,7 @@ export async function analyzeCall(transcript: string): Promise<CallAnalysis> {
 }
 
 export async function listCalls(limit = 20): Promise<CallAnalysis[]> {
-  const res = await fetch(`${API_BASE_URL}/api/v1/calls?limit=${limit}`);
+  const res = await fetch(`${API_BASE_URL}/api/v1/calls?limit=${limit}`, { headers: AUTH_HEADERS });
   if (!res.ok) {
     throw new ApiError(await parseErrorDetail(res), res.status);
   }
@@ -94,7 +103,7 @@ export async function listCalls(limit = 20): Promise<CallAnalysis[]> {
 }
 
 export async function getStatsSummary(): Promise<StatsSummary> {
-  const res = await fetch(`${API_BASE_URL}/api/v1/stats/summary`);
+  const res = await fetch(`${API_BASE_URL}/api/v1/stats/summary`, { headers: AUTH_HEADERS });
   if (!res.ok) {
     throw new ApiError(await parseErrorDetail(res), res.status);
   }
@@ -113,7 +122,7 @@ export interface ReportResult {
 export async function submitReport(caseSummary: string, riskLevel: RiskLevel): Promise<ReportResult> {
   const res = await fetch(`${API_BASE_URL}/api/v1/reports`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...AUTH_HEADERS },
     body: JSON.stringify({ case_summary: caseSummary, risk_level: riskLevel }),
   });
   if (!res.ok) {

@@ -16,6 +16,25 @@ class RiskLevel(str, Enum):
     HIGH = "high"
 
 
+class Role(str, Enum):
+    """N-02: 조회/처리/관리자 3단계 권한. 서로 배타적인 카테고리가 아니라 계층 구조다 —
+    ADMIN은 HANDLER가 할 수 있는 모든 걸 할 수 있고, HANDLER는 VIEWER가 할 수 있는 모든 걸
+    할 수 있다. 실제 대소 비교는 _ROLE_RANK/role_satisfies가 담당한다(Enum 멤버 자체는
+    문자열 값이라 대소 비교를 지원하지 않음)."""
+
+    VIEWER = "viewer"  # 조회: 통화 목록/통계 등 판정 결과 열람
+    HANDLER = "handler"  # 처리: 통화 분석 실행, 신고 접수 등 실제 액션 수행 (VIEWER 권한 포함)
+    ADMIN = "admin"  # 관리자: 전체 권한 (HANDLER 권한 포함)
+
+
+_ROLE_RANK: dict[Role, int] = {Role.VIEWER: 0, Role.HANDLER: 1, Role.ADMIN: 2}
+
+
+def role_satisfies(actual: Role, required: Role) -> bool:
+    """actual 권한이 required 이상인지 (계층 구조 기준)."""
+    return _ROLE_RANK[actual] >= _ROLE_RANK[required]
+
+
 @dataclass
 class DetectedPatternSummary:
     """F-01 탐지 결과 요약. 실제 탐지 로직은 mcp-server(analyze_call_pattern)에 있고,

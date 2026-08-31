@@ -27,6 +27,10 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - MCP_SERVER_URL=http://mcp-server:8100
       - RAG_WORKER_URL=http://rag-worker:8200
+      # N-02: 조회/처리/관리자 API 키(로컬 개발 전용 값 — apps/api/src/infrastructure/
+      # adapters/api_key_role_auth.py DEFAULT_API_KEYS와 동일). 프로덕션에서는 반드시
+      # 실제 발급 키로 교체할 것.
+      - API_KEYS=dev-viewer-key:viewer,dev-handler-key:handler,dev-admin-key:admin
     depends_on:
       - postgres
       - redis
@@ -114,6 +118,11 @@ services:
       - "3000:3000"
     environment:
       - NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+      # N-02: 대시보드는 조회(목록/통계)와 처리(분석 실행/신고 접수)를 모두 수행하므로
+      # handler 키가 필요하다. NEXT_PUBLIC_*는 브라우저 번들에 그대로 노출되므로 이건
+      # "진짜" 비밀키가 아니라 데모용 타협이다 — 실제 서비스라면 로그인한 사용자별 세션을
+      # Next.js 서버(BFF)가 들고 있다가 api를 대신 호출해야 한다(TODO, 아직 미착수).
+      - NEXT_PUBLIC_API_KEY=dev-handler-key
     depends_on:
       - api
 

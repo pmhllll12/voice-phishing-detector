@@ -1,6 +1,12 @@
 # apps/api 진입점 — F-01/F-02/F-05는 mcp-server(rest_server.py)에 위임하는 오케스트레이션
 # 레이어이고, F-03(딥보이스)은 이 안에서 직접 판별한다.
 #
+# N-02 접근통제: "처리" 행위(analyze_call/analyze-audio/deepvoice-check/reports)는 HANDLER
+# 이상, "조회" 행위(list_calls/stats_summary)는 VIEWER 이상 권한을 요구한다 — X-API-Key
+# 헤더 기반, infrastructure/adapters/api_key_role_auth.py 참고. health/ready/metrics는
+# 인프라 컴포넌트(오케스트레이터, Prometheus)가 호출하고 판정 데이터를 노출하지 않으므로
+# 의도적으로 열어둔다(해당 위치 주석 참고).
+#
 # 헥사고날 아키텍처 계층 안내:
 #   domain/         - 순수 비즈니스 모델 (외부 의존성 없음)
 #   application/     - 유스케이스 (domain을 조합, infrastructure는 인터페이스로만 참조)
@@ -12,7 +18,7 @@ import os
 
 import httpx
 import psycopg
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel
@@ -25,7 +31,8 @@ from src.application.services import (
     ReportSubmissionService,
     TranscribeAndAnalyzeCallService,
 )
-from src.domain.entities import CallAnalysisResult
+from src.domain.entities import CallAnalysisResult, Role
+from src.infrastructure.adapters.api_key_role_auth import require_role
 from src.infrastructure.adapters.deepvoice_adapter import HeuristicDeepvoiceAdapter
 from src.infrastructure.adapters.mcp_client_adapter import McpServerCallAnalysisAdapter
 from src.infrastructure.adapters.postgres_call_log_repository import PostgresCallLogRepository
@@ -100,6 +107,13 @@ def _serialize_call_result(result: CallAnalysisResult) -> dict:
             for c in result.similar_cases
         ],
     }
+
+
+# N-02: /health, /ready, /metrics는 의도적으로 인증을 걸지 않는다 — 헬스체크(오케스트레이터/
+# 로드밸런서)와 Prometheus 스크레이핑은 API 키를 들고 있지 않은 인프라 컴포넌트가 호출하고,
+# 판정 데이터를 노출하지 않으므로(상태값/집계 메트릭뿐) 조회 권한(VIEWER)이 필요한 정보가
+# 아니다. 프로덕션에서 이 엔드포인트들을 외부에 노출한다면 내부망/사이드카에서만 접근
+# 가능하도록 네트워크 계층에서 막는 편이 API 키보다 적합하다(TODO, N-06/배포 구조와 연결).
 
 
 @app.get("/health")
@@ -187,8 +201,9 @@ class AnalyzeCallRequest(BaseModel):
 
 
 @app.post("/api/v1/calls/analyze")
-async def analyze_call(req: AnalyzeCallRequest) -> dict:
-    """F-01/F-02/F-05: mcp-server에 판정을 위임하고 결과를 감사증적(postgres, N-01)에 적재한다."""
+async def analyze_call(req: AnalyzeCallRequest, _role: Role = Depends(require_role(Role.HANDLER))) -> dict:
+    """F-01/F-02/F-05: mcp-server에 판정을 위임하고 결과를 감사증적(postgres, N-01)에 적재한다.
+    N-02: 통화를 분석하는 건 "처리" 행위이므로 HANDLER 이상 권한이 필요하다."""
     try:
         result = await analyze_call_service.execute(req.transcript)
     except httpx.HTTPError as e:
@@ -204,9 +219,10 @@ async def analyze_call(req: AnalyzeCallRequest) -> dict:
 
 
 @app.post("/api/v1/calls/analyze-audio")
-async def analyze_call_audio(audio: UploadFile) -> dict:
+async def analyze_call_audio(audio: UploadFile, _role: Role = Depends(require_role(Role.HANDLER))) -> dict:
     """F-05: 모바일 앱이 올린 오디오 청크를 stt-worker로 텍스트 변환한 뒤, analyze_call과
-    동일한 판정 경로(mcp-server 위임 → 감사증적 적재)를 그대로 탄다.
+    동일한 판정 경로(mcp-server 위임 → 감사증적 적재)를 그대로 탄다. N-02: analyze_call과
+    동일하게 HANDLER 이상 권한이 필요하다.
     """
     audio_bytes = await audio.read()
     if not audio_bytes:
@@ -232,15 +248,17 @@ async def analyze_call_audio(audio: UploadFile) -> dict:
 
 
 @app.get("/api/v1/calls")
-async def list_calls(limit: int = 20) -> dict:
-    """F-06: 관제 대시보드의 '탐지 현황' 목록에 쓰인다."""
+async def list_calls(limit: int = 20, _role: Role = Depends(require_role(Role.VIEWER))) -> dict:
+    """F-06: 관제 대시보드의 '탐지 현황' 목록에 쓰인다. N-02: 판정 결과 열람은 VIEWER
+    이상이면 충분하다(HANDLER/ADMIN도 role_satisfies 계층 구조상 통과한다)."""
     results = call_log_query_service.list_recent(limit)
     return {"calls": [_serialize_call_result(r) for r in results]}
 
 
 @app.get("/api/v1/stats/summary")
-async def stats_summary() -> dict:
-    """F-06: 관제 대시보드의 '위험도 분포/처리 통계'에 쓰인다."""
+async def stats_summary(_role: Role = Depends(require_role(Role.VIEWER))) -> dict:
+    """F-06: 관제 대시보드의 '위험도 분포/처리 통계'에 쓰인다. N-02: list_calls와 동일하게
+    VIEWER 이상이면 충분하다."""
     stats = call_log_query_service.stats_summary()
     return {
         "total_analyzed": stats.total_analyzed,
@@ -257,11 +275,12 @@ async def stats_summary() -> dict:
 
 
 @app.post("/api/v1/calls/deepvoice-check")
-async def check_deepvoice(audio: UploadFile) -> dict:
+async def check_deepvoice(audio: UploadFile, _role: Role = Depends(require_role(Role.HANDLER))) -> dict:
     """F-03: 업로드된 통화 음성이 AI 합성 음성인지 판별한다 (v1: 16-bit PCM WAV만 지원).
 
     v1은 음향 특징 기반 휴리스틱이며, 정확도가 검증된 딥보이스 탐지기가 아니다
-    (infrastructure/adapters/deepvoice_adapter.py 상단 주석 참고).
+    (infrastructure/adapters/deepvoice_adapter.py 상단 주석 참고). N-02: analyze_call과
+    동일하게 "처리" 행위라 HANDLER 이상 권한이 필요하다.
     """
     audio_bytes = await audio.read()
     try:
@@ -286,9 +305,10 @@ class ReportRequest(BaseModel):
 
 
 @app.post("/api/v1/reports")
-async def submit_report(req: ReportRequest) -> dict:
+async def submit_report(req: ReportRequest, _role: Role = Depends(require_role(Role.HANDLER))) -> dict:
     """F-07: 고위험 판정 시 신고 접수(mock)를 mcp-server(submit_report)에 위임한다.
     실제 112/경찰청 신고 API는 호출하지 않는다 (RFP 데이터 제약, docs/RFP.md 4장 참고).
+    N-02: 신고 접수도 "처리" 행위라 HANDLER 이상 권한이 필요하다.
     """
     try:
         result = report_submission_service.execute(req.case_summary, req.risk_level)
@@ -312,8 +332,4 @@ async def submit_report(req: ReportRequest) -> dict:
 
 @app.get("/metrics")
 async def metrics() -> PlainTextResponse:
-    # TODO: 인증 없이 노출해도 되는지 검토 (내부망 전용이면 OK, 아니면 N-02와 연결)
     return PlainTextResponse(generate_latest(), media_type=CONTENT_TYPE_LATEST)
-
-
-# TODO: N-02 RBAC 미들웨어/의존성 추가 (조회/처리/관리자 권한 분리)
