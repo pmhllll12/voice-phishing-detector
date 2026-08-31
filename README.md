@@ -341,5 +341,9 @@ Prometheus/Grafana입니다 — 자세한 내용은 위 "재사용한 인프라 
 - [x] N-06 확장성 설계 문서화 ([`docs/design.md`](docs/design.md) — 포트-어댑터 패턴으로
       판정 알고리즘/검색 알고리즘/감사증적 저장소를 3번 실제로 교체한 이력을 근거로
       "재설계 없는 확장"을 검증. 새 사기유형 추가 절차도 구체적으로 문서화)
+- [x] N-02 RBAC을 mcp-server REST 어댑터까지 확장 (docker-compose가 8100 포트를 직접
+      노출해 apps/api를 우회할 수 있던 경로를 막음 — apps/api와 동일한 Role 계층을
+      mcp-server에도 도입, apps/api는 서비스 자격증명(`MCP_SERVICE_API_KEY`)으로 통과.
+      MCP stdio 진입점은 로컬 신뢰 실행 경로라 대상에서 의도적으로 제외)
 <img width="1900" height="1014" alt="Screenshot 2026-08-26 151128_edited" src="https://github.com/user-attachments/assets/5bf57efc-0385-4623-8cec-82461d236ffd" />
 <img width="1910" height="1046" alt="Screenshot 2026-08-26 151151_edited" src="https://github.com/user-attachments/assets/4b36260b-be9d-400e-bbbb-15154a82a299" />

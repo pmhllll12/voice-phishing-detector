@@ -39,7 +39,7 @@ infrastructure를 통째로 갈아끼워도(알고리즘 교체, 저장소 교�
 | 3 | N-01 감사증적 저장소 | `CallLogPort` / `ReportRepositoryPort` | `InMemory*`(테스트 전용) / `Postgres*`(운영) | InMemory→Postgres (`bd68902`) | 0줄 |
 | 4 | F-03 딥보이스 판별기 | `DeepvoiceDetectionPort` | `HeuristicDeepvoiceAdapter`(v1, 실측 데이터로 임계값 보정됨) | 아직 v1뿐 — v2(검증된 스푸핑 탐지 모델)는 TODO | 예정 — 아직 미검증 |
 | 5 | F-01 사기유형 카테고리 | `PatternCategory` enum + `PATTERN_RULES` dict | 4종(기관사칭/공포조성/긴급송금유도/개인정보요구) | 스캐폴딩 초기 커밋부터 4번째 카테고리를 "확장 예시"로 포함 | 0줄 |
-| 6 | N-02 접근권한 역할 | `Role` enum + `role_satisfies` 계층 | VIEWER/HANDLER/ADMIN 3단계 | (신규 도입, 교체 이력 없음 — 계층 구조 자체가 확장 여지) | 0줄 |
+| 6 | N-02 접근권한 역할 | `Role` enum + `role_satisfies` 계층 | VIEWER/HANDLER/ADMIN 3단계, apps/api·mcp-server 양쪽에 동일 구조 | apps/api 도입 → mcp-server로 확장(`c9799af`, 같은 패턴 복붙) | 0줄 |
 
 "application 계층 diff 0줄"은 각 커밋 메시지에 실제로 명시돼 있다. 예를 들어 F-04
 v1→v2 커밋(`2d60b87`)은 "FraudCaseSearchPort 인터페이스를 그대로 유지해
@@ -95,8 +95,14 @@ F-01/F-02 합성 데이터셋 검증(`767eac1`)에서 나머지 3개 카테고�
   같은 application 서비스를 재사용하지만, 진입점 자체의 배선 코드는 복붙돼 있다
   (`rest_server.py` 상단 주석: "공유 모듈로 뽑을 만큼 커지면 그때 리팩터링") — "새
   진입점 프로토콜 추가"(예: gRPC)는 아직 실제로 검증된 확장 축이 아니다.
-- N-02 RBAC은 `apps/api`에만 있고 `mcp-server`에는 없다 — "새 서비스에 접근권한
-  체계를 얹는" 확장은 지금까지 1곳에서만 검증됐다.
+- ~~N-02 RBAC은 apps/api에만 있고 mcp-server에는 없다~~ — 해결됨(2026-08-31). mcp-server
+  REST 어댑터(`rest_server.py`)에도 동일한 `Role`/`role_satisfies` 계층을 도입해
+  `/api/v1/analyze`·`/api/v1/reports`를 보호했다(`infrastructure/adapters/
+  api_key_role_auth.py`, apps/api 것과 값·구조 모두 동일하게 복붙). apps/api는 서비스
+  대 서비스 자격증명(`MCP_SERVICE_API_KEY`)으로 통과한다 — "접근권한 체계를 새 서비스에
+  얹는" 확장도 이제 2곳(apps/api, mcp-server)에서 같은 패턴으로 검증됐다. 다만 MCP
+  stdio 진입점(`server.py`)은 로컬 신뢰 실행 경로라 이 인증 대상에서 의도적으로
+  제외했다 — "모든 진입점에 인증을 강제"까지 검증된 건 아니다.
 - Prometheus 메트릭 네이밍(`vps_` 접두사)은 컨벤션 수준의 확장성이라 코드가 강제하지
   않는다 — 새 메트릭을 추가할 때 접두사를 빼먹어도 아무것도 막지 않는다.
 - F-03 딥보이스 판별기는 포트(`DeepvoiceDetectionPort`)만 준비돼 있고 아직 실제
