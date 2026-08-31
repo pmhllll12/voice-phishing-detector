@@ -47,6 +47,17 @@ scrape_configs:
     #   vps_reports_submitted_total
     #     - Counter, label: channel(자동/수동)
     #     - F-07 신고 접수 건수
+    #
+    #   vps_deepvoice_inference_duration_seconds
+    #     - Histogram
+    #     - F-03 v2(wav2vec2) 모델 추론 1건에 걸린 시간 (콜드스타트 로딩 시간 제외)
+    #
+    #   vps_deepvoice_model_load_duration_seconds
+    #     - Gauge, F-03 v2 모델을 서버 시작 시 로딩하는 데 걸린 시간(1회성)
+    #
+    #   vps_deepvoice_model
+    #     - Info, label: model_name, device
+    #     - 현재 떠 있는 F-03 v2 모델/디바이스 구성 (v1 폴백 중이면 세팅 안 됨)
 
   # ---------------------------------------------------------------------------
   # mcp-server 서비스

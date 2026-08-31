@@ -272,6 +272,9 @@ api/rag-worker/mcp-server/stt-worker 4개 서비스 전부 `/metrics`에서 `vps
 - `vps_deepvoice_detected_total{result}` — F-03 딥보이스 판별 결과(synthetic/authentic)
 - `vps_analysis_duration_seconds` — N-05 판정 소요시간(5초 이내 SLA 계측용)
 - `vps_reports_submitted_total{channel}` — F-07 신고 접수 건수(자동/수동)
+- `vps_deepvoice_inference_duration_seconds` — F-03 v2(wav2vec2) 모델 추론 1건 소요 시간
+- `vps_deepvoice_model_load_duration_seconds` — F-03 v2 모델 콜드스타트 로딩 시간(1회성)
+- `vps_deepvoice_model{model_name,device}` — 현재 떠 있는 F-03 v2 모델/디바이스 구성
 
 **rag-worker (`vps_rag_*`, F-04)**
 - `vps_rag_embedding_inference_duration_seconds` — 쿼리 1건을 임베딩 벡터로 인코딩하는 데
@@ -396,5 +399,12 @@ stt-worker) 전부에 대한 scrape 대상이 설정돼 있고, `docker compose 
       것, grafana 비밀번호가 문자 그대로 `"TODO"`였던 것을 실제로 발견해 고쳤다.
       환경변수는 `${VAR:-기본값}` 패턴으로 빼서 `.env.example`로 문서화함.
       **EC2 배포는 아직 TODO** — 다음 단계로 별도 진행 예정
+- [x] F-03 v2에 서빙 관측 메트릭 추가 (`vps_deepvoice_inference_duration_seconds`/
+      `vps_deepvoice_model_load_duration_seconds`/`vps_deepvoice_model` — rag-worker/
+      stt-worker가 이미 갖고 있던 "추론시간/콜드스타트/모델정보" 3종 패턴을 F-03에도
+      맞춤. 실측: 콜드스타트 로딩 2.47초, 추론 1건 0.54초(CPU). 전용 추론 서버
+      (Triton 등)는 지금 규모(94.6M 파라미터, 로컬 요청 시 호출)에서는 불필요하다고
+      판단해 도입하지 않음 — 판단 근거와 재검토 조건은
+      `wav2vec2_deepvoice_adapter.py` 상단 "WHY 전용 추론 서버가 아직 없는가" 참고)
 <img width="1900" height="1014" alt="Screenshot 2026-08-26 151128_edited" src="https://github.com/user-attachments/assets/5bf57efc-0385-4623-8cec-82461d236ffd" />
 <img width="1910" height="1046" alt="Screenshot 2026-08-26 151151_edited" src="https://github.com/user-attachments/assets/4b36260b-be9d-400e-bbbb-15154a82a299" />

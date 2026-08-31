@@ -33,9 +33,21 @@
 # 모델을 받아야 하므로 네트워크가 없거나, 라벨 체계를 알 수 없는 모델로 잘못
 # 설정되면 판별 자체가 불가능해진다. 이럴 때 판정이 아예 실패하는 대신 v1(휴리스틱)로
 # 안전하게 넘어간다.
+#
+# WHY 전용 추론 서버(Triton 등)가 아직 없는가: 이 모델은 94.6M 파라미터, CPU 고정
+# 실행이라 이 프로세스(uvicorn 워커) 안에서 in-process로 로드해도 콜드스타트/추론
+# 지연이 충분히 낮다(vps_deepvoice_model_load_duration_seconds/
+# vps_deepvoice_inference_duration_seconds로 실측 가능 — infrastructure/metrics.py
+# 참고). 이 프로젝트의 유일한 "진짜" 모델 서버는 Ollama(F-01/F-02, mcp-server가
+# HTTP로 호출)뿐이고, F-04(rag-worker)/F-05(stt-worker)도 F-03과 같은 in-process
+# 패턴이다. 전용 추론 서버가 의미 있어지는 지점은 (1) 배치로 묶어야 할 만큼 QPS가
+# 높아지거나, (2) 여러 서비스가 같은 모델을 공유해야 하거나, (3) GPU 동적 배치/
+# 모델 버저닝이 필요해질 때다 — 지금 규모(로컬 포트폴리오, 요청 시에만 호출)에서는
+# 셋 다 해당하지 않는다는 걸 위 두 메트릭으로 계속 관측하면서 재평가할 지점으로 남긴다.
 
 import io
 import logging
+import time
 import wave
 
 import numpy as np
@@ -43,6 +55,11 @@ import numpy as np
 from src.domain.deepvoice import DeepvoiceIndicator, DeepvoiceVerdict
 from src.domain.ports import DeepvoiceDetectionPort
 from src.infrastructure.adapters.deepvoice_adapter import HeuristicDeepvoiceAdapter
+from src.infrastructure.metrics import (
+    deepvoice_inference_duration_seconds,
+    deepvoice_model_info,
+    deepvoice_model_load_duration_seconds,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +120,9 @@ class Wav2Vec2DeepvoiceAdapter:
     def _load_pipeline(self) -> None:
         from transformers import pipeline  # noqa: PLC0415 — torch/transformers는 F-03에만 필요한 무거운 의존성이라 지연 임포트
 
+        started_at = time.monotonic()
         self._pipeline = pipeline("audio-classification", model=self._model_name, device="cpu")
+        load_seconds = time.monotonic() - started_at
 
         id2label: dict[int, str] = self._pipeline.model.config.id2label
         synthetic = next(
@@ -121,11 +140,16 @@ class Wav2Vec2DeepvoiceAdapter:
             )
         self._synthetic_label = synthetic
         self._authentic_label = authentic
+
+        deepvoice_model_load_duration_seconds.set(load_seconds)
+        deepvoice_model_info.info({"model_name": self._model_name, "device": "cpu"})
+
         logger.info(
-            "wav2vec2 딥보이스 모델 로드 완료: model=%s synthetic_label=%s authentic_label=%s",
+            "wav2vec2 딥보이스 모델 로드 완료: model=%s synthetic_label=%s authentic_label=%s load_seconds=%.2f",
             self._model_name,
             synthetic,
             authentic,
+            load_seconds,
         )
 
     def analyze(self, audio_bytes: bytes) -> DeepvoiceVerdict:
@@ -141,7 +165,9 @@ class Wav2Vec2DeepvoiceAdapter:
                     indicators=[],
                     explanation="오디오 길이가 너무 짧아 판단할 수 없습니다.",
                 )
+            inference_started_at = time.monotonic()
             results = self._pipeline({"array": samples, "sampling_rate": sample_rate})
+            deepvoice_inference_duration_seconds.observe(time.monotonic() - inference_started_at)
         except Exception as e:  # noqa: BLE001 — 추론 실패도 판정 불가가 아니라 v1로 안전 폴백
             logger.warning("wav2vec2 딥보이스 추론 실패, v1 휴리스틱으로 폴백: %s", e)
             return self._fallback.analyze(audio_bytes)
