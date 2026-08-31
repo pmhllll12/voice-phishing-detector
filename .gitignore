@@ -26,3 +26,11 @@ out/
 # Docker volumes local data (if bind-mounted for dev)
 postgres_data/
 grafana_data/
+
+# Jekyll (jekyll/ — 제안서 사이트, Gemfile.lock은 커밋함)
+jekyll/_site/
+jekyll/.jekyll-cache/
+jekyll/.jekyll-metadata
+jekyll/.sass-cache/
+jekyll/vendor/
+jekyll/.bundle/
