@@ -1,0 +1,145 @@
+name: tests
+
+# 우선순위 3(테스트 & CI): PR마다 4개 서비스(api/mcp-server/rag-worker/stt-worker)의
+# pytest 스위트(137개, 2026-08-31 기준)를 자동 실행한다. Ollama/GPU가 없는 환경에서도
+# 통과하도록 이미 설계돼 있는 걸 로컬에서 직접 확인했다(Ollama를 실제로 내려보고
+# mcp-server 71개 테스트가 전부 통과하는 것까지 확인 — 자동 폴백 덕분).
+#
+# postgres가 필요한 테스트(N-01 감사증적, F-04 pgvector)는 skipif로 "접속 안 되면
+# 건너뛰기"가 이미 돼 있지만, CI에서는 postgres 서비스 컨테이너를 띄워서 실제로
+# 돌아가게 한다 — 건너뛰는 것보다 실행되는 게 커버리지가 실질적이다.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: vps_app
+          POSTGRES_PASSWORD: vps_dev_password
+          POSTGRES_DB: vps_detector
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vps_app -d vps_detector"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://vps_app:vps_dev_password@localhost:5432/vps_detector
+      TEST_DATABASE_URL: postgresql://vps_app:vps_dev_password@localhost:5432/vps_detector
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: apps/api/requirements-dev.txt
+      - name: infra/db/init.sql 적용 (N-01 감사증적 + F-04 pgvector 스키마)
+        run: PGPASSWORD=vps_dev_password psql -h localhost -U vps_app -d vps_detector -f infra/db/init.sql
+      - name: 의존성 설치
+        working-directory: apps/api
+        run: pip install -r requirements-dev.txt
+      - name: pytest
+        working-directory: apps/api
+        run: python -m pytest -q
+
+  mcp-server:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: vps_app
+          POSTGRES_PASSWORD: vps_dev_password
+          POSTGRES_DB: vps_detector
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vps_app -d vps_detector"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://vps_app:vps_dev_password@localhost:5432/vps_detector
+      TEST_DATABASE_URL: postgresql://vps_app:vps_dev_password@localhost:5432/vps_detector
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: apps/mcp-server/requirements-dev.txt
+      - name: infra/db/init.sql 적용
+        run: PGPASSWORD=vps_dev_password psql -h localhost -U vps_app -d vps_detector -f infra/db/init.sql
+      - name: 의존성 설치
+        working-directory: apps/mcp-server
+        run: pip install -r requirements-dev.txt
+      - name: pytest
+        working-directory: apps/mcp-server
+        # Ollama 없이도 자동 폴백(규칙 기반)으로 전부 통과하도록 설계돼 있다
+        # (ollama_call_analysis_adapter.py 상단 주석 참고, 로컬에서 실측 확인함).
+        run: python -m pytest -q
+
+  rag-worker:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: vps_app
+          POSTGRES_PASSWORD: vps_dev_password
+          POSTGRES_DB: vps_detector
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vps_app -d vps_detector"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://vps_app:vps_dev_password@localhost:5432/vps_detector
+      TEST_DATABASE_URL: postgresql://vps_app:vps_dev_password@localhost:5432/vps_detector
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: apps/rag-worker/requirements-dev.txt
+      - name: infra/db/init.sql 적용
+        run: PGPASSWORD=vps_dev_password psql -h localhost -U vps_app -d vps_detector -f infra/db/init.sql
+      - name: 의존성 설치
+        working-directory: apps/rag-worker
+        # GPU가 없는 러너라 CUDA 인덱스 지정 없이 설치 — sentence-transformers가
+        # 자동으로 CPU torch를 받고, 코드가 CPU로 폴백한다(README 로컬 실행 안내와
+        # 동일한 원리, apps/rag-worker/requirements.txt 상단 주석 참고).
+        run: pip install -r requirements-dev.txt
+      - name: pytest
+        working-directory: apps/rag-worker
+        run: python -m pytest -q
+
+  stt-worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: apps/stt-worker/requirements-dev.txt
+      - name: 의존성 설치
+        working-directory: apps/stt-worker
+        run: pip install -r requirements-dev.txt
+      - name: pytest
+        working-directory: apps/stt-worker
+        # 테스트가 가짜 어댑터만 쓰고 실제 faster-whisper 모델은 로드하지 않아
+        # postgres/GPU/네트워크 의존성이 전혀 없다(tests/test_ready_endpoint.py 상단
+        # 주석 참고).
+        run: python -m pytest -q
