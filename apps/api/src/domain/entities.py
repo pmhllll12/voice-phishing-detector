@@ -67,14 +67,21 @@ class CallAnalysisResult:
     similar_cases(F-04)도 mcp-server가 이미 판정 근거에 결합해서 내려주므로 그대로 옮겨 담는다
     (mcp-server CallAnalysisService 참고) — api 쪽에서 rag-worker를 직접 부르지 않는다.
 
+    masked_transcript(N-03): raw_transcript에서 전화번호/계좌번호/주민등록번호/이름을
+    제거한 버전(domain/pii_masking.py). mcp-server 판정 자체도 이 마스킹된 텍스트로
+    수행한다(AnalyzeCallService 참고) — 실제 PII 값은 판정에 필요 없고, 로컬이라도
+    외부 프로세스(Ollama)로 원문이 나가지 않게 하기 위함. raw_transcript는 감사증적
+    보존을 위해 여전히 저장하지만, N-02 RBAC과 결합해 ADMIN 권한에서만 노출한다
+    (api/main.py _serialize_call_result 참고) — VIEWER/HANDLER는 masked_transcript만 본다.
+
     TODO:
       - is_deepvoice: bool | None — F-03 (지금은 /api/v1/calls/deepvoice-check가 별도 엔드포인트로
         분리되어 있음, 하나의 통화 판정으로 결합할지는 F-06 대시보드 요구사항 보고 결정)
-      - masked_transcript: str — N-03 (개인정보 마스킹된 통화 텍스트, raw_transcript 대신 노출)
     """
 
     call_id: str
     raw_transcript: str
+    masked_transcript: str
     risk_score: int
     risk_level: RiskLevel
     detected_patterns: list[DetectedPatternSummary]

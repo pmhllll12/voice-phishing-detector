@@ -24,9 +24,10 @@ from src.domain.entities import (
     StatsSummary,
     compute_stats_summary,
 )
+from src.domain.pii_masking import mask_pii
 
 _SELECT_COLUMNS = (
-    "call_id, raw_transcript, risk_score, risk_level, detected_patterns, "
+    "call_id, raw_transcript, masked_transcript, risk_score, risk_level, detected_patterns, "
     "explanation_summary, explanation, similar_cases, analyzed_at"
 )
 
@@ -52,11 +53,12 @@ class PostgresCallLogRepository:
             f"""
             INSERT INTO call_analysis_results
                 ({_SELECT_COLUMNS})
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 result.call_id,
                 result.raw_transcript,
+                result.masked_transcript,
                 result.risk_score,
                 result.risk_level.value,
                 Jsonb(
@@ -100,6 +102,7 @@ class PostgresCallLogRepository:
         (
             call_id,
             raw_transcript,
+            masked_transcript,
             risk_score,
             risk_level,
             detected_patterns,
@@ -108,9 +111,16 @@ class PostgresCallLogRepository:
             similar_cases,
             analyzed_at,
         ) = row
+        # N-03 도입(2026-08-31) 이전에 적재된 행은 masked_transcript 컬럼이 NULL이다
+        # (infra/db/init.sql의 ALTER TABLE ADD COLUMN 참고 — 기존 행을 backfill하지
+        # 않음). 그런 레거시 행을 읽을 때는 그 자리에서 마스킹해 채워준다 — 그래야
+        # 오래된 감사증적을 조회해도 원문이 그대로 노출되는 일이 없다.
+        if masked_transcript is None:
+            masked_transcript = mask_pii(raw_transcript)
         return CallAnalysisResult(
             call_id=str(call_id),
             raw_transcript=raw_transcript,
+            masked_transcript=masked_transcript,
             risk_score=risk_score,
             risk_level=RiskLevel(risk_level),
             detected_patterns=[DetectedPatternSummary(**p) for p in detected_patterns],

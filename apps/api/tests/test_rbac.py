@@ -70,6 +70,7 @@ def test_handler_key_reaches_handler_endpoint_handler(monkeypatch):
         return CallAnalysisResult(
             call_id="fake-call-id",
             raw_transcript=transcript,
+            masked_transcript=transcript,
             risk_score=10,
             risk_level=RiskLevel.LOW,
             detected_patterns=[],
@@ -89,6 +90,41 @@ def test_handler_key_reaches_handler_endpoint_handler(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["call_id"] == "fake-call-id"
+
+
+def test_raw_transcript_hidden_from_handler_but_shown_to_admin(monkeypatch):
+    """N-02 x N-03: masked_transcript는 누구나 보지만, raw_transcript(원문)는 ADMIN
+    권한에서만 응답에 포함돼야 한다(domain/entities.py CallAnalysisResult, main.py
+    _serialize_call_result 참고)."""
+
+    async def _fake_execute(transcript: str) -> CallAnalysisResult:
+        return CallAnalysisResult(
+            call_id="fake-call-id",
+            raw_transcript="검찰청인데 010-1234-5678로 전화드렸습니다",
+            masked_transcript="검찰청인데 [전화번호]로 전화드렸습니다",
+            risk_score=10,
+            risk_level=RiskLevel.LOW,
+            detected_patterns=[],
+            explanation_summary="위험도 낮음",
+            explanation="특이사항 없음",
+            analyzed_at=datetime.datetime.now(datetime.timezone.utc),
+            similar_cases=[],
+        )
+
+    monkeypatch.setattr(main.analyze_call_service, "execute", _fake_execute)
+
+    handler_response = client.post(
+        "/api/v1/calls/analyze", json={"transcript": "x"}, headers={"X-API-Key": HANDLER_KEY}
+    )
+    admin_response = client.post(
+        "/api/v1/calls/analyze", json={"transcript": "x"}, headers={"X-API-Key": ADMIN_KEY}
+    )
+
+    assert handler_response.json()["masked_transcript"] == "검찰청인데 [전화번호]로 전화드렸습니다"
+    assert "raw_transcript" not in handler_response.json()
+
+    assert admin_response.json()["masked_transcript"] == "검찰청인데 [전화번호]로 전화드렸습니다"
+    assert admin_response.json()["raw_transcript"] == "검찰청인데 010-1234-5678로 전화드렸습니다"
 
 
 def test_admin_key_satisfies_both_viewer_and_handler_endpoints(monkeypatch):

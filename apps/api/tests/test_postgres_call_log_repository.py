@@ -63,6 +63,7 @@ def _make_result(call_id: str | None = None, **overrides) -> CallAnalysisResult:
     defaults = dict(
         call_id=call_id or str(uuid.uuid4()),
         raw_transcript="검찰청인데 안전계좌로 이체하세요",
+        masked_transcript="검찰청인데 안전계좌로 이체하세요",
         risk_score=95,
         risk_level=RiskLevel.HIGH,
         detected_patterns=[
@@ -96,6 +97,7 @@ def test_add_and_list_recent_round_trips_all_fields(repository):
     got = fetched[0]
     assert got.call_id == result.call_id
     assert got.raw_transcript == result.raw_transcript
+    assert got.masked_transcript == result.masked_transcript
     assert got.risk_score == result.risk_score
     assert got.risk_level == RiskLevel.HIGH
     assert got.detected_patterns == result.detected_patterns
@@ -151,3 +153,40 @@ def test_append_only_trigger_rejects_delete(repository):
 
 def test_ping_succeeds_when_reachable(repository):
     repository.ping()  # 예외 없이 통과하면 성공
+
+
+def test_legacy_row_without_masked_transcript_is_masked_on_read():
+    """N-03 도입(2026-08-31) 전에 적재된 행은 masked_transcript가 NULL이다(컬럼을
+    ALTER TABLE로 추가했고 기존 행을 backfill하지 않음, infra/db/init.sql 참고). 이런
+    레거시 행도 읽을 때 그 자리에서 마스킹돼야 한다 — 그렇지 않으면 프런트엔드가 null을
+    그대로 받아 깨지거나(과거 실제로 발생), 원문 PII가 그대로 노출된다."""
+    schema = f"test_{uuid.uuid4().hex[:8]}"
+    setup_conn = psycopg.connect(TEST_DSN, autocommit=True)
+    setup_conn.execute(f"CREATE SCHEMA {schema}")
+    setup_conn.execute(f"SET search_path TO {schema}, public")
+    setup_conn.execute(INIT_SQL)
+    setup_conn.execute(
+        """
+        INSERT INTO call_analysis_results
+            (call_id, raw_transcript, masked_transcript, risk_score, risk_level,
+             detected_patterns, explanation_summary, explanation, similar_cases, analyzed_at)
+        VALUES (%s, %s, NULL, %s, %s, '[]'::jsonb, %s, %s, '[]'::jsonb, %s)
+        """,
+        (
+            str(uuid.uuid4()),
+            "010-1234-5678로 전화드렸습니다",
+            10,
+            "low",
+            "위험도 낮음",
+            "특이사항 없음",
+            datetime.datetime.now(datetime.timezone.utc),
+        ),
+    )
+
+    repo = PostgresCallLogRepository(TEST_DSN, options=f"-c search_path={schema},public")
+    fetched = repo.list_recent(1)
+
+    setup_conn.execute(f"DROP SCHEMA {schema} CASCADE")
+    setup_conn.close()
+
+    assert fetched[0].masked_transcript == "[전화번호]로 전화드렸습니다"

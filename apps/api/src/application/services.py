@@ -13,6 +13,7 @@ from src.domain.entities import (
     SimilarCaseSummary,
     StatsSummary,
 )
+from src.domain.pii_masking import mask_pii
 from src.domain.ports import (
     CallAnalysisPort,
     CallLogPort,
@@ -35,7 +36,7 @@ class AnalyzeCallService:
          내려주므로(raw["similar_cases"]) 여기서는 그대로 옮겨 담기만 한다.
       2. N-05 응답시간(5초) SLA 계측 — infrastructure/metrics.py의
          vps_analysis_duration_seconds 로 계측
-      3. N-03 개인정보 마스킹 — mcp-server에 넘기기 전 또는 저장 전에 적용
+      3. (완료) N-03 개인정보 마스킹 — mcp-server에 넘기기 전에 적용(아래 참고)
     """
 
     def __init__(self, call_analysis_port: CallAnalysisPort, call_log_port: CallLogPort):
@@ -43,11 +44,15 @@ class AnalyzeCallService:
         self._call_log_port = call_log_port
 
     async def execute(self, transcript: str) -> CallAnalysisResult:
-        raw = self._call_analysis_port.analyze(transcript)
+        # N-03: mcp-server(LLM 포함)에는 마스킹된 텍스트만 보낸다 — domain/pii_masking.py
+        # 상단 주석 참고("WHY 마스킹을 mcp-server 호출 전에 적용하는가").
+        masked_transcript = mask_pii(transcript)
+        raw = self._call_analysis_port.analyze(masked_transcript)
 
         result = CallAnalysisResult(
             call_id=str(uuid.uuid4()),
             raw_transcript=transcript,
+            masked_transcript=masked_transcript,
             risk_score=raw["risk_score"],
             risk_level=RiskLevel(raw["risk_level"]),
             detected_patterns=[

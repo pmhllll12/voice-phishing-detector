@@ -96,9 +96,9 @@ export function RecentCallsTable({ calls }: { calls: CallAnalysis[] }) {
           {calls.map((call) => {
             const meta = RISK_LEVEL_META[call.risk_level];
             const excerpt =
-              call.raw_transcript.length > 60
-                ? `${call.raw_transcript.slice(0, 60)}…`
-                : call.raw_transcript;
+              call.masked_transcript.length > 60
+                ? `${call.masked_transcript.slice(0, 60)}…`
+                : call.masked_transcript;
 
             return (
               <tr key={call.call_id} style={{ borderBottom: "1px solid var(--gridline)" }}>

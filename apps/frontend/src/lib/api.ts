@@ -31,7 +31,12 @@ export interface SimilarCase {
 export interface CallAnalysis {
   call_id: string;
   analyzed_at: string;
-  raw_transcript: string;
+  // N-03: 항상 마스킹된 버전만 온다(전화번호/계좌번호/이름 등 제거). raw_transcript(원문)는
+  // N-02 RBAC상 ADMIN 키로 호출했을 때만 응답에 포함되므로 optional — 이 대시보드는 기본
+  // handler 키를 쓰므로(dev-handler-key) 평소엔 안 온다(apps/api/src/main.py
+  // _serialize_call_result 참고).
+  masked_transcript: string;
+  raw_transcript?: string;
   risk_score: number;
   risk_level: RiskLevel;
   detected_patterns: DetectedPattern[];

@@ -14,6 +14,7 @@
 CREATE TABLE IF NOT EXISTS call_analysis_results (
     call_id UUID PRIMARY KEY,
     raw_transcript TEXT NOT NULL,
+    masked_transcript TEXT,
     risk_score INTEGER NOT NULL,
     risk_level TEXT NOT NULL,
     detected_patterns JSONB NOT NULL,
@@ -22,6 +23,13 @@ CREATE TABLE IF NOT EXISTS call_analysis_results (
     similar_cases JSONB NOT NULL DEFAULT '[]'::jsonb,
     analyzed_at TIMESTAMPTZ NOT NULL
 );
+
+-- N-03(2026-08-31): 기존에 이미 만들어진 테이블(위 CREATE TABLE IF NOT EXISTS는 신규
+-- 테이블에만 적용됨)에도 마스킹 컬럼을 추가한다 — NOT NULL로 안 하는 이유는 이 컬럼
+-- 도입 전에 쌓인 기존 행에는 값이 없어서(NULL), NOT NULL 제약을 걸면 이 마이그레이션
+-- 자체가 실패한다. 도입 이후 적재되는 행은 애플리케이션이 항상 채운다
+-- (PostgresCallLogRepository.add 참고).
+ALTER TABLE call_analysis_results ADD COLUMN IF NOT EXISTS masked_transcript TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_call_analysis_results_analyzed_at
     ON call_analysis_results (analyzed_at DESC);

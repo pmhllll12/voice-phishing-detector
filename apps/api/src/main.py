@@ -31,7 +31,7 @@ from src.application.services import (
     ReportSubmissionService,
     TranscribeAndAnalyzeCallService,
 )
-from src.domain.entities import CallAnalysisResult, Role
+from src.domain.entities import CallAnalysisResult, Role, role_satisfies
 from src.infrastructure.adapters.api_key_role_auth import require_role
 from src.infrastructure.adapters.deepvoice_adapter import HeuristicDeepvoiceAdapter
 from src.infrastructure.adapters.mcp_client_adapter import McpServerCallAnalysisAdapter
@@ -78,11 +78,14 @@ deepvoice_detection_service = DeepvoiceDetectionService(HeuristicDeepvoiceAdapte
 report_submission_service = ReportSubmissionService(McpServerReportAdapter(MCP_SERVER_URL))
 
 
-def _serialize_call_result(result: CallAnalysisResult) -> dict:
-    return {
+def _serialize_call_result(result: CallAnalysisResult, role: Role) -> dict:
+    # N-03 x N-02: masked_transcript(전화번호/계좌번호/이름 등을 지운 버전)는 누구나 본다.
+    # raw_transcript(원문)는 ADMIN 권한에서만 포함한다 — 조회/처리 권한만으로는 원문에
+    # 접근할 수 없다(domain/entities.py CallAnalysisResult 상단 주석 참고).
+    payload = {
         "call_id": result.call_id,
         "analyzed_at": result.analyzed_at.isoformat(),
-        "raw_transcript": result.raw_transcript,
+        "masked_transcript": result.masked_transcript,
         "risk_score": result.risk_score,
         "risk_level": result.risk_level.value,
         "detected_patterns": [
@@ -107,6 +110,9 @@ def _serialize_call_result(result: CallAnalysisResult) -> dict:
             for c in result.similar_cases
         ],
     }
+    if role_satisfies(role, Role.ADMIN):
+        payload["raw_transcript"] = result.raw_transcript
+    return payload
 
 
 # N-02: /health, /ready, /metrics는 의도적으로 인증을 걸지 않는다 — 헬스체크(오케스트레이터/
@@ -201,7 +207,7 @@ class AnalyzeCallRequest(BaseModel):
 
 
 @app.post("/api/v1/calls/analyze")
-async def analyze_call(req: AnalyzeCallRequest, _role: Role = Depends(require_role(Role.HANDLER))) -> dict:
+async def analyze_call(req: AnalyzeCallRequest, role: Role = Depends(require_role(Role.HANDLER))) -> dict:
     """F-01/F-02/F-05: mcp-server에 판정을 위임하고 결과를 감사증적(postgres, N-01)에 적재한다.
     N-02: 통화를 분석하는 건 "처리" 행위이므로 HANDLER 이상 권한이 필요하다."""
     try:
@@ -215,11 +221,11 @@ async def analyze_call(req: AnalyzeCallRequest, _role: Role = Depends(require_ro
                 "uvicorn rest_server:app --app-dir src --port 8100)."
             ),
         ) from e
-    return _serialize_call_result(result)
+    return _serialize_call_result(result, role)
 
 
 @app.post("/api/v1/calls/analyze-audio")
-async def analyze_call_audio(audio: UploadFile, _role: Role = Depends(require_role(Role.HANDLER))) -> dict:
+async def analyze_call_audio(audio: UploadFile, role: Role = Depends(require_role(Role.HANDLER))) -> dict:
     """F-05: 모바일 앱이 올린 오디오 청크를 stt-worker로 텍스트 변환한 뒤, analyze_call과
     동일한 판정 경로(mcp-server 위임 → 감사증적 적재)를 그대로 탄다. N-02: analyze_call과
     동일하게 HANDLER 이상 권한이 필요하다.
@@ -244,15 +250,15 @@ async def analyze_call_audio(audio: UploadFile, _role: Role = Depends(require_ro
                 "uvicorn src.main:app --port 8300)."
             ),
         ) from e
-    return _serialize_call_result(result)
+    return _serialize_call_result(result, role)
 
 
 @app.get("/api/v1/calls")
-async def list_calls(limit: int = 20, _role: Role = Depends(require_role(Role.VIEWER))) -> dict:
+async def list_calls(limit: int = 20, role: Role = Depends(require_role(Role.VIEWER))) -> dict:
     """F-06: 관제 대시보드의 '탐지 현황' 목록에 쓰인다. N-02: 판정 결과 열람은 VIEWER
     이상이면 충분하다(HANDLER/ADMIN도 role_satisfies 계층 구조상 통과한다)."""
     results = call_log_query_service.list_recent(limit)
-    return {"calls": [_serialize_call_result(r) for r in results]}
+    return {"calls": [_serialize_call_result(r, role) for r in results]}
 
 
 @app.get("/api/v1/stats/summary")
