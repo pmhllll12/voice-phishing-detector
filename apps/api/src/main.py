@@ -15,6 +15,7 @@
 # main.py는 infrastructure 계층에 해당한다 (프레임워크 진입점이므로).
 
 import os
+import time
 
 import httpx
 import psycopg
@@ -31,6 +32,7 @@ from src.application.services import (
     ReportSubmissionService,
     TranscribeAndAnalyzeCallService,
 )
+from src.domain.deepvoice import DeepvoiceVerdict
 from src.domain.entities import CallAnalysisResult, Role, role_satisfies
 from src.infrastructure.adapters.api_key_role_auth import require_role
 from src.infrastructure.adapters.deepvoice_adapter import HeuristicDeepvoiceAdapter
@@ -38,7 +40,13 @@ from src.infrastructure.adapters.mcp_client_adapter import McpServerCallAnalysis
 from src.infrastructure.adapters.postgres_call_log_repository import PostgresCallLogRepository
 from src.infrastructure.adapters.report_client_adapter import McpServerReportAdapter
 from src.infrastructure.adapters.stt_client_adapter import SttWorkerTranscriptionAdapter
-from src.infrastructure.metrics import reports_submitted_total
+from src.infrastructure.metrics import (
+    analysis_duration_seconds,
+    calls_analyzed_total,
+    deepvoice_detected_total,
+    reports_submitted_total,
+    risk_score_distribution,
+)
 
 # F-01/F-02/F-05: mcp-server REST 어댑터 주소. docker-compose로 묶이면 컨테이너 네트워크
 # 주소(예: http://mcp-server:8100)로 오버라이드하면 되도록 환경변수로 뺐다.
@@ -117,6 +125,27 @@ def _serialize_call_result(result: CallAnalysisResult, role: Role) -> dict:
     if role_satisfies(role, Role.ADMIN):
         payload["raw_transcript"] = result.raw_transcript
     return payload
+
+
+def _record_analysis_metrics(result: CallAnalysisResult, started_at: float) -> None:
+    """N-05: 판정이 성공적으로 산출된 경로에서만 기록한다 — mcp-server 연결 실패 등
+    에러 경로는 "판정 소요시간"이 아니라 가용성 문제이므로 5초 SLA 계측(vps_analysis_
+    duration_seconds)에 섞지 않는다. analyze_call_audio에서는 stt-worker 변환 시간까지
+    포함해 측정한다 — N-05가 말하는 "통화 종료 후 판정까지"는 사용자 관점의 전체 응답
+    시간이라 STT도 그 안에 들어가야 한다."""
+    analysis_duration_seconds.observe(time.monotonic() - started_at)
+    calls_analyzed_total.labels(risk_level=result.risk_level.value).inc()
+    risk_score_distribution.observe(result.risk_score)
+
+
+def _record_deepvoice_metrics(verdict: DeepvoiceVerdict) -> None:
+    """N-05: is_synthetic이 None(신호 부족으로 판단 보류)이면 "synthetic"도 "authentic"도
+    아니므로 기록하지 않는다 — vps_deepvoice_detected_total의 result 라벨은 두 값만
+    문서화돼 있다 (infrastructure/metrics.py 참고)."""
+    if verdict.is_synthetic is not None:
+        deepvoice_detected_total.labels(
+            result="synthetic" if verdict.is_synthetic else "authentic"
+        ).inc()
 
 
 # N-02: /health, /ready, /metrics는 의도적으로 인증을 걸지 않는다 — 헬스체크(오케스트레이터/
@@ -214,6 +243,7 @@ class AnalyzeCallRequest(BaseModel):
 async def analyze_call(req: AnalyzeCallRequest, role: Role = Depends(require_role(Role.HANDLER))) -> dict:
     """F-01/F-02/F-05: mcp-server에 판정을 위임하고 결과를 감사증적(postgres, N-01)에 적재한다.
     N-02: 통화를 분석하는 건 "처리" 행위이므로 HANDLER 이상 권한이 필요하다."""
+    started_at = time.monotonic()
     try:
         result = await analyze_call_service.execute(req.transcript)
     except httpx.HTTPError as e:
@@ -225,6 +255,7 @@ async def analyze_call(req: AnalyzeCallRequest, role: Role = Depends(require_rol
                 "uvicorn rest_server:app --app-dir src --port 8100)."
             ),
         ) from e
+    _record_analysis_metrics(result, started_at)
     return _serialize_call_result(result, role)
 
 
@@ -234,6 +265,7 @@ async def analyze_call_audio(audio: UploadFile, role: Role = Depends(require_rol
     동일한 판정 경로(mcp-server 위임 → 감사증적 적재)를 그대로 탄다. N-02: analyze_call과
     동일하게 HANDLER 이상 권한이 필요하다.
     """
+    started_at = time.monotonic()
     audio_bytes = await audio.read()
     if not audio_bytes:
         raise HTTPException(status_code=422, detail="빈 오디오 파일입니다.")
@@ -254,6 +286,7 @@ async def analyze_call_audio(audio: UploadFile, role: Role = Depends(require_rol
                 "uvicorn src.main:app --port 8300)."
             ),
         ) from e
+    _record_analysis_metrics(result, started_at)
     return _serialize_call_result(result, role)
 
 
@@ -297,6 +330,8 @@ async def check_deepvoice(audio: UploadFile, _role: Role = Depends(require_role(
         verdict = await deepvoice_detection_service.execute(audio_bytes)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
+
+    _record_deepvoice_metrics(verdict)
 
     return {
         "is_synthetic": verdict.is_synthetic,

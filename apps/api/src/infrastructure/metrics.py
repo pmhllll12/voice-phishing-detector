@@ -1,7 +1,9 @@
 # infrastructure 계층: Prometheus 클라이언트 연동.
 # 아래 5개 메트릭은 prometheus/prometheus.yml에 이미 문서화해둔 커스텀 메트릭과 이름을
-# 맞춰뒀다. reports_submitted_total은 main.py의 submit_report(F-07)에서 이미 .inc()로
-# 연결됨. 나머지 4개는 아직 application 계층 로직에 연결 전이라 TODO로 남겨둔다.
+# 맞춰뒀다. N-05(2026-08-31)로 전부 main.py에 연결 완료 — analysis_duration_seconds/
+# calls_analyzed_total/risk_score_distribution은 analyze_call·analyze_call_audio에서
+# _record_analysis_metrics로, deepvoice_detected_total은 check_deepvoice에서
+# _record_deepvoice_metrics로, reports_submitted_total은 submit_report에서 기록한다.
 
 from prometheus_client import Counter, Histogram
 
@@ -38,7 +40,3 @@ reports_submitted_total = Counter(
     "Total number of reports submitted",
     labelnames=["channel"],  # "auto" | "manual"
 )
-
-# TODO: AnalyzeCallService.execute() 안에서 위 메트릭들을 실제로 기록하도록 연결
-# TODO: analysis_duration_seconds는 @analysis_duration_seconds.time() 데코레이터
-#       또는 with 블록으로 감싸면 편함
