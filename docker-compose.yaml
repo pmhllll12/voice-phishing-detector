@@ -31,6 +31,9 @@ services:
       # adapters/api_key_role_auth.py DEFAULT_API_KEYS와 동일). 프로덕션에서는 반드시
       # 실제 발급 키로 교체할 것.
       - API_KEYS=dev-viewer-key:viewer,dev-handler-key:handler,dev-admin-key:admin
+      # N-02: mcp-server 호출용 서비스 자격증명 — mcp-server의 API_KEYS(아래)에 등록된
+      # handler 키와 동일해야 한다.
+      - MCP_SERVICE_API_KEY=dev-handler-key
     depends_on:
       - postgres
       - redis
@@ -51,6 +54,10 @@ services:
       - "8100:8100"
     environment:
       - DATABASE_URL=postgresql://vps_app:vps_dev_password@postgres:5432/vps_detector
+      # N-02: apps/api와 의도적으로 동일한 값(api_key_role_auth.py 상단 주석 참고) —
+      # api가 서비스 자격증명(MCP_SERVICE_API_KEY, 위 api 서비스 참고)으로 이 중
+      # dev-handler-key를 그대로 쓴다.
+      - API_KEYS=dev-viewer-key:viewer,dev-handler-key:handler,dev-admin-key:admin
     depends_on:
       - postgres
     # TODO: MCP transport 방식 결정 (stdio vs SSE vs streamable-http) 후

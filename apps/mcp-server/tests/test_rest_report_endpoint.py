@@ -16,6 +16,9 @@ from application.services import ReportSubmissionService
 from infrastructure.adapters.in_memory_report_repository import InMemoryReportRepository
 
 client = TestClient(rest_server.app)
+# N-02: /api/v1/reports는 HANDLER 이상 권한을 요구한다 — api_key_role_auth.py의
+# DEFAULT_API_KEYS 중 handler 키.
+_HANDLER_HEADERS = {"X-API-Key": "dev-handler-key"}
 
 
 @pytest.fixture(autouse=True)
@@ -25,7 +28,7 @@ def _use_in_memory_report_repository(monkeypatch):
 
 def test_high_risk_report_is_submitted_via_rest():
     response = client.post(
-        "/api/v1/reports", json={"case_summary": "검찰 사칭 통화", "risk_level": "high"}
+        "/api/v1/reports", json={"case_summary": "검찰 사칭 통화", "risk_level": "high"}, headers=_HANDLER_HEADERS
     )
 
     assert response.status_code == 200
@@ -37,7 +40,7 @@ def test_high_risk_report_is_submitted_via_rest():
 
 def test_non_high_risk_report_uses_manual_channel():
     response = client.post(
-        "/api/v1/reports", json={"case_summary": "경미한 의심", "risk_level": "low"}
+        "/api/v1/reports", json={"case_summary": "경미한 의심", "risk_level": "low"}, headers=_HANDLER_HEADERS
     )
 
     assert response.status_code == 200
@@ -46,7 +49,13 @@ def test_non_high_risk_report_uses_manual_channel():
 
 def test_invalid_risk_level_is_rejected_with_422():
     response = client.post(
-        "/api/v1/reports", json={"case_summary": "알 수 없는 등급", "risk_level": "critical"}
+        "/api/v1/reports", json={"case_summary": "알 수 없는 등급", "risk_level": "critical"}, headers=_HANDLER_HEADERS
     )
 
     assert response.status_code == 422
+
+
+def test_missing_api_key_is_rejected_with_401():
+    response = client.post("/api/v1/reports", json={"case_summary": "검찰 사칭 통화", "risk_level": "high"})
+
+    assert response.status_code == 401

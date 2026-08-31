@@ -56,6 +56,26 @@ class RiskLevel(str, Enum):
     HIGH = "high"
 
 
+class Role(str, Enum):
+    """N-02: 조회/처리/관리자 3단계 권한. apps/api/src/domain/entities.py의 Role과 값/의미가
+    동일하다 — 별도 패키지로 공유하지 않고 복붙한 이유는 rest_server.py 상단 주석과 같다
+    ("공유 모듈로 뽑을 만큼 커지면 그때 리팩터링"). ADMIN은 HANDLER가 할 수 있는 모든 걸
+    할 수 있고, HANDLER는 VIEWER가 할 수 있는 모든 걸 할 수 있다 — 실제 대소 비교는
+    _ROLE_RANK/role_satisfies가 담당한다."""
+
+    VIEWER = "viewer"
+    HANDLER = "handler"  # 처리: /api/v1/analyze, /api/v1/reports 호출
+    ADMIN = "admin"
+
+
+_ROLE_RANK: dict[Role, int] = {Role.VIEWER: 0, Role.HANDLER: 1, Role.ADMIN: 2}
+
+
+def role_satisfies(actual: Role, required: Role) -> bool:
+    """actual 권한이 required 이상인지 (계층 구조 기준)."""
+    return _ROLE_RANK[actual] >= _ROLE_RANK[required]
+
+
 RISK_LEVEL_LABELS: dict[RiskLevel, str] = {
     RiskLevel.LOW: "저위험",
     RiskLevel.MEDIUM: "중위험",

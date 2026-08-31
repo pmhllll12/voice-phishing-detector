@@ -10,6 +10,8 @@ from fastapi.testclient import TestClient
 from rest_server import app
 
 client = TestClient(app)
+# N-02: /api/v1/analyze는 HANDLER 이상 권한을 요구한다.
+_HANDLER_HEADERS = {"X-API-Key": "dev-handler-key"}
 
 _HIGH_RISK_TRANSCRIPT = (
     "검찰청 수사관인데 귀하 계좌가 범죄에 연루되어 체포영장이 발부될 수 있습니다. "
@@ -39,7 +41,7 @@ class _FakeSimilarCasesResponse:
 def test_analyze_includes_similar_cases_when_rag_worker_is_reachable(monkeypatch):
     monkeypatch.setattr(httpx, "post", lambda url, json, timeout: _FakeSimilarCasesResponse())
 
-    response = client.post("/api/v1/analyze", json={"transcript": _HIGH_RISK_TRANSCRIPT})
+    response = client.post("/api/v1/analyze", json={"transcript": _HIGH_RISK_TRANSCRIPT}, headers=_HANDLER_HEADERS)
 
     assert response.status_code == 200
     body = response.json()
@@ -53,7 +55,7 @@ def test_analyze_still_succeeds_when_rag_worker_is_unreachable(monkeypatch):
 
     monkeypatch.setattr(httpx, "post", _raise)
 
-    response = client.post("/api/v1/analyze", json={"transcript": _HIGH_RISK_TRANSCRIPT})
+    response = client.post("/api/v1/analyze", json={"transcript": _HIGH_RISK_TRANSCRIPT}, headers=_HANDLER_HEADERS)
 
     assert response.status_code == 200
     body = response.json()
@@ -68,7 +70,7 @@ def test_analyze_skips_search_for_benign_text(monkeypatch):
     calls = []
     monkeypatch.setattr(httpx, "post", lambda url, json, timeout: calls.append(url) or _FakeSimilarCasesResponse())
 
-    response = client.post("/api/v1/analyze", json={"transcript": "내일 회의 시간 확인차 연락드렸습니다."})
+    response = client.post("/api/v1/analyze", json={"transcript": "내일 회의 시간 확인차 연락드렸습니다."}, headers=_HANDLER_HEADERS)
 
     assert response.status_code == 200
     assert response.json()["similar_cases"] == []

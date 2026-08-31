@@ -43,6 +43,10 @@ from src.infrastructure.metrics import reports_submitted_total
 # F-01/F-02/F-05: mcp-server REST 어댑터 주소. docker-compose로 묶이면 컨테이너 네트워크
 # 주소(예: http://mcp-server:8100)로 오버라이드하면 되도록 환경변수로 뺐다.
 MCP_SERVER_URL = os.environ.get("MCP_SERVER_URL", "http://localhost:8100")
+# N-02(2026-08-31): mcp-server 호출용 서비스 자격증명. mcp-server의
+# api_key_role_auth.py DEFAULT_API_KEYS와 의도적으로 같은 값(dev-handler-key) —
+# 그쪽 모듈 상단 주석 참고. 로컬 개발 전용, 프로덕션에서는 반드시 오버라이드할 것.
+MCP_SERVICE_API_KEY = os.environ.get("MCP_SERVICE_API_KEY", "dev-handler-key")
 # F-05: stt-worker REST 어댑터 주소. run-voice-phishing-detector 스킬 기준 로컬 기본 포트는
 # 8300 (apps/stt-worker/src/main.py 상단 주석 참고).
 STT_WORKER_URL = os.environ.get("STT_WORKER_URL", "http://localhost:8300")
@@ -68,14 +72,14 @@ app.add_middleware(
 
 call_log_repository = PostgresCallLogRepository(DATABASE_URL)
 analyze_call_service = AnalyzeCallService(
-    McpServerCallAnalysisAdapter(MCP_SERVER_URL), call_log_repository
+    McpServerCallAnalysisAdapter(MCP_SERVER_URL, MCP_SERVICE_API_KEY), call_log_repository
 )
 transcribe_and_analyze_call_service = TranscribeAndAnalyzeCallService(
     SttWorkerTranscriptionAdapter(STT_WORKER_URL), analyze_call_service
 )
 call_log_query_service = CallLogQueryService(call_log_repository)
 deepvoice_detection_service = DeepvoiceDetectionService(HeuristicDeepvoiceAdapter())
-report_submission_service = ReportSubmissionService(McpServerReportAdapter(MCP_SERVER_URL))
+report_submission_service = ReportSubmissionService(McpServerReportAdapter(MCP_SERVER_URL, MCP_SERVICE_API_KEY))
 
 
 def _serialize_call_result(result: CallAnalysisResult, role: Role) -> dict:

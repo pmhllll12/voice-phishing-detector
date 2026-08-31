@@ -7,20 +7,29 @@
 # --app-dir src 덕분에 sys.path 루트가 apps/mcp-server/src가 되어, server.py와 동일하게
 # "domain.xxx"/"application.xxx" 방식의 import가 그대로 통한다 (apps/api·apps/rag-worker의
 # "src.xxx" 방식과는 다름 — 이유는 server.py 상단 주석 참고).
+#
+# N-02 접근통제(2026-08-31, apps/api에서 이 서비스까지 확장): docker-compose가 8100
+# 포트를 직접 노출하므로 apps/api를 거치지 않고 이 REST 어댑터를 바로 호출할 수 있다 —
+# 그래서 apps/api와 동일한 X-API-Key 기반 RBAC을 여기에도 적용한다
+# (infrastructure/adapters/api_key_role_auth.py 참고). apps/api는 서비스 대 서비스
+# 호출로 이 인증을 통과한다(mcp_client_adapter.py/report_client_adapter.py가
+# MCP_SERVICE_API_KEY를 보냄). MCP stdio(server.py)는 이 인증 대상이 아니다 — 그쪽
+# 상단 주석 참고.
 
 import logging
 import os
 
 import httpx
 import psycopg
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.responses import JSONResponse, PlainTextResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel
 
 from application.dto import serialize_analysis, serialize_report
 from application.services import CallAnalysisService, ReportSubmissionService
-from domain.entities import RiskLevel
+from domain.entities import Role, RiskLevel
+from infrastructure.adapters.api_key_role_auth import require_role
 from infrastructure.adapters.debug_compare_adapter import DebugCompareAdapter
 from infrastructure.adapters.ollama_call_analysis_adapter import (
     OllamaCallAnalysisAdapter,
@@ -57,6 +66,11 @@ DATABASE_URL = os.environ.get(
 call_analysis_service = CallAnalysisService(_call_analysis_adapter, RagWorkerSearchAdapter(RAG_WORKER_URL))
 _report_repository = PostgresReportRepository(DATABASE_URL)
 report_submission_service = ReportSubmissionService(_report_repository)
+
+
+# N-02: /health, /ready, /metrics는 apps/api와 동일한 이유로 인증을 걸지 않는다 —
+# 인프라 컴포넌트(오케스트레이터, Prometheus)가 호출하고 판정 데이터를 노출하지 않는다
+# (apps/api/src/main.py의 동일 주석 참고).
 
 
 @app.get("/health")
@@ -126,10 +140,11 @@ class AnalyzeRequest(BaseModel):
 
 
 @app.post("/api/v1/analyze")
-async def analyze(req: AnalyzeRequest) -> dict:
+async def analyze(req: AnalyzeRequest, _role: Role = Depends(require_role(Role.HANDLER))) -> dict:
     """F-01/F-02/F-05: analyze_call_pattern MCP 툴과 동일한 판정 결과를 REST로 제공한다.
     F-04: 위험 정황이 감지되면 rag-worker 유사 사례도 함께 검색해 근거에 결합한다
     (CallAnalysisService 참고). rag-worker가 꺼져 있어도 이 엔드포인트는 정상 동작한다.
+    N-02: apps/api와 동일하게 "처리" 행위라 HANDLER 이상 권한이 필요하다.
     """
     result = call_analysis_service.execute(req.transcript)
     return serialize_analysis(result.detection, result.risk, result.explanation, result.similar_cases)
@@ -141,10 +156,11 @@ class ReportRequest(BaseModel):
 
 
 @app.post("/api/v1/reports")
-async def submit_report(req: ReportRequest) -> dict:
+async def submit_report(req: ReportRequest, _role: Role = Depends(require_role(Role.HANDLER))) -> dict:
     """F-07: submit_report MCP 툴과 동일한 신고 접수(mock) 결과를 REST로 제공한다.
     risk_level이 low/medium/high가 아니면 pydantic이 자동으로 422를 반환한다 (MCP
     툴 쪽의 수동 RiskLevel(risk_level) 검증과 달리, REST는 pydantic 검증으로 충분).
+    N-02: analyze와 동일하게 HANDLER 이상 권한이 필요하다.
     """
     record = report_submission_service.submit(req.case_summary, req.risk_level)
     return serialize_report(record)
