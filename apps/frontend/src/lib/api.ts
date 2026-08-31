@@ -98,6 +98,24 @@ export async function analyzeCall(transcript: string): Promise<CallAnalysis> {
   return res.json();
 }
 
+// F-05: 오디오 파일을 업로드해 stt-worker(faster-whisper)로 변환한 뒤 analyzeCall과
+// 동일한 판정 경로를 태운다(apps/api/src/main.py analyze_call_audio). Content-Type을
+// 직접 지정하지 않는다 — FormData를 fetch에 넘기면 브라우저가 multipart 경계(boundary)를
+// 포함한 헤더를 자동으로 붙이는데, 수동으로 지정하면 그 경계가 빠져 서버가 파싱하지 못한다.
+export async function analyzeCallAudio(audioBlob: Blob): Promise<CallAnalysis> {
+  const formData = new FormData();
+  formData.append("audio", audioBlob, "recording.webm");
+  const res = await fetch(`${API_BASE_URL}/api/v1/calls/analyze-audio`, {
+    method: "POST",
+    headers: AUTH_HEADERS,
+    body: formData,
+  });
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+  return res.json();
+}
+
 export async function listCalls(limit = 20): Promise<CallAnalysis[]> {
   const res = await fetch(`${API_BASE_URL}/api/v1/calls?limit=${limit}`, { headers: AUTH_HEADERS });
   if (!res.ok) {

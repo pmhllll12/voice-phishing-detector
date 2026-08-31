@@ -8,9 +8,11 @@ AI 데이터센터/AI 인프라 엔지니어 직무 취업을 위한 개인 포�
 가상 발주처(금융감독원 산하 금융사기대응센터)의 RFP를 기반으로, 제안서 → 요구사항정의서/설계서 →
 구현 → 시험(검수)계획서로 이어지는 공공/금융 SI 엔드투엔드 시뮬레이션을 1인이 수행합니다.
 
-> **현재 상태**: F-01~F-07 기능 요구사항 구현 및 로컬 검증 완료. 문서(요구사항정의서/
-> 설계서/시험계획서)와 인프라(docker-compose 실제 기동, EC2 배포)는 아직 스캐폴딩
-> 단계입니다. 자세한 건 아래 "진행 현황" 참고.
+> **현재 상태**: F-01~F-07(기능)과 N-01~N-06(비기능) 요구사항 모두 최소 1차 구현 및
+> 로컬 검증 완료(2026-08-31). `docker compose up --build`로 전체 스택(frontend/api/
+> mcp-server/rag-worker/stt-worker/postgres/prometheus/grafana) 실기동도 확인됨.
+> 문서(요구사항정의서/시험계획서, design.md 나머지 챕터)와 EC2 배포는 아직 TODO입니다.
+> 자세한 건 아래 "진행 현황" 참고.
 
 ## 문서
 
@@ -61,17 +63,31 @@ prometheus ──► grafana  (애플리케이션 메트릭 관측)
   바인딩**해야 브리지 게이트웨이 IP에서 접근 가능합니다(기본값인 127.0.0.1만 바인딩하면
   Prometheus target이 `down`으로 뜹니다 — 로컬 검증 중 실제로 겪은 문제).
 
-## 로컬 실행 (TODO)
+## 로컬 실행 (docker compose)
+
+사전 준비: Ollama가 **호스트에서** 떠 있어야 하고(mcp-server 컨테이너가 F-01/F-02
+LLM 추론에 호출함), `OLLAMA_HOST=0.0.0.0`으로 바인딩돼 있어야 합니다 — 기본값인
+127.0.0.1만 바인딩하면 docker 브리지 네트워크(`host.docker.internal`)에서 접근할 수
+없습니다(위 "재사용한 인프라 스킬"의 rag-worker `0.0.0.0` 바인딩 이슈와 같은 종류의
+문제, 로컬 검증 중 실제로 겪음).
 
 ```bash
-# TODO: .env.example 작성 후 안내 추가
+# 필요하면 .env.example을 .env로 복사해 포트/키를 오버라이드 (없어도 기본값으로 동작)
+cp .env.example .env
+
 docker compose up --build
 ```
 
 - api: http://localhost:8000/health
 - frontend: http://localhost:3000
 - prometheus: http://localhost:9090
-- grafana: http://localhost:3001
+- grafana: http://localhost:3001 (기본 admin 비밀번호는 `.env.example` 참고 — 프로덕션
+  에서는 반드시 교체할 것)
+
+각 서비스는 `docker compose ps`에서 `healthy`로 뜰 때까지 순서대로 기동됩니다
+(postgres → mcp-server/rag-worker/stt-worker → api → frontend). `rag-worker`는 기동
+시 `scripts/seed_fraud_cases.py`로 F-04 코퍼스를 자동으로 postgres(pgvector)에
+적재합니다.
 
 ## MCP 서버를 Claude Code에서 테스트하기
 
@@ -247,8 +263,15 @@ api→mcp-server 기본 타임아웃(10초)에 실제로 걸려 실패하는 걸
 
 ## Prometheus 메트릭
 
-rag-worker와 mcp-server는 각각 `/metrics`에서 `vps_` 접두사 커스텀 메트릭을 노출합니다
-(apps/api는 아직 미구현 — "진행 현황" 참고).
+api/rag-worker/mcp-server/stt-worker 4개 서비스 전부 `/metrics`에서 `vps_` 접두사
+커스텀 메트릭을 노출합니다.
+
+**api (`vps_*`, F-01~F-03/F-07/N-05)**
+- `vps_calls_analyzed_total{risk_level}` — 처리된 통화/문자 건수(저/중/고)
+- `vps_risk_score_distribution` — 위험도 스코어 분포(0~100)
+- `vps_deepvoice_detected_total{result}` — F-03 딥보이스 판별 결과(synthetic/authentic)
+- `vps_analysis_duration_seconds` — N-05 판정 소요시간(5초 이내 SLA 계측용)
+- `vps_reports_submitted_total{channel}` — F-07 신고 접수 건수(자동/수동)
 
 **rag-worker (`vps_rag_*`, F-04)**
 - `vps_rag_embedding_inference_duration_seconds` — 쿼리 1건을 임베딩 벡터로 인코딩하는 데
@@ -266,10 +289,12 @@ rag-worker와 mcp-server는 각각 `/metrics`에서 `vps_` 접두사 커스텀 �
 - `vps_mcp_llm_model_load_duration_seconds` — 콜드 스타트 로딩 시간(캐시 히트 시 0에 가까움)
 - `vps_mcp_llm_model_info{model_name,base_url}` — 현재 모델/엔드포인트 구성
 
-이 저장소 자체의 `prometheus/prometheus.yml`은 아직 스캐폴딩 단계라(메트릭 목록이 주석으로만
-문서화되어 있고 실제 scrape 대상은 미설정) 이 저장소의 grafana(포트 3001)에는 연결되어
-있지 않습니다. 위 메트릭을 실제로 수집·시각화하는 쪽은 별도 리포지토리인 gpu-fleet-ops의
-Prometheus/Grafana입니다 — 자세한 내용은 위 "재사용한 인프라 스킬" 참고.
+이 저장소 자체의 `prometheus/prometheus.yml`은 4개 서비스(api/mcp-server/rag-worker/
+stt-worker) 전부에 대한 scrape 대상이 설정돼 있고, `docker compose up`으로 뜨는 이
+저장소의 prometheus(포트 9090)가 실제로 수집합니다. 다만 grafana(포트 3001)에는 아직
+대시보드 패널이 연결돼 있지 않습니다(`grafana/provisioning`은 뼈대만 있음) — 이
+저장소와 별개로, 통합 관측 용도로는 gpu-fleet-ops의 Prometheus/Grafana도 같이 쓰고
+있습니다(위 "재사용한 인프라 스킬" 참고).
 
 ## 데이터
 <img width="1900" height="1014" alt="Screenshot 2026-08-26 151128_edited" src="https://github.com/user-attachments/assets/606a74fc-6a51-44db-8f45-c57688b047e2" />
@@ -293,14 +318,19 @@ Prometheus/Grafana입니다 — 자세한 내용은 위 "재사용한 인프라 
       유사도 0.701)을 2위로 정확히 찾음. 코퍼스가 10건뿐이라 이 사례가 전반적 성능을
       대표하지는 않으며, 어디까지나 실측 1건 확인 수준)
 - [x] F-05 판정 근거 자연어 설명 (`apps/mcp-server`의 `ExplanationService`, F-01/F-02 결과를 근거로 템플릿 기반 문장 생성 — 아직 F-04와는 미결합)
-- [x] F-03 딥보이스 판별 (`apps/api`, 음향 특징 휴리스틱 v1 — 피치 안정성/스펙트럼 평탄도/묵음 규칙성. 처음엔 정확도 미검증이었으나, 아래 실측 데이터셋으로 임계값 보정 완료 — 상세: `infrastructure/adapters/deepvoice_adapter.py` 상단 주석)
+- [x] F-03 딥보이스 판별 (`apps/api` — v1 음향 특징 휴리스틱에서, 검증된 오픈소스
+      스푸핑 탐지 모델(wav2vec2 기반, HuggingFace Hub)로 교체 완료. v1은 폐기하지 않고
+      모델 로드/추론 실패 시 자동 폴백 + N-04 보조 지표로 계속 사용 — 상세는 아래
+      "N-05/F-03 v2" 항목과 `infrastructure/adapters/wav2vec2_deepvoice_adapter.py`
+      상단 주석 참고)
 - [x] F-06 관제 대시보드 (`apps/frontend`, 탐지 현황 테이블 + 위험도 분포 + 카테고리별 통계 + 통화 분석 폼. `apps/mcp-server/rest_server.py`를 새로 추가해 api가 판정 로직을 HTTP로 호출하도록 연결, api에 인메모리 감사증적 저장소 + 통계 집계 엔드포인트 추가)
 - [x] F-07 신고 연동 (`apps/mcp-server`의 `submit_report` 툴 — mock. risk_level이 high면 auto, 그 외엔 manual 채널로 분류해 인메모리에 기록. **실제 112/경찰청 API 호출 없음** — RFP 데이터 제약, `ReportSubmissionService` 상단 주석 참고. 알림 발송은 아직 미구현)
-- [ ] `docs/requirements.md`, `docs/design.md`, `docs/test-plan.md` 작성
-- [ ] 인프라(`docker-compose.yaml`, `prometheus/prometheus.yml`, `infra/`)는 직접 손으로 채워나가기
-- [ ] (진행 중) 모바일 실시간 감지 파이프라인용 STT (`apps/stt-worker`, faster-whisper 기반
-      오디오→텍스트 변환. 헥사고날 구조/Prometheus 메트릭(`vps_stt_*`)까지는 완성했으나
-      `docker-compose.yaml`/`apps/api` 연동은 아직 — 다음 단계)
+- [ ] `docs/requirements.md`, `docs/test-plan.md` 작성, `docs/design.md` 나머지 챕터
+      (지금은 N-06만 완성 — [Jekyll 제안서 사이트](jekyll/)가 RFP/구현 이력을 9챕터+
+      부록 4개로 정리해뒀지만, 정식 요구사항정의서/시험계획서는 별도로 아직 없음)
+- [x] 모바일 실시간 감지 파이프라인용 STT (`apps/stt-worker`, faster-whisper 기반
+      오디오→텍스트 변환) — 헥사고날 구조/Prometheus 메트릭(`vps_stt_*`) 완성,
+      `apps/api` 연동 완료, `docker-compose.yaml`에도 등록 완료(아래 참고)
 - [x] Health Check 고도화 (`/health`는 그대로 두고 4개 백엔드 서비스 모두에 `/ready` 신규
       추가 — 실제 의존 서비스(mcp-server→Ollama) 호출/자가 점검 기반, 위 "Health Check"
       절 참고. 단위 테스트 9건 추가, 실제 서비스 재시작 후 정상/장애 양쪽 경로 curl로 검증)
@@ -345,5 +375,26 @@ Prometheus/Grafana입니다 — 자세한 내용은 위 "재사용한 인프라 
       노출해 apps/api를 우회할 수 있던 경로를 막음 — apps/api와 동일한 Role 계층을
       mcp-server에도 도입, apps/api는 서비스 자격증명(`MCP_SERVICE_API_KEY`)으로 통과.
       MCP stdio 진입점은 로컬 신뢰 실행 경로라 대상에서 의도적으로 제외)
+- [x] N-05 응답시간 계측 (`vps_analysis_duration_seconds`/`vps_calls_analyzed_total`/
+      `vps_risk_score_distribution`/`vps_deepvoice_detected_total`을 apps/api 판정
+      엔드포인트에 실제로 연결 — `/metrics`에 노출되는 것까지 확인. "5초 이내" SLA
+      자체는 계측 배선만 완료된 상태이고, 실트래픽 기준 검증은 아직 TODO)
+- [x] F-03 딥보이스 판별을 검증된 오픈소스 모델(v2)로 교체 — HuggingFace Hub의 공개
+      스푸핑 탐지 모델 두 개를 F-03 실측 데이터셋(16건)에 직접 태워 비교(재현율
+      3/8 vs 8/8)한 뒤 `mo-thecreator/Deepfake-audio-detection`(wav2vec2-base) 채택.
+      `DeepvoiceDetectionPort` 인터페이스는 그대로 유지해 N-06 확장성의 4번째 실증
+      축이 됨(application 계층 diff 0줄). v1은 폴백 겸 N-04 보조 지표로 계속 사용
+- [x] 프론트엔드에 F-05 오디오 입력 추가 (`AnalyzeCallForm`에 마이크 녹음 버튼 —
+      브라우저 `MediaRecorder`로 녹음 → `apps/api`의 `/api/v1/calls/analyze-audio`로
+      업로드. 기존 텍스트 입력 경로는 그대로 유지. 마이크 권한/장치 에러를 원인별로
+      구분해 안내하도록 처리)
+- [x] `docker-compose.yaml` 실기동 확인 — 전체 스택(frontend/api/mcp-server/rag-worker/
+      stt-worker/postgres/prometheus/grafana)이 `docker compose up --build`로 실제로
+      뜨는 것까지 검증(각 서비스 healthcheck 통과). 이 과정에서 stt-worker가
+      compose에 아예 등록 안 돼 있던 것, rag-worker Dockerfile이 `scripts/`를 이미지에
+      안 담아서 F-04 코퍼스 시딩이 실패하던 것, 쓰이지 않는 redis 서비스가 남아있던
+      것, grafana 비밀번호가 문자 그대로 `"TODO"`였던 것을 실제로 발견해 고쳤다.
+      환경변수는 `${VAR:-기본값}` 패턴으로 빼서 `.env.example`로 문서화함.
+      **EC2 배포는 아직 TODO** — 다음 단계로 별도 진행 예정
 <img width="1900" height="1014" alt="Screenshot 2026-08-26 151128_edited" src="https://github.com/user-attachments/assets/5bf57efc-0385-4623-8cec-82461d236ffd" />
 <img width="1910" height="1046" alt="Screenshot 2026-08-26 151151_edited" src="https://github.com/user-attachments/assets/4b36260b-be9d-400e-bbbb-15154a82a299" />

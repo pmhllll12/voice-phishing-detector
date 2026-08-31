@@ -1,11 +1,13 @@
 # =============================================================================
-# prometheus.yml — 뼈대 (skeleton)
+# prometheus.yml
 #
 # gpu-fleet-ops에서는 GPU 메트릭(온도/사용률/VRAM/전력)을 수집했다면,
 # 이번 프로젝트는 "애플리케이션 메트릭"을 수집 대상으로 삼는다.
 #
-# 아래 커스텀 메트릭들은 apps/api/src/infrastructure/metrics.py 에서
-# prometheus_client로 실제 구현해야 값이 채워진다 (지금은 스캐폴딩만 되어있음).
+# 아래 커스텀 메트릭들은 각 서비스의 infrastructure/metrics.py에서 prometheus_client로
+# 실제 구현·연결돼 있다(N-05, 2026-08-31로 api까지 전부 연결 완료 — apps/api/src/main.py
+# _record_analysis_metrics/_record_deepvoice_metrics 참고). alerting rule_files는
+# 아직 TODO(아래).
 # =============================================================================
 
 global:
@@ -24,9 +26,7 @@ scrape_configs:
   - job_name: "vps-api"
     static_configs:
       - targets: ["api:8000"]
-    # TODO: api 서비스에 /metrics 엔드포인트 노출 (prometheus_client 미들웨어)
-    #
-    # 아래는 이번 프로젝트에서 정의하기로 한 커스텀 메트릭 목록 (구현 예정):
+    # apps/api/src/infrastructure/metrics.py에서 노출하는 메트릭 (N-05로 전부 연결 완료):
     #
     #   vps_calls_analyzed_total
     #     - Counter, label: risk_level(저/중/고)
@@ -38,11 +38,11 @@ scrape_configs:
     #
     #   vps_deepvoice_detected_total
     #     - Counter, label: result(synthetic/authentic)
-    #     - F-03 딥보이스 판별 결과 집계
+    #     - F-03 딥보이스 판별 결과 집계 (판단 보류 시엔 기록 안 함)
     #
     #   vps_analysis_duration_seconds
     #     - Histogram
-    #     - N-05 "5초 이내 판정" SLA 검증용 — 이 메트릭으로 SLA 위반 알림 구성 예정
+    #     - N-05 "5초 이내 판정" SLA 계측용 — alerting rule은 아직 TODO
     #
     #   vps_reports_submitted_total
     #     - Counter, label: channel(자동/수동)
@@ -113,10 +113,35 @@ scrape_configs:
     #       동일 쿼리 반복이 잦아지면 LRU 캐시 도입 검토.
 
   # ---------------------------------------------------------------------------
+  # stt-worker 서비스 (F-05 모바일 오디오 경로)
+  # ---------------------------------------------------------------------------
+  - job_name: "vps-stt-worker"
+    static_configs:
+      - targets: ["stt-worker:8300"]
+    # stt-worker가 apps/stt-worker/src/infrastructure/metrics.py에서 노출하는 메트릭:
+    #
+    #   vps_stt_inference_duration_seconds
+    #     - Histogram
+    #     - 오디오 청크 1건을 텍스트로 변환하는 데 걸린 시간
+    #
+    #   vps_stt_transcription_requests_total
+    #     - Counter, label: result(success/error)
+    #
+    #   vps_stt_model_load_duration_seconds
+    #     - Gauge, 서버 시작 시 모델 로딩(1회)에 걸린 시간
+    #
+    #   vps_stt_gpu_memory_delta_bytes
+    #     - Gauge, 모델 로딩 전/후 GPU 전체 사용량 델타 (CPU 폴백 중이면 0)
+    #
+    #   vps_stt_model
+    #     - Info, 현재 모델/디바이스/양자화 구성
+
+  # ---------------------------------------------------------------------------
   # prometheus 자체 모니터링 (기본 제공)
   # ---------------------------------------------------------------------------
   - job_name: "prometheus"
     static_configs:
       - targets: ["localhost:9090"]
 
-# TODO: postgres_exporter / redis_exporter 추가 여부 결정 (인프라 레벨 관측)
+# TODO: postgres_exporter 추가 여부 결정 (인프라 레벨 관측). redis는 실제로 쓰이지
+# 않는 것으로 확인돼 docker-compose.yaml에서 제거했다 — redis_exporter 불필요.
