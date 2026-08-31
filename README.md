@@ -10,17 +10,19 @@ AI 데이터센터/AI 인프라 엔지니어 직무 취업을 위한 개인 포�
 
 > **현재 상태**: F-01~F-07(기능)과 N-01~N-06(비기능) 요구사항 모두 최소 1차 구현 및
 > 로컬 검증 완료(2026-08-31). `docker compose up --build`로 전체 스택(frontend/api/
-> mcp-server/rag-worker/stt-worker/postgres/prometheus/grafana) 실기동도 확인됨.
-> 문서(요구사항정의서/시험계획서, design.md 나머지 챕터)와 EC2 배포는 아직 TODO입니다.
-> 자세한 건 아래 "진행 현황" 참고.
+> mcp-server/rag-worker/stt-worker/postgres/prometheus/grafana) 실기동 확인, PR마다
+> pytest 137개 자동 실행하는 CI도 구축됨. RFP → 요구사항정의서 → 설계서 → 시험계획서
+> 4개 문서 전부 작성 완료. **EC2 배포만 아직 TODO**입니다. 자세한 건 아래 "진행 현황" 참고.
 
 ## 문서
 
 - [RFP (제안요청서)](docs/RFP.md) — 사업 배경, 기능/비기능 요구사항(F-01~F-07, N-01~N-06)
-- TODO: `docs/requirements.md` (요구사항정의서)
-- [design.md (설계서)](docs/design.md) — 아직 전체 설계서는 아니고 N-06(확장성) 챕터만
-  완성됨, 나머지 챕터는 문서 안에 TODO로 남겨둠
-- TODO: `docs/test-plan.md` (시험계획서)
+- [requirements.md (요구사항정의서)](docs/requirements.md) — F-01~F-07/N-01~N-06 각각의
+  입력/처리/출력/수용기준(acceptance criteria)과 구현·테스트 근거
+- [design.md (설계서)](docs/design.md) — 시스템 아키텍처/데이터 모델/API 명세/N-06
+  확장성 완성. 배포 구조(EC2) 챕터만 아직 TODO(배포 자체가 아직이라)
+- [test-plan.md (시험계획서)](docs/test-plan.md) — 테스트 전략(단위/실측데이터셋/E2E
+  3계층), F-01~F-07 검수 시나리오와 실측 결과, CI 파이프라인, 알려진 커버리지 공백
 
 ## 아키텍처 개요
 
@@ -406,5 +408,18 @@ stt-worker) 전부에 대한 scrape 대상이 설정돼 있고, `docker compose 
       (Triton 등)는 지금 규모(94.6M 파라미터, 로컬 요청 시 호출)에서는 불필요하다고
       판단해 도입하지 않음 — 판단 근거와 재검토 조건은
       `wav2vec2_deepvoice_adapter.py` 상단 "WHY 전용 추론 서버가 아직 없는가" 참고)
+- [x] GitHub Actions CI 구축 (`.github/workflows/tests.yml` — push/PR마다 4개
+      서비스 pytest 137개를 병렬 job으로 자동 실행. postgres 의존 테스트는
+      skipif로 건너뛰지 않고 서비스 컨테이너로 실제로 돌림. Ollama 없이도
+      mcp-server 71개가 전부 통과하는 걸 로컬에서 Ollama를 직접 내려서 확인한
+      뒤 워크플로우를 작성함. 2026-08-31 기준 push/PR 양쪽에서 8개 job 전부 통과)
+- [x] `docs/requirements.md`(요구사항정의서) 작성 — F-01~F-07/N-01~N-06 각각의
+      입력/처리/출력/수용기준과 구현·테스트 근거, 요구사항 추적표(traceability matrix)
+- [x] `docs/design.md` 나머지 챕터 작성 — 시스템 아키텍처/데이터 모델/API 명세
+      (N-06 확장성 챕터는 기존 유지). **배포 구조(EC2) 챕터만 배포 자체가 아직이라
+      TODO로 남김**
+- [x] `docs/test-plan.md`(시험계획서) 작성 — 테스트 전략 3계층, 서비스별 테스트
+      구성표, F-01~F-07 검수 시나리오와 실측 결과(RBAC 매트릭스 포함), CI 파이프라인,
+      알려진 커버리지 공백(N-05 실트래픽 미검증 등)을 정직하게 명시
 <img width="1900" height="1014" alt="Screenshot 2026-08-26 151128_edited" src="https://github.com/user-attachments/assets/5bf57efc-0385-4623-8cec-82461d236ffd" />
 <img width="1910" height="1046" alt="Screenshot 2026-08-26 151151_edited" src="https://github.com/user-attachments/assets/4b36260b-be9d-400e-bbbb-15154a82a299" />

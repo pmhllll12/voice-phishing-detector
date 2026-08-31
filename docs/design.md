@@ -1,12 +1,112 @@
 # 설계서 (System Design)
 
-> **진행 상황**: 이 문서는 아직 전체 설계서가 아니다. RFP의 요구사항을 하나씩 구현하며
-> 그때그때 관련 챕터를 채워나가는 중이고(`CLAUDE.md`의 "단계적으로 채워나갈 것" 원칙과
-> 동일), 지금은 **N-06(확장성)** 챕터만 완성돼 있다. 아키텍처 개요/데이터 모델/API
-> 명세/배포 구조 등 나머지 챕터는 TODO — README의 아키텍처 다이어그램과 각 앱
-> `src/` 하위 파일 상단 주석이 그 역할을 임시로 대신하고 있다.
+> **진행 상황**(2026-08-31 갱신): 시스템 아키텍처/데이터 모델/API 명세/N-06 확장성
+> 챕터를 채웠다. **배포 구조(EC2/보안그룹/도메인) 챕터만 아직 TODO** — 실제 배포를
+> 아직 하지 않아서(`docker-compose.yaml` 로컬 실기동까지만 완료, README "진행 현황"
+> 참고) 쓸 내용이 없다. 배포가 완료되면 이 문서에 추가한다.
 
-## N-06 확장성 설계
+## 1. 시스템 아키텍처
+
+### 1.1 구성도
+
+```
+frontend (Next.js, 관제 대시보드)
+   │
+   ▼
+api (FastAPI) ──► mcp-server (통화분석/사기패턴DB조회/신고연동 툴) ──► postgres+pgvector
+   │                  │                                                   ▲
+   │                  └─ Ollama 로컬 LLM (EXAONE 3.5 2.4B, JSON Schema     │
+   │                     강제 출력 + 규칙 기반 자동 폴백)                    │
+   └──────────────► rag-worker (유사사례 임베딩/검색) ───────────────────────┘
+                        │
+                        └─ sentence-transformers 로컬 임베딩 모델
+                           (jhgan/ko-sroberta-multitask) + 코사인 유사도
+
+stt-worker (faster-whisper, 모바일 오디오→텍스트) ◄── api (F-05 오디오 경로)
+
+prometheus ──► grafana  (애플리케이션 메트릭 관측)
+```
+
+5개 서비스 + postgres + prometheus/grafana로 구성된다. 각 서비스의 담당 요구사항은
+`docs/requirements.md` 4장 요구사항 추적표 참고.
+
+### 1.2 헥사고날 아키텍처
+
+`apps/api`, `apps/mcp-server`, `apps/rag-worker` 세 Python 앱 모두 동일한 계층
+구조를 따른다(`CLAUDE.md`).
+
+```
+domain/          "무엇을 판단하는가" — 프레임워크/DB/외부 API를 전혀 모르는 순수 모델 + 포트
+application/     "어떤 순서로 조합하는가" — 유스케이스. domain의 포트에만 의존
+infrastructure/  "실제로 어떻게 하는가" — 포트 구현체(어댑터), FastAPI 진입점, DB 연결
+```
+
+의존 방향은 `infrastructure → application → domain` 한 방향으로만 흐른다. 이
+원칙이 실제로 지켜지고 있다는 근거는 4장(N-06 확장성 설계)의 포트-어댑터 4회
+교체 실증이다 — 이론이 아니라 실측이다.
+
+### 1.3 판정 파이프라인
+
+텍스트 경로(F-01/F-02)와 오디오 경로(F-05)는 입력 앞단만 다르고, 그 뒤 판정
+파이프라인은 동일하다.
+
+```
+[통화/문자 텍스트]                    [모바일 오디오 청크]
+        │                                     │
+        │                              stt-worker (faster-whisper)
+        │                                     │
+        ▼                                     ▼
+             apps/api: N-03 PII 마스킹 (전화번호/계좌번호/이름)
+                             │
+                             ▼
+            mcp-server: analyze_call_pattern (F-01/F-02)
+                             │
+                             ▼
+            mcp-server: lookup_fraud_pattern_db (F-04, rag-worker 호출)
+                             │
+                             ▼
+              F-05: 탐지 패턴 + 자연어 설명 + 유사사례 결합
+                             │
+                             ▼
+              apps/api: N-01 감사증적 적재 + N-05 메트릭 기록
+                             │
+                             ▼
+                  (고위험이면) F-07 신고 접수 mock 호출
+```
+
+## 2. 데이터 모델
+
+전체 스키마는 3개 테이블뿐이다(`infra/db/init.sql`) — `call_analysis_results`
+(N-01, api 소유), `report_records`(N-01, mcp-server 소유), `fraud_cases`(F-04,
+pgvector, rag-worker 소유). 상세 컬럼/제약조건/append-only 트리거 구현과, 왜
+이렇게 단순한지에 대한 설계 근거는 [`jekyll/chapters/부록D-데이터베이스ERD.markdown`](../jekyll/chapters/부록D-데이터베이스ERD.markdown)
+에 정리해뒀다(이 문서에 중복 기술하지 않는다 — 소스 오브 트루스를 하나로 유지).
+
+핵심만 요약하면:
+- 세 테이블 사이에 외래키 관계가 없다 — `similar_cases`는 `fraud_cases` 검색
+  결과를 JSONB로 **복사**해서 저장한다(참조가 아님). 감사증적의 불변성(N-01)을
+  지키려면 나중에 `fraud_cases`가 바뀌어도 과거 판정 근거가 조용히 바뀌면
+  안 되기 때문이다.
+- `call_analysis_results`/`report_records`만 append-only 트리거가 걸려있다.
+  `fraud_cases`는 검색용 참고 데이터라 감사증적이 아니므로 걸지 않는다.
+
+## 3. API 명세
+
+각 서비스의 REST 엔드포인트 전체 목록(Method/Path/최소 권한/설명)은
+[`jekyll/chapters/부록B-관련서식.markdown`](../jekyll/chapters/부록B-관련서식.markdown)
+에 정리해뒀다. mcp-server는 REST 어댑터(`rest_server.py`, api가 호출) 외에
+MCP stdio 진입점(`server.py`, Claude Code가 `.mcp.json`으로 직접 호출)도 갖는데,
+두 진입점이 같은 application 서비스를 재사용하지만 배선 코드는 아직 복붙 상태다
+(4장 "확장성이 아직 검증 안 된 지점" 참고).
+
+## 4. 배포 구조 (TODO)
+
+EC2 + Cloudflare Tunnel 배포가 아직 진행 전이라 이 챕터는 비워둔다. 배포
+완료 시 아래를 채운다: EC2 인스턴스 스펙, 보안그룹 규칙, 도메인/DNS 구성,
+Nginx 리버스 프록시 설정, Cloudflare Tunnel 연결 방식(gpu-fleet-ops에서
+재사용할 패턴, README "재사용한 인프라 스킬" 참고).
+
+## 5. N-06 확장성 설계
 
 ### 요구사항
 
