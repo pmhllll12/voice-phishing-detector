@@ -28,9 +28,11 @@ curl -s http://localhost:11434/api/version   # must return JSON, not connection-
 # if not running and it's a systemd user service here: systemctl --user start ollama
 ```
 
-postgres (N-01 audit trail for api/mcp-server, `infra/db/init.sql` schema) must be up too —
-api's `/ready` and `/api/v1/calls/analyze` both fail without it (unlike stt-worker/Ollama,
-there's no graceful degrade here, see apps/api/src/main.py `_check_database_ready`):
+postgres (N-01 audit trail for api/mcp-server, and since the F-04 pgvector migration also
+the `fraud_cases` similarity corpus for rag-worker — `infra/db/init.sql` schema) must be up
+too — api's `/ready` and `/api/v1/calls/analyze` both fail without it, and so does
+rag-worker's `/ready` now (unlike stt-worker/Ollama, there's no graceful degrade here, see
+apps/api/src/main.py `_check_database_ready` and apps/rag-worker/src/infrastructure/readiness.py):
 
 ```bash
 docker exec vps-postgres pg_isready -U vps_app -d vps_detector 2>/dev/null || {
@@ -45,6 +47,15 @@ docker exec vps-postgres pg_isready -U vps_app -d vps_detector 2>/dev/null || {
 The schema (`CREATE TABLE IF NOT EXISTS` + `DROP TRIGGER IF EXISTS`/`CREATE TRIGGER`) is
 idempotent, so re-running `init.sql` against an already-initialized DB is safe — no need
 to guard that last line beyond the container-didn't-exist-yet case above.
+
+`init.sql` only creates the `fraud_cases` table, it doesn't populate it — seed it whenever
+it's empty (fresh container, new `vps_postgres_data` volume, or dataset changes in
+`apps/rag-worker/data/fraud_cases.json`):
+
+```bash
+FRAUD_CASE_COUNT=$(PGPASSWORD=vps_dev_password psql -h localhost -U vps_app -d vps_detector -tAc "SELECT count(*) FROM fraud_cases")
+[ "$FRAUD_CASE_COUNT" = "0" ] && (cd apps/rag-worker && .venv/bin/python -m scripts.seed_fraud_cases)
+```
 
 ## Setup
 

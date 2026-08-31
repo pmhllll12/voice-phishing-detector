@@ -64,12 +64,11 @@ services:
     ports:
       - "8200:8200"
     environment:
-      # 아직 사용 안 함: rag-worker는 지금 postgres+pgvector가 아니라 로컬 JSON(F-04,
-      # data/fraud_cases.json)으로 유사사례를 검색한다 — N-01(api 통화로그/mcp-server
-      # 신고기록)만 먼저 postgres로 옮겼고, pgvector 이전은 별도 후속 작업으로 남아있다
-      # (infra/db/init.sql 상단 주석 참고). 이 값은 그 작업을 시작할 때 실제로 쓰인다.
+      # F-04 pgvector 이전 완료: rag-worker는 이제 postgres(pgvector 확장,
+      # fraud_cases 테이블)에서 유사사례를 검색한다 (infra/db/init.sql,
+      # src/infrastructure/adapters/pgvector_similarity_adapter.py 참고). 컨테이너
+      # 최초 기동 후 scripts/seed_fraud_cases.py로 fraud_cases.json을 적재해야 한다.
       - DATABASE_URL=postgresql://vps_app:vps_dev_password@postgres:5432/vps_detector
-      # TODO: 임베딩 모델/API 키 설정 (로컬 임베딩 모델 vs 외부 API)
     depends_on:
       - postgres
 

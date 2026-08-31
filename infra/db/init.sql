@@ -6,9 +6,10 @@
 -- 있다"는 리스크가 남으므로, DB 트리거로 UPDATE/DELETE 자체를 거부한다 — 코드가 어떻게
 -- 바뀌든 이 두 테이블에서 기존 행을 고치거나 지우는 것은 물리적으로 불가능하다.
 --
--- rag-worker의 fraud_cases(F-04)는 이 마이그레이션 범위 밖이다 — 감사증적이 아니라
--- 검색용 참고 데이터라 append-only 요구사항이 적용되지 않고, 지금 규모(10건)에서는
--- 로컬 JSON으로 충분하다 (apps/rag-worker/src/infrastructure/data_loader.py 참고).
+-- rag-worker의 fraud_cases(F-04, 아래)는 call_analysis_results/report_records와 성격이
+-- 다르다 — 감사증적이 아니라 검색용 참고 데이터라 append-only 트리거를 적용하지 않는다.
+-- 데이터셋을 갱신할 때는 apps/rag-worker/scripts/seed_fraud_cases.py로 다시 upsert한다
+-- (fraud_cases.json이 여전히 소스 오브 트루스 — pgvector 테이블은 그 파생 캐시).
 
 CREATE TABLE IF NOT EXISTS call_analysis_results (
     call_id UUID PRIMARY KEY,
@@ -52,3 +53,21 @@ DROP TRIGGER IF EXISTS report_records_append_only ON report_records;
 CREATE TRIGGER report_records_append_only
     BEFORE UPDATE OR DELETE ON report_records
     FOR EACH ROW EXECUTE FUNCTION reject_audit_log_mutation();
+
+-- F-04 유사사례 검색(rag-worker) pgvector 테이블. 임베딩은 jhgan/ko-sroberta-multitask
+-- (768차원, normalize_embeddings=True로 정규화)로 계산한 뒤 여기 저장한다 — 검색 시
+-- pgvector의 코사인 거리 연산자(<=>)로 postgres가 직접 정렬/상위 K를 계산한다
+-- (apps/rag-worker/src/infrastructure/adapters/pgvector_similarity_adapter.py 참고).
+CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE TABLE IF NOT EXISTS fraud_cases (
+    case_id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    category TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    source_note TEXT NOT NULL,
+    embedding vector(768) NOT NULL
+);
+
+-- ANN 인덱스(ivfflat/hnsw)는 아직 만들지 않는다 — 코퍼스가 10건이라 순차 스캔(exact
+-- search) 비용이 무시할 만하다. 데이터셋이 수만 건 규모로 커지면 이때 추가한다.
