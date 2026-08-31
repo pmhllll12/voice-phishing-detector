@@ -16,7 +16,8 @@ AI 데이터센터/AI 인프라 엔지니어 직무 취업을 위한 개인 포�
 
 - [RFP (제안요청서)](docs/RFP.md) — 사업 배경, 기능/비기능 요구사항(F-01~F-07, N-01~N-06)
 - TODO: `docs/requirements.md` (요구사항정의서)
-- TODO: `docs/design.md` (설계서)
+- [design.md (설계서)](docs/design.md) — 아직 전체 설계서는 아니고 N-06(확장성) 챕터만
+  완성됨, 나머지 챕터는 문서 안에 TODO로 남겨둠
 - TODO: `docs/test-plan.md` (시험계획서)
 
 ## 아키텍처 개요
@@ -292,7 +293,7 @@ Prometheus/Grafana입니다 — 자세한 내용은 위 "재사용한 인프라 
       유사도 0.701)을 2위로 정확히 찾음. 코퍼스가 10건뿐이라 이 사례가 전반적 성능을
       대표하지는 않으며, 어디까지나 실측 1건 확인 수준)
 - [x] F-05 판정 근거 자연어 설명 (`apps/mcp-server`의 `ExplanationService`, F-01/F-02 결과를 근거로 템플릿 기반 문장 생성 — 아직 F-04와는 미결합)
-- [x] F-03 딥보이스 판별 (`apps/api`, 음향 특징 휴리스틱 v1 — 피치 안정성/스펙트럼 평탄도/묵음 규칙성. **정확도 미검증, 실제 데이터로 임계값 보정 필요** — 상세: `infrastructure/adapters/deepvoice_adapter.py` 상단 주석)
+- [x] F-03 딥보이스 판별 (`apps/api`, 음향 특징 휴리스틱 v1 — 피치 안정성/스펙트럼 평탄도/묵음 규칙성. 처음엔 정확도 미검증이었으나, 아래 실측 데이터셋으로 임계값 보정 완료 — 상세: `infrastructure/adapters/deepvoice_adapter.py` 상단 주석)
 - [x] F-06 관제 대시보드 (`apps/frontend`, 탐지 현황 테이블 + 위험도 분포 + 카테고리별 통계 + 통화 분석 폼. `apps/mcp-server/rest_server.py`를 새로 추가해 api가 판정 로직을 HTTP로 호출하도록 연결, api에 인메모리 감사증적 저장소 + 통계 집계 엔드포인트 추가)
 - [x] F-07 신고 연동 (`apps/mcp-server`의 `submit_report` 툴 — mock. risk_level이 high면 auto, 그 외엔 manual 채널로 분류해 인메모리에 기록. **실제 112/경찰청 API 호출 없음** — RFP 데이터 제약, `ReportSubmissionService` 상단 주석 참고. 알림 발송은 아직 미구현)
 - [ ] `docs/requirements.md`, `docs/design.md`, `docs/test-plan.md` 작성
@@ -321,5 +322,24 @@ Prometheus/Grafana입니다 — 자세한 내용은 위 "재사용한 인프라 
       애플리케이션 코드가 아니라 DB 레벨에서 강제. 로컬은 systemd가 아니라 docker
       컨테이너로 실행 — `run-voice-phishing-detector` 스킬 Prerequisites 참고. F-04
       rag-worker의 pgvector 이전은 범위 밖으로 남겨둠)
+- [x] F-04 유사사례 검색을 postgres+pgvector로 전환 (`infra/db/init.sql`의 `fraud_cases`
+      테이블 — 임베딩(sentence-transformers, 768차원)을 프로세스 메모리가 아니라
+      postgres에 저장/검색. `<=>` 코사인 거리 연산자로 postgres가 직접 정렬. 코퍼스는
+      `scripts/seed_fraud_cases.py`로 시드, `fraud_cases.json`은 소스 오브 트루스로 유지)
+- [x] N-02 접근통제(RBAC) — 조회(VIEWER)/처리(HANDLER)/관리자(ADMIN) 3단계 계층 구조를
+      `X-API-Key` 헤더 기반으로 apps/api에 도입 (`infrastructure/adapters/
+      api_key_role_auth.py`). health/ready/metrics는 인프라 컴포넌트 전용이라 미인증.
+      mcp-server(8100 직접 노출)에는 아직 미적용 — 알려진 범위 밖
+- [x] F-03 딥보이스 임계값을 실측 데이터셋으로 보정 (`apps/api/data/deepvoice_samples/`
+      — 공개 TTS(gTTS) 합성 음성 8건 + 라이선스가 명확한 실제 인간 발화(LibriSpeech,
+      CC BY 4.0) 8건. 기존 임계값이 재현율 0%였음을 실측으로 확인 후 재보정해 재현율
+      7/8, 오탐 2/8로 개선. 자연 발화 표본이 얇은 지표(묵음 규칙성)는 근거 없이
+      건드리지 않고 한계를 코드 주석에 명시)
+- [x] N-03 개인정보 마스킹 (`apps/api/src/domain/pii_masking.py` — 전화번호/계좌번호/
+      주민등록번호/이름+호칭 정규식 기반 v1. mcp-server에는 마스킹된 텍스트만 전달하고,
+      N-02 RBAC과 결합해 원문(raw_transcript)은 ADMIN 권한 응답에만 노출)
+- [x] N-06 확장성 설계 문서화 ([`docs/design.md`](docs/design.md) — 포트-어댑터 패턴으로
+      판정 알고리즘/검색 알고리즘/감사증적 저장소를 3번 실제로 교체한 이력을 근거로
+      "재설계 없는 확장"을 검증. 새 사기유형 추가 절차도 구체적으로 문서화)
 <img width="1900" height="1014" alt="Screenshot 2026-08-26 151128_edited" src="https://github.com/user-attachments/assets/5bf57efc-0385-4623-8cec-82461d236ffd" />
 <img width="1910" height="1046" alt="Screenshot 2026-08-26 151151_edited" src="https://github.com/user-attachments/assets/4b36260b-be9d-400e-bbbb-15154a82a299" />
