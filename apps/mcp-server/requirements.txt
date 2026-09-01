@@ -6,6 +6,8 @@ fastapi        # rest_server.py: docker-compose 네트워크에서 apps/api가 �
 uvicorn[standard]
 prometheus-client   # F-01/F-02 v2(Ollama) 추론 시간/GPU 메모리 메트릭 노출
 psycopg[binary]     # N-01: 감사증적(postgres) — infrastructure/adapters/postgres_report_repository.py
+grpcio              # N-06 확장성 검증: 3번째 진입점(grpc_server.py) — protos/voice_phishing.proto 참고
+grpcio-tools        # 위 .proto에서 grpc_generated/*_pb2*.py를 재생성할 때만 필요(런타임엔 grpcio만 있으면 됨)
 
 # F-01/F-02 v2는 Ollama를 별도 프로세스로 띄워두고 HTTP(/api/generate)로만 통신한다
 # (ollama_call_analysis_adapter.py 참고) — 이 requirements.txt에 ollama 관련 pip
