@@ -20,7 +20,8 @@ AI 데이터센터/AI 인프라 엔지니어 직무 취업을 위한 개인 포�
 - [requirements.md (요구사항정의서)](docs/requirements.md) — F-01~F-07/N-01~N-06 각각의
   입력/처리/출력/수용기준(acceptance criteria)과 구현·테스트 근거
 - [design.md (설계서)](docs/design.md) — 시스템 아키텍처/데이터 모델/API 명세/N-06
-  확장성 완성. 배포 구조(EC2) 챕터만 아직 TODO(배포 자체가 아직이라)
+  확장성/배포 구조(EC2, 계획 수준) 전부 작성 완료. 배포 구조는 실배포 전이라
+  인스턴스 스펙 등 세부값이 미확정으로 표시됨
 - [test-plan.md (시험계획서)](docs/test-plan.md) — 테스트 전략(단위/실측데이터셋/E2E
   3계층), F-01~F-07 검수 시나리오와 실측 결과, CI 파이프라인, 알려진 커버리지 공백
 
@@ -416,10 +417,14 @@ stt-worker) 전부에 대한 scrape 대상이 설정돼 있고, `docker compose 
 - [x] `docs/requirements.md`(요구사항정의서) 작성 — F-01~F-07/N-01~N-06 각각의
       입력/처리/출력/수용기준과 구현·테스트 근거, 요구사항 추적표(traceability matrix)
 - [x] `docs/design.md` 나머지 챕터 작성 — 시스템 아키텍처/데이터 모델/API 명세
-      (N-06 확장성 챕터는 기존 유지). **배포 구조(EC2) 챕터만 배포 자체가 아직이라
-      TODO로 남김**
+      (N-06 확장성 챕터는 기존 유지)
 - [x] `docs/test-plan.md`(시험계획서) 작성 — 테스트 전략 3계층, 서비스별 테스트
       구성표, F-01~F-07 검수 시나리오와 실측 결과(RBAC 매트릭스 포함), CI 파이프라인,
       알려진 커버리지 공백(N-05 실트래픽 미검증 등)을 정직하게 명시
+- [x] `docs/design.md` 4장 배포 구조를 계획 수준으로 작성 (Cloudflare Tunnel로
+      인바운드 포트 전면 차단하는 이유, 7개 서비스 중 frontend/api 2개만 공개하는
+      공개범위 표, Nginx+Cloudflare Origin CA로 Full(strict) TLS 구성, GPU vs CPU
+      인스턴스 트레이드오프, 배포 절차 7단계 — 실제 EC2 배포 전이라 인스턴스 스펙
+      등은 "미확정"으로 정직하게 표시). **실제 EC2 배포 자체는 여전히 TODO**
 <img width="1900" height="1014" alt="Screenshot 2026-08-26 151128_edited" src="https://github.com/user-attachments/assets/5bf57efc-0385-4623-8cec-82461d236ffd" />
 <img width="1910" height="1046" alt="Screenshot 2026-08-26 151151_edited" src="https://github.com/user-attachments/assets/4b36260b-be9d-400e-bbbb-15154a82a299" />

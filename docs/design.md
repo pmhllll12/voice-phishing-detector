@@ -1,9 +1,10 @@
 # 설계서 (System Design)
 
-> **진행 상황**(2026-08-31 갱신): 시스템 아키텍처/데이터 모델/API 명세/N-06 확장성
-> 챕터를 채웠다. **배포 구조(EC2/보안그룹/도메인) 챕터만 아직 TODO** — 실제 배포를
-> 아직 하지 않아서(`docker-compose.yaml` 로컬 실기동까지만 완료, README "진행 현황"
-> 참고) 쓸 내용이 없다. 배포가 완료되면 이 문서에 추가한다.
+> **진행 상황**(2026-09-01 갱신): 시스템 아키텍처/데이터 모델/API 명세/N-06 확장성
+> 챕터에 이어 **배포 구조(4장)도 계획 수준으로 채웠다** — 아직 실제 EC2 배포는
+> 하지 않았으므로(`docker-compose.yaml` 로컬 실기동까지만 완료, README "진행 현황"
+> 참고) 인스턴스 스펙 등 세부값은 "미확정"으로 남겨뒀다. 실제로 배포하면 확정값으로
+> 교체한다.
 
 ## 1. 시스템 아키텍처
 
@@ -99,12 +100,105 @@ MCP stdio 진입점(`server.py`, Claude Code가 `.mcp.json`으로 직접 호출)
 두 진입점이 같은 application 서비스를 재사용하지만 배선 코드는 아직 복붙 상태다
 (4장 "확장성이 아직 검증 안 된 지점" 참고).
 
-## 4. 배포 구조 (TODO)
+## 4. 배포 구조 (계획 — 실배포 전)
 
-EC2 + Cloudflare Tunnel 배포가 아직 진행 전이라 이 챕터는 비워둔다. 배포
-완료 시 아래를 채운다: EC2 인스턴스 스펙, 보안그룹 규칙, 도메인/DNS 구성,
-Nginx 리버스 프록시 설정, Cloudflare Tunnel 연결 방식(gpu-fleet-ops에서
-재사용할 패턴, README "재사용한 인프라 스킬" 참고).
+> 아직 EC2에 올리지 않았다. 이 챕터는 gpu-fleet-ops에서 검증한 패턴을 이
+> 프로젝트의 서비스 구성(`docker-compose.yaml`)에 맞춰 재적용하는 **계획**이다.
+> 실제로 배포하면 인스턴스 스펙·도메인 등 확정값으로 이 절을 교체한다.
+
+### 4.1 왜 인바운드 포트를 하나도 열지 않는가
+
+일반적인 "EC2 + Nginx" 구성은 보안그룹에서 80/443을 전체(`0.0.0.0/0`)에
+열어야 한다. Cloudflare Tunnel(`cloudflared`)은 반대로 **EC2 → Cloudflare
+엣지로의 아웃바운드 연결만** 맺고, 인바운드는 그 터널을 타고 들어온다. 즉
+보안그룹은 SSH(22, 관리자 IP만) 하나만 열면 되고 80/443은 아예 닫아둘 수
+있다 — 인터넷에서 EC2로 직접 도달 가능한 경로 자체가 없으므로 N-02 RBAC이
+막는 것과 별개로 공격 표면이 한 단계 더 줄어든다. gpu-fleet-ops에서 검증한
+핵심이 이 부분이라, 이번에도 그대로 재사용한다.
+
+### 4.2 EC2 인스턴스 스펙 (검토 중, 미확정)
+
+이 스택의 서비스별 리소스 특성:
+
+| 서비스 | 리소스 특성 |
+|---|---|
+| mcp-server → Ollama (EXAONE 3.5 2.4B Q4_K_M) | LLM 추론 — GPU면 지연시간 개선, CPU도 동작은 함(느림) |
+| api → wav2vec2 딥보이스 모델 | 94.6M 파라미터, 실측 CPU 추론 0.54초/건(콜드스타트 2.47초) — CPU로 충분(F-03 v2 서빙 메트릭 항목 참고) |
+| rag-worker → sentence-transformers 임베딩 | 코퍼스 10건 규모, CPU로 충분 |
+| stt-worker → faster-whisper | CTranslate2 int8, GPU 있으면 활용하지만 CPU 폴백도 지원 |
+| postgres+pgvector | 코퍼스/감사증적 규모가 작아 범용 인스턴스로 충분 |
+
+즉 GPU가 필수인 건 Ollama뿐이고, 나머지는 이미 CPU 폴백이 실측 검증돼
+있다. 포트폴리오 비용 제약을 고려하면:
+
+- **1안(비용 우선)**: CPU 인스턴스(`t3.xlarge` 급, vCPU 4/메모리 16GB
+  전후) + Ollama도 CPU로 — LLM 응답 지연이 늘어나는 대신 GPU 인스턴스
+  대비 시간당 비용이 크게 낮다. N-05 메트릭(`vps_analysis_duration_seconds`)
+  으로 실측해 SLA(5초 이내) 충족 여부를 배포 직후 확인한다.
+- **2안(지연시간 우선)**: GPU 인스턴스(`g4dn.xlarge` 급, T4) — Ollama
+  지연시간은 개선되지만 상시 기동 비용이 1안보다 높다.
+
+**결정은 배포 시점에 1안으로 먼저 켜보고 N-05 실측치가 SLA를 못 채우면
+2안으로 전환**하는 순서로 한다 — 두 옵션 다 `DeepvoiceDetectionPort` /
+`CallAnalysisPort`처럼 인스턴스 교체만으로 끝나고 애플리케이션 코드 변경이
+필요 없으므로(컨테이너가 CUDA 가용 여부를 런타임에 자동 감지) 전환 비용이
+낮다.
+
+### 4.3 서비스별 공개 범위
+
+`docker-compose.yaml`의 7개 서비스 중 인터넷에 실제로 노출해야 하는 건
+2개뿐이다 — 나머지는 서비스 간 통신만 필요하다.
+
+| 서비스 | 포트 | 공개 범위 |
+|---|---|---|
+| frontend | 3000 | **공개** — Cloudflare Tunnel로 `app.<domain>` 연결 |
+| api | 8000 | **공개** — 프런트가 브라우저에서 직접 호출 + 모바일 앱(F-05 오디오 업로드)이 호출할 경로라 `api.<domain>`으로 별도 연결 |
+| mcp-server | 8100 | 비공개 — api만 호출(N-02 서비스 자격증명), 터널에 연결 안 함 |
+| rag-worker | 8200 | 비공개 — mcp-server만 호출 |
+| stt-worker | 8300 | 비공개 — api만 호출 |
+| postgres | 5432 | 비공개 — 도커 브리지 네트워크 내부만, 프로덕션에서는 호스트 포트 매핑 자체를 제거 |
+| grafana | 3001 | 비공개(관리자 전용) — Cloudflare Access(이메일 인증)로 보호한 `grafana.<domain>`, 일반 공개 터널과 분리 |
+| prometheus | 9090 | 비공개 — grafana만 조회, 외부 노출 안 함 |
+
+이 표는 N-02 RBAC이 "인증된 사용자 중 누가 무엇을 할 수 있는가"를 막는
+것과 별개로, "애초에 인터넷에서 도달 가능한 서비스가 몇 개인가"를 줄이는
+계층이다 — 두 통제가 겹치는 게 아니라 서로 다른 위협을 막는다(RBAC은
+탈취된 자격증명, 공개 범위 축소는 미인증 스캐닝/취약점 익스플로잇).
+
+### 4.4 Nginx 리버스 프록시 + TLS
+
+`cloudflared`가 EC2 안에서 로컬 Nginx로 트래픽을 넘기고, Nginx가 호스트명
+기준으로 각 컨테이너 포트에 매핑한다:
+
+```
+Cloudflare 엣지 (공개 도메인, Full(strict) SSL)
+   │  (아웃바운드 터널)
+cloudflared (EC2 내부, 인바운드 포트 불필요)
+   │
+Nginx (EC2 로컬, 127.0.0.1 또는 도커 브리지 게이트웨이만 수신)
+   ├─ app.<domain>     → frontend:3000
+   ├─ api.<domain>     → api:8000
+   └─ grafana.<domain> → grafana:3001 (+ Cloudflare Access)
+```
+
+Cloudflare "Full(strict)" 모드는 엣지↔오리진 구간도 유효한 인증서를
+요구하므로, Nginx에는 Cloudflare Origin CA 인증서(무료, Cloudflare가
+발급)를 설치한다 — Let's Encrypt처럼 갱신을 별도로 관리할 필요 없이
+Cloudflare 대시보드에서 발급/갱신한다는 게 이 조합을 재사용하는 이유다.
+
+### 4.5 배포 절차 (계획)
+
+1. EC2 인스턴스 생성 (4.2의 1안으로 시작), 보안그룹은 SSH만 관리자 IP로 제한
+2. Docker + Docker Compose 설치, 이 저장소 clone
+3. `.env.example` → `.env`로 복사 후 운영값 채움 (API 키, DB 비밀번호,
+   `MCP_SERVICE_API_KEY` 등 — N-02/N-03 문서 참고)
+4. `docker compose up -d --build`, 전 서비스 `/health`·`/ready` 확인
+5. `cloudflared` 설치 + 터널 생성, DNS 레코드(`app.`/`api.`/`grafana.`)를
+   터널에 연결
+6. Nginx 설정 + Cloudflare Origin CA 인증서 설치
+7. N-05 메트릭으로 실트래픽 기준 SLA(5초 이내) 확인 — 배포 후 가장 먼저
+   검증할 항목(README/test-plan.md에 이미 "알려진 커버리지 공백"으로
+   명시돼 있던 부분)
 
 ## 5. N-06 확장성 설계
 
