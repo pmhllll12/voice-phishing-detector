@@ -81,9 +81,9 @@ F-01/F-02(핵심 판정)를 먼저, 비기능 요구사항을 나중에 채웠�
 | 처리 | v2(기본값): HuggingFace `mo-thecreator/Deepfake-audio-detection`(wav2vec2-base)로 분류. 모델 로드/추론 실패 시 v1(음향 특징 휴리스틱 — 피치 안정성/스펙트럼 평탄도/묵음 규칙성)로 자동 폴백. v2 판정 시에도 v1의 3개 지표를 보조 근거로 항상 함께 계산 |
 | 출력 | `is_synthetic`(bool\|None), `confidence`(0.0~1.0), `indicators`(list), `explanation`(str) |
 | 수용 기준 | ① 판정 근거(indicators)가 항상 최소 1개 이상 포함된다(블랙박스 판정 금지, N-04). ② v2 정상 동작 시 indicators는 4개(모델 판정 1 + 보조 음향지표 3)다. ③ 오디오가 너무 짧거나 무효하면 `is_synthetic=None`(판단 보류)을 반환하고 예외를 던지지 않는다 |
-| 구현 현황 | 완료 — v1(임계값 실측 보정, `4b3b0b5`) → v2(오픈소스 모델 교체, `9a231d3`, 서빙 메트릭 `8bef4da`) |
-| 검증 근거 | `apps/api/tests/test_deepvoice_dataset_calibration.py`(v1, 16건), `apps/api/tests/test_wav2vec2_deepvoice_adapter.py`(v2, 재현율 8/8·오탐 0/8 실측) |
-| 알려진 한계 | 검증 데이터셋이 16건뿐이라 일반화 보장 없음. v2 모델의 학습 데이터셋이 모델 카드에 명시돼 있지 않아 우리 데이터셋과 겹칠 가능성 배제 못함(정직하게 명시, `wav2vec2_deepvoice_adapter.py` 상단 주석) |
+| 구현 현황 | 완료 — v1(임계값 실측 보정, `4b3b0b5`) → v2(오픈소스 모델 교체, `9a231d3`, 서빙 메트릭 `8bef4da`) → **일반화 검증 완료**(2026-09-01): 보정 데이터셋(16건)과 별도인 홀드아웃 48건(TTS 엔진 2종 gTTS/edge-tts × 자연 발화 언어 2종 영어 LibriSpeech/한국어 Zeroth-Korean)에서 전체 47/48(97.9%) — 특히 처음 보는 TTS 엔진(edge-tts)과 한국어 실제 발화 그룹에서 각각 12/12 완벽 분리 |
+| 검증 근거 | `apps/api/tests/test_deepvoice_dataset_calibration.py`(v1, 16건), `apps/api/tests/test_wav2vec2_deepvoice_adapter.py`(v2, 재현율 8/8·오탐 0/8 실측), `apps/api/tests/test_deepvoice_generalization.py`(일반화, 48건 홀드아웃) |
+| 알려진 한계 | 일반화 검증(48건)으로 "gTTS 특유 아티팩트만 외웠다"/"합성 여부가 아니라 언어를 구분했다"는 두 우려는 실측으로 반증했지만, 여전히 48건 규모라 프로덕션 수준의 일반화를 보장하진 않는다. v2 모델의 학습 데이터셋이 모델 카드에 명시돼 있지 않아 우리 데이터셋과 겹칠 가능성도 완전히 배제 못함(`wav2vec2_deepvoice_adapter.py` 상단 주석) |
 
 ### F-04 유사사례 매칭
 
@@ -187,7 +187,7 @@ F-01/F-02(핵심 판정)를 먼저, 비기능 요구사항을 나중에 채웠�
 |---|---|
 | 설명 | 신규 사기유형 추가 시 시스템 재설계 없이 확장 가능한 구조로 설계한다 |
 | 수용 기준 | ① 포트(인터페이스)를 유지한 채 어댑터(구현체)를 교체할 수 있다 — application 계층 diff 0줄. ② 새 카테고리 추가 시 `PatternCategory` enum + `PATTERN_RULES` dict 확장만으로 충분하다(코드 재설계 불필요) |
-| 구현 현황 | 완료 — **4개 축에서 실제로 검증**: F-01/F-02 판정 알고리즘(규칙→LLM), F-04 검색 알고리즘(TF-IDF→임베딩→pgvector), N-01 감사증적 저장소(인메모리→postgres), F-03 딥보이스 판별기(휴리스틱→wav2vec2). 매번 application 계층 diff 0줄이 커밋 메시지로 실측됨 |
+| 구현 현황 | 완료 — **어댑터 교체 4개 축**: F-01/F-02 판정 알고리즘(규칙→LLM), F-04 검색 알고리즘(TF-IDF→임베딩→pgvector), N-01 감사증적 저장소(인메모리→postgres), F-03 딥보이스 판별기(휴리스틱→wav2vec2). **+ 신규 진입점 추가 축**(2026-09-01): mcp-server에 gRPC를 3번째 진입점으로 추가(`grpc_server.py`), N-02 RBAC도 grpc metadata로 재사용. 매번 application 계층 diff 0줄이 커밋 메시지로 실측됨 |
 | 검증 근거 | [`docs/design.md`](design.md) N-06 확장성 설계 챕터 — 커밋 해시까지 명시된 표 |
 
 ## 4. 요구사항 추적표 (Traceability Matrix)
@@ -195,7 +195,7 @@ F-01/F-02(핵심 판정)를 먼저, 비기능 요구사항을 나중에 채웠�
 | ID | 핵심 구현 파일 | 테스트 파일 | 완료 커밋 |
 |---|---|---|---|
 | F-01/F-02 | `apps/mcp-server/src/infrastructure/adapters/ollama_call_analysis_adapter.py` | `test_synthetic_dataset_calibration.py` | `360ffde`, `767eac1` |
-| F-03 | `apps/api/src/infrastructure/adapters/wav2vec2_deepvoice_adapter.py` | `test_wav2vec2_deepvoice_adapter.py` | `9a231d3`, `8bef4da` |
+| F-03 | `apps/api/src/infrastructure/adapters/wav2vec2_deepvoice_adapter.py` | `test_wav2vec2_deepvoice_adapter.py` + `test_deepvoice_generalization.py`(일반화, 48건) | `9a231d3`, `8bef4da` |
 | F-04 | `apps/rag-worker/src/infrastructure/adapters/pgvector_similarity_adapter.py` | `test_pgvector_similarity_adapter.py` | `960e96e` |
 | F-05 | `apps/api/src/application/services.py`(`TranscribeAndAnalyzeCallService`) | — (e2e로 검증) | `8d174c1` |
 | F-06 | `apps/frontend/src/app/page.tsx`, `AnalyzeCallForm.tsx` | — (Playwright e2e) | `8e28f49` |
@@ -205,7 +205,7 @@ F-01/F-02(핵심 판정)를 먼저, 비기능 요구사항을 나중에 채웠�
 | N-03 | `apps/api/src/domain/pii_masking.py` | `test_pii_masking.py` + `test_pii_masking_eval.py`(정량 평가) | `0f6440f` |
 | N-04 | (F-03/F-05에 걸쳐 구현) | 위 F-03/F-05 테스트에 포함 | — |
 | N-05 | `apps/api/src/infrastructure/metrics.py` | 실트래픽 104건 부하테스트(단일요청/동시성4) + Prometheus 교차검증 | `1414f30`, `8bef4da` |
-| N-06 | 전체 포트-어댑터 구조 | (각 축의 어댑터 테스트로 간접 검증) | `docs/design.md` 참고 |
+| N-06 | 전체 포트-어댑터 구조 + `apps/mcp-server/src/grpc_server.py` | (각 축의 어댑터 테스트로 간접 검증) + `test_grpc_server.py`(신규 진입점 직접 검증) | `docs/design.md` 참고 |
 
 ## 5. 제약사항 및 가정
 

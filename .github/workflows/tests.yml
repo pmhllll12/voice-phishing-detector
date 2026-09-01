@@ -1,7 +1,7 @@
 name: tests
 
 # 우선순위 3(테스트 & CI): PR마다 4개 서비스(api/mcp-server/rag-worker/stt-worker)의
-# pytest 스위트(146개, 2026-09-01 기준)를 자동 실행한다. Ollama/GPU가 없는 환경에서도
+# pytest 스위트(154개, 2026-09-01 기준)를 자동 실행한다. Ollama/GPU가 없는 환경에서도
 # 통과하도록 이미 설계돼 있는 걸 로컬에서 직접 확인했다(Ollama를 실제로 내려보고
 # mcp-server 71개 테스트가 전부 통과하는 것까지 확인 — 자동 폴백 덕분).
 #

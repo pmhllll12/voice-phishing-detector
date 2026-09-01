@@ -11,7 +11,7 @@ AI 데이터센터/AI 인프라 엔지니어 직무 취업을 위한 개인 포�
 > **현재 상태**: F-01~F-07(기능)과 N-01~N-06(비기능) 요구사항 모두 최소 1차 구현 및
 > 로컬 검증 완료(2026-08-31). `docker compose up --build`로 전체 스택(frontend/api/
 > mcp-server/rag-worker/stt-worker/postgres/prometheus/grafana) 실기동 확인, PR마다
-> pytest 146개 자동 실행하는 CI도 구축됨. RFP → 요구사항정의서 → 설계서 → 시험계획서
+> pytest 154개 자동 실행하는 CI도 구축됨. RFP → 요구사항정의서 → 설계서 → 시험계획서
 > 4개 문서 전부 작성 완료. **EC2 배포만 아직 TODO**입니다. 자세한 건 아래 "진행 현황" 참고.
 
 ## 문서
@@ -122,6 +122,37 @@ uvicorn rest_server:app --app-dir src --port 8100
 ```
 
 떠 있는지 확인: `curl http://localhost:8100/health`
+
+## mcp-server gRPC 진입점 (N-06 확장성 검증용, 프로덕션 배포 대상 아님)
+
+REST(`rest_server.py`)/MCP stdio(`server.py`)와 완전히 같은 판정 로직을 gRPC로도
+제공할 수 있는지 검증하는 3번째 진입점입니다(`grpc_server.py`, 2026-09-01 추가,
+`docs/design.md` N-06 확장 지점 7번 참고). `CallAnalysisService`를 그대로 재사용해
+application/domain 계층 diff 0줄로 추가했고, N-02 RBAC도 grpc metadata(`x-api-key`)
+로 재사용했습니다. 검증 목적이라 docker-compose에는 등록하지 않았습니다.
+
+```bash
+cd apps/mcp-server
+source .venv/bin/activate
+python src/grpc_server.py   # 기본 포트 8101
+```
+
+호출 예시(Python, 별도 터미널):
+```python
+import grpc
+from infrastructure.grpc_generated import voice_phishing_pb2, voice_phishing_pb2_grpc
+
+channel = grpc.insecure_channel("localhost:8101")
+stub = voice_phishing_pb2_grpc.VoicePhishingAnalysisStub(channel)
+resp = stub.Analyze(
+    voice_phishing_pb2.AnalyzeRequest(transcript="검찰청 수사관인데 안전계좌로 이체하세요"),
+    metadata=(("x-api-key", "dev-handler-key"),),
+)
+print(resp.risk_score, resp.risk_level)
+```
+
+`.proto`를 바꾸면 `protos/voice_phishing.proto` 상단 주석의 재생성 명령을 따르세요
+(생성된 `_pb2_grpc.py`의 import를 상대경로로 수동 수정해야 하는 점 포함).
 
 ## rag-worker 로컬 실행 (F-04 유사사례 검색에 필요)
 
@@ -438,7 +469,7 @@ stt-worker) 전부에 대한 scrape 대상이 설정돼 있고, `docker compose 
       판단해 도입하지 않음 — 판단 근거와 재검토 조건은
       `wav2vec2_deepvoice_adapter.py` 상단 "WHY 전용 추론 서버가 아직 없는가" 참고)
 - [x] GitHub Actions CI 구축 (`.github/workflows/tests.yml` — push/PR마다 4개
-      서비스 pytest 146개를 병렬 job으로 자동 실행. postgres 의존 테스트는
+      서비스 pytest 154개를 병렬 job으로 자동 실행. postgres 의존 테스트는
       skipif로 건너뛰지 않고 서비스 컨테이너로 실제로 돌림. Ollama 없이도
       mcp-server 71개가 전부 통과하는 걸 로컬에서 Ollama를 직접 내려서 확인한
       뒤 워크플로우를 작성함. 2026-08-31 기준 push/PR 양쪽에서 8개 job 전부 통과)
@@ -491,5 +522,20 @@ stt-worker) 전부에 대한 scrape 대상이 설정돼 있고, `docker compose 
       영향 없었음. 이걸로 병목이 소프트웨어가 아니라 GPU 용량 자체임을
       확정. GPU 증설/수요측 속도제한은 아직 미도입 — `test_llm_concurrency_
       limit.py`로 제한 메커니즘 자체는 회귀 가드
+- [x] F-03 v2 일반화 검증 (2026-09-01) — 보정 데이터셋(16건, gTTS 전용/자연발화
+      전부 영어)과 별도인 홀드아웃 48건(`data/deepvoice_generalization_samples/`)
+      으로 검증: TTS 엔진 2종(gTTS/edge-tts) × 자연 발화 언어 2종(영어
+      LibriSpeech/한국어 Zeroth-Korean, CC BY 4.0)으로 "같은 엔진만 봤다"/
+      "언어를 구분한 것 아니냐"는 두 교란 요인을 통제. **결과: 전체 47/48
+      (97.9%), 처음 보는 엔진(edge-tts)과 한국어 실제 발화 양쪽 다 12/12
+      완벽 분리** — 일반화 우려를 실측으로 크게 줄임. `test_deepvoice_
+      generalization.py`로 회귀 가드
+- [x] mcp-server 신규 진입점(gRPC) 확장 검증 (2026-09-01) — N-06 "새 진입점
+      프로토콜 추가"가 아직 검증 안 된 확장 축이었던 걸 실제로 해소. REST/MCP
+      stdio 2개 진입점과 완전히 같은 `CallAnalysisService`를 gRPC로도 감싸서
+      (`grpc_server.py`) application/domain 계층 diff 0줄로 3번째 진입점을
+      추가했고, N-02 RBAC(`Role`/`API_KEYS`)도 grpc metadata로 재사용해
+      인증/인가까지 실제 gRPC 클라이언트로 검증(`test_grpc_server.py` — 정상
+      호출/미인증/권한부족 3가지). 검증 목적이라 docker-compose 등록은 안 함
 <img width="1900" height="1014" alt="Screenshot 2026-08-26 151128_edited" src="https://github.com/user-attachments/assets/5bf57efc-0385-4623-8cec-82461d236ffd" />
 <img width="1910" height="1046" alt="Screenshot 2026-08-26 151151_edited" src="https://github.com/user-attachments/assets/4b36260b-be9d-400e-bbbb-15154a82a299" />

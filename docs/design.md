@@ -243,9 +243,9 @@ infrastructure/  "실제로 어떻게 하는가" — 포트를 구현하는 어�
 ```
 
 확장성의 근거는 단순하다 — **domain과 application은 infrastructure를 모르므로,
-infrastructure를 통째로 갈아끼워도(알고리즘 교체, 저장소 교체, 새 카테고리 추가) 위쪽
-계층은 파급을 받지 않는다.** 아래는 이게 이론이 아니라 이 프로젝트에서 **이미 4번
-실제로 일어난 일**이라는 근거다.
+infrastructure를 통째로 갈아끼우거나(알고리즘 교체, 저장소 교체) 새 진입점을
+추가해도(새 카테고리, 새 프로토콜) 위쪽 계층은 파급을 받지 않는다.** 아래는 이게
+이론이 아니라 이 프로젝트에서 **이미 7번 실제로 일어난 일**이라는 근거다.
 
 ### 확장 지점별 현황
 
@@ -257,6 +257,7 @@ infrastructure를 통째로 갈아끼워도(알고리즘 교체, 저장소 교�
 | 4 | F-03 딥보이스 판별기 | `DeepvoiceDetectionPort` | `HeuristicDeepvoiceAdapter`(v1, 폴백 겸 N-04 보조 지표용으로 유지) / `Wav2Vec2DeepvoiceAdapter`(v2, 기본값) | v1→v2 (2026-08-31, `wav2vec2_deepvoice_adapter.py`) | 0줄 |
 | 5 | F-01 사기유형 카테고리 | `PatternCategory` enum + `PATTERN_RULES` dict | 4종(기관사칭/공포조성/긴급송금유도/개인정보요구) | 스캐폴딩 초기 커밋부터 4번째 카테고리를 "확장 예시"로 포함 | 0줄 |
 | 6 | N-02 접근권한 역할 | `Role` enum + `role_satisfies` 계층 | VIEWER/HANDLER/ADMIN 3단계, apps/api·mcp-server 양쪽에 동일 구조 | apps/api 도입 → mcp-server로 확장(`c9799af`, 같은 패턴 복붙) | 0줄 |
+| 7 | mcp-server 진입점 프로토콜 | (포트 아님 — 같은 `CallAnalysisService`를 감싸는 어댑터 3개) | REST(`rest_server.py`) / MCP stdio(`server.py`) / **gRPC(`grpc_server.py`, 2026-09-01 추가)** | REST+stdio 2개 → gRPC 3번째 추가. N-02 RBAC(`Role`/`API_KEYS`)도 grpc metadata로 재사용해 3번째 진입점까지 확장 | 0줄 |
 
 "application 계층 diff 0줄"은 각 커밋 메시지에 실제로 명시돼 있다. 예를 들어 F-04
 v1→v2 커밋(`2d60b87`)은 "FraudCaseSearchPort 인터페이스를 그대로 유지해
@@ -308,10 +309,17 @@ F-01/F-02 합성 데이터셋 검증(`767eac1`)에서 나머지 3개 카테고�
 
 ### 확장성이 아직 검증 안 된 지점 (정직하게 밝힘)
 
-- mcp-server의 REST 엔드포인트(`rest_server.py`)와 MCP stdio 엔드포인트(`server.py`)는
-  같은 application 서비스를 재사용하지만, 진입점 자체의 배선 코드는 복붙돼 있다
-  (`rest_server.py` 상단 주석: "공유 모듈로 뽑을 만큼 커지면 그때 리팩터링") — "새
-  진입점 프로토콜 추가"(예: gRPC)는 아직 실제로 검증된 확장 축이 아니다.
+- ~~mcp-server의 REST 엔드포인트(`rest_server.py`)와 MCP stdio 엔드포인트(`server.py`)는
+  같은 application 서비스를 재사용하지만, "새 진입점 프로토콜 추가"는 아직 검증된
+  확장 축이 아니다~~ — 해결됨(2026-09-01). gRPC를 3번째 진입점으로 추가해
+  `CallAnalysisService`를 그대로 재사용했다(`grpc_server.py`, application/domain
+  계층 diff 0줄, 위 표 7번). N-02 RBAC(`Role`/`API_KEYS`)도 grpc metadata(`x-api-key`)
+  기반으로 재사용해, "접근통제까지 포함해 새 진입점을 추가할 수 있는가"까지 실제
+  gRPC 클라이언트로 검증했다(`test_grpc_server.py` — 정상 호출/미인증/권한부족 3가지
+  실측). 진입점 배선 코드 자체는 여전히 3곳에 복붙돼 있다(`rest_server.py` 상단 주석과
+  같은 이유 — 공유 모듈로 뽑을 만큼 커지면 그때 리팩터링). 이 gRPC 진입점은 검증
+  목적이라 docker-compose에는 아직 등록하지 않았다(README "mcp-server gRPC 진입점"
+  참고) — "프로덕션 배포까지 완료"는 아니라는 점은 정직하게 남겨둔다.
 - ~~N-02 RBAC은 apps/api에만 있고 mcp-server에는 없다~~ — 해결됨(2026-08-31). mcp-server
   REST 어댑터(`rest_server.py`)에도 동일한 `Role`/`role_satisfies` 계층을 도입해
   `/api/v1/analyze`·`/api/v1/reports`를 보호했다(`infrastructure/adapters/
@@ -331,7 +339,16 @@ F-01/F-02 합성 데이터셋 검증(`767eac1`)에서 나머지 3개 카테고�
   gTTS 합성 음성에 일반화되지 않음). 채택한 두 번째 모델은 16건 전부를 신뢰도 0.99
   이상으로 정확히 분류했지만, 학습 데이터셋이 모델 카드에 명시돼 있지 않아 우리
   데이터셋과 겹칠 가능성을 배제할 수 없다 — "포트가 있다"에서 "실제로 교체해봤다"로는
-  올라섰지만, "이 정확도가 일반화된다"는 아직 별개의 증명되지 않은 주장이다.
+  올라섰지만, "이 정확도가 일반화된다"는 아직 별개의 증명되지 않은 주장이었다.
+  **일반화 검증 완료(2026-09-01)** — 보정 데이터셋(16건, TTS는 gTTS뿐이고 자연
+  발화는 전부 영어)의 두 약점(엔진 1종만 검증, 언어가 갈려있어 "합성 여부가 아니라
+  언어를 구분한 것 아니냐"는 교란 요인)을 통제한 별도 홀드아웃 48건(TTS: gTTS+
+  edge-tts, 자연 발화: 영어 LibriSpeech+한국어 Zeroth-Korean)으로 재검증한 결과
+  전체 47/48(97.9%) — 특히 처음 보는 엔진(edge-tts, 12/12)과 한국어 실제 발화
+  (12/12) 양쪽 모두 완벽 분리했다. 여전히 48건 규모라 프로덕션 수준의 일반화까지
+  보장하진 않지만, "gTTS 특유 아티팩트만 외웠다"/"언어를 구분했을 뿐이다"라는 두
+  구체적 반박 가설은 실측으로 기각했다(`docs/test-plan.md` "F-03 v2 일반화 검증"
+  절 참고).
 
 ## 6. postgres 단일 장애점 완화 (2026-09-01)
 

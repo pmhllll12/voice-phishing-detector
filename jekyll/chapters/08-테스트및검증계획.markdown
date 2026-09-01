@@ -10,7 +10,7 @@ permalink: /08-테스트및검증계획/
 
 | 서비스 | 테스트 파일 수 | 주요 검증 대상 |
 |---|---|---|
-| `apps/api` | 11 | RBAC(N-02), PII 마스킹(N-03, 정량 평가 `test_pii_masking_eval.py` 포함), 딥보이스 데이터셋 회귀(`test_deepvoice_dataset_calibration.py`) 등 |
+| `apps/api` | 12 | RBAC(N-02), PII 마스킹(N-03, 정량 평가 `test_pii_masking_eval.py` 포함), 딥보이스 데이터셋 회귀(`test_deepvoice_dataset_calibration.py`) + 일반화 검증(`test_deepvoice_generalization.py`) 등 |
 | `apps/mcp-server` | 12 | RBAC(`tests/test_rbac.py`), F-01/F-02/F-04/F-07 유스케이스, N-05 동시성 제한(`test_llm_concurrency_limit.py`) |
 | `apps/rag-worker` | 3 | 임베딩/pgvector 검색 어댑터 |
 | `apps/stt-worker` | 1 | faster-whisper 어댑터 로드/폴백 |
@@ -24,8 +24,10 @@ permalink: /08-테스트및검증계획/
   데이터셋으로 딥보이스 판별 임계값을 실측 보정했다(`4b3b0b5`,
   `apps/api/tests/test_deepvoice_dataset_calibration.py`). 임계값을 추측값이 아니라
   실측 통계로 재보정한 결과, 재현율이 0%(원래 임계값 0.01이 16건 전부에서 트리거되지
-  않음)에서 87.5%(7/8)로 개선됐다 — 표본이 16건뿐이라 일반화를 보장하지는 않는다는
-  한계는 그대로 밝혀둔다(`deepvoice_adapter.py` 상단 주석 참고).
+  않음)에서 87.5%(7/8)로 개선됐다(`deepvoice_adapter.py` 상단 주석 참고). 이후
+  v2(wav2vec2) 도입 시 그 16건과 별도인 홀드아웃 48건(TTS 엔진 2종 × 자연 발화
+  언어 2종)으로 일반화까지 검증했다(2026-09-01, 전체 47/48 —
+  `apps/api/tests/test_deepvoice_generalization.py`).
 
 ## 2) 품질 검증 방안 (실측 결과)
 

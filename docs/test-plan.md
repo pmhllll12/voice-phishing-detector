@@ -3,7 +3,7 @@
 **기준 문서**: [`docs/requirements.md`](requirements.md), [`docs/RFP.md`](RFP.md)
 **작성일**: 2026-08-31
 
-> 이 문서는 이미 실행된 검증(pytest 146개, 실측 데이터셋, RBAC 실측, docker-compose
+> 이 문서는 이미 실행된 검증(pytest 154개, 실측 데이터셋, RBAC 실측, docker-compose
 > e2e, CI)을 사후에 정리한 것이지, 앞으로 할 계획만 나열한 것이 아니다 — "계획"과
 > "실측 결과"를 구분해서 표기한다.
 
@@ -35,11 +35,11 @@
 
 | 서비스 | 테스트 파일 | 테스트 수 | postgres 필요 | 비고 |
 |---|---|---|---|---|
-| `apps/api` | 11개 | 59 | 일부(skipif) | F-03 v1/v2 실측 데이터셋 검증 + N-03 이름 마스킹 정량 평가 + postgres 재연결 회귀 포함 |
-| `apps/mcp-server` | 12개 | 73 | 일부(skipif) | Ollama 없이도 자동 폴백으로 전부 통과(실측 확인) + postgres 재연결/N-05 동시성 제한 회귀 포함 |
+| `apps/api` | 12개 | 64 | 일부(skipif) | F-03 v1/v2 실측 데이터셋 검증 + N-03 이름 마스킹 정량 평가 + postgres 재연결 회귀 포함 |
+| `apps/mcp-server` | 13개 | 76 | 일부(skipif) | Ollama 없이도 자동 폴백으로 전부 통과(실측 확인) + postgres 재연결/N-05 동시성 제한 회귀 포함 |
 | `apps/rag-worker` | 3개 | 12 | 일부(skipif) | pgvector 검색 통합 테스트 + 재연결 회귀 포함 |
 | `apps/stt-worker` | 1개 | 2 | 불필요 | 가짜 어댑터만 사용, 실제 모델 로드 없음(의도적 — 무겁고 GPU 의존적이라) |
-| **합계** | **27개** | **146** | | |
+| **합계** | **29개** | **154** | | |
 
 postgres가 필요한 테스트는 `TEST_DATABASE_URL`(또는 `DATABASE_URL`) 접속 가능
 여부를 `pytest.mark.skipif`로 확인해 접속 불가 시 건너뛴다. **로컬에서는
@@ -66,6 +66,28 @@ postgres가 필요한 테스트는 `TEST_DATABASE_URL`(또는 `DATABASE_URL`) �
 | 1 | gTTS 합성 음성 8건 | `is_synthetic=True` | v1: 7/8, v2: 8/8 (전부 신뢰도 0.99 이상) |
 | 2 | LibriSpeech 실제 인간 발화 8건 | `is_synthetic=False` | v1: 6/8(오탐 2건), v2: 8/8(오탐 0건) |
 | 3 | 모델 로드 실패(존재하지 않는 모델명) | v1으로 자동 폴백, 예외 없이 판정 반환 | `test_falls_back_to_heuristic_when_model_unavailable` 통과 |
+
+### F-03 v2 일반화 검증 (2026-09-01)
+
+보정 데이터셋(16건, 위 표)과 별도인 홀드아웃 48건으로 검증했다 —
+`data/deepvoice_generalization_samples/`, TTS 엔진 2종(gTTS/edge-tts) x
+자연 발화 언어 2종(영어 LibriSpeech/한국어 Zeroth-Korean, CC BY 4.0) 조합.
+보정 데이터셋의 두 가지 약점(같은 엔진으로만 검증, TTS=한국어/자연발화=영어라
+언어가 갈려있어 "합성 여부가 아니라 언어를 구분한 것 아니냐"는 교란 요인)을
+직접 통제했다.
+
+| 그룹 | 건수 | 정확도 | 의미 |
+|---|---|---|---|
+| gTTS (보정과 동일 엔진) | 12 | 12/12 | 기준선 |
+| edge-tts (처음 보는 엔진, MS 신경망 TTS) | 12 | 12/12 | "gTTS 특유 아티팩트만 외웠다"는 우려 반증 |
+| LibriSpeech 영어 자연 발화 | 12 | 11/12 | 유일한 오탐 1건 |
+| Zeroth-Korean 한국어 자연 발화 | 12 | 12/12 | "언어를 구분한 것 아니냐"는 교란 요인 통제·반증 |
+| **전체** | **48** | **47/48 (97.9%)** | |
+
+**결론**: 처음 보는 TTS 엔진과 한국어 실제 발화 양쪽 모두에서 완벽하게
+분리해, "이 정확도가 일반화된다는 건 증명 안 됨"이라는 기존 우려를 상당히
+줄였다. 다만 48건도 여전히 소규모라 프로덕션 수준의 일반화를 보장하진
+않는다 — `test_deepvoice_generalization.py`로 회귀 가드.
 
 ### F-04: 유사사례 매칭
 
@@ -191,6 +213,30 @@ LLM_MAX_CONCURRENCY 값(1/2/4) 자체도 결과에 거의 영향을 주지 않�
 붙였다(`test_reconnects_and_succeeds_after_connection_is_closed` 등, 위 3절
 테스트 수 증가분 참고).
 
+### N-06: mcp-server 신규 진입점(gRPC) 확장 검증 (2026-09-01)
+
+REST(`rest_server.py`)/MCP stdio(`server.py`) 2개 진입점이 같은
+`CallAnalysisService`를 재사용한다는 것까지만 검증돼 있었고, "새 진입점
+프로토콜을 추가하는 것" 자체는 미검증 확장 축이었다(`docs/design.md`
+"확장성이 아직 검증 안 된 지점"). gRPC를 3번째 진입점으로 실제로 추가해
+진짜 gRPC 클라이언트로 검증했다.
+
+| # | 시나리오 | 기대 결과 | 실측 결과 |
+|---|---|---|---|
+| 1 | 정상 호출(HANDLER 키) | REST/MCP와 동일한 판정 필드 반환 | `risk_score`/`risk_level`/`detected_patterns` 등 정상 반환, `authority_impersonation` 카테고리 정확히 탐지 |
+| 2 | x-api-key metadata 없이 호출 | 인증 실패 | `grpc.StatusCode.UNAUTHENTICATED` |
+| 3 | VIEWER 키로 호출(HANDLER 이상 필요) | 인가 실패 | `grpc.StatusCode.PERMISSION_DENIED` |
+
+`git status`로 실제 diff 범위를 확인한 결과 `apps/mcp-server/src/application/`,
+`domain/`은 한 줄도 안 바뀌었다 — 새 파일(`grpc_server.py`, `protos/`,
+`grpc_generated/`, 테스트)과 `requirements.txt` 추가뿐이다. N-02 RBAC도
+`Role`/`API_KEYS`(도메인 모델 + 저장소)를 그대로 재사용해 grpc metadata
+기반으로 인증/인가했다 — FastAPI 전용인 `require_role` 데코레이터 자체는
+재사용 못 했지만, 그 밑의 도메인 로직은 재사용됐다.
+
+이 gRPC 진입점은 검증 목적이라 `docker-compose.yaml`에는 등록하지 않았다
+(README "mcp-server gRPC 진입점" 참고) — "프로덕션 배포까지 마쳤다"는 아니다.
+
 ### F-05/F-06: 오디오 입력 → 대시보드 반영 (E2E)
 
 Playwright(`--use-fake-device-for-media-stream`)로 마이크 녹음을 시뮬레이션:
@@ -224,5 +270,6 @@ Dockerfile이 `scripts/`를 안 담아 F-04 코퍼스 시딩이 크래시하던 
 |---|---|
 | N-05 동시성 하 평균 지연시간 SLA 미충족 | threadpool 위임+세마포어로 꼬리 지연시간(p95/p99/최대)은 30~40% 개선했지만(위 "N-05 동시성 SLA 해결 시도" 절), 평균 지연시간(8.1~8.3초)과 5초 초과 비율(96~99%)은 GPU 용량 자체가 병목이라 거의 그대로 — GPU 증설 또는 수요 측 속도제한/큐잉 필요, 둘 다 미도입 |
 | N-03 이름 마스킹 재현율 100% 미달 | 정량 평가 완료(위 "N-03" 절), 재현율 0.727 — 성씨 목록 밖/호칭 분리/반말 3가지 패턴은 여전히 놓침. 정규식 기반이라 근본 해결은 NER 모델 도입 필요 |
-| F-03 v2 일반화 검증 | 16건 데이터셋에서의 완전 분리가 더 큰 표본에서도 유지되는지 미검증 |
+| F-03 v2 일반화 — 48건 이상 규모 미검증 | 홀드아웃 48건(엔진 2종×언어 2종)으로 47/48 검증 완료(위 "F-03 v2 일반화 검증" 절), 프로덕션 규모(수백~수천 건)에서의 유지 여부는 미검증 |
 | frontend(F-06) 단위/컴포넌트 테스트 | Playwright E2E만 있고 React 컴포넌트 단위 테스트는 없음 |
+| gRPC 진입점(N-06) 프로덕션 미배포 + F-07 미포함 | `Analyze` RPC 1개만 검증했고 `submit_report`(F-07)는 gRPC로 노출 안 함. docker-compose 미등록이라 실제 운영 트래픽으로는 검증 안 됨 |
