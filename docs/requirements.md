@@ -178,8 +178,8 @@ F-01/F-02(핵심 판정)를 먼저, 비기능 요구사항을 나중에 채웠�
 |---|---|
 | 설명 | 통화 종료 후 평균 5초 이내에 판정 결과를 산출한다 |
 | 수용 기준 | ① `vps_analysis_duration_seconds` 히스토그램이 판정 성공 경로에서 기록된다(에러 경로는 제외 — 가용성 문제와 SLA 위반을 구분). ② F-03 v2도 별도 메트릭(`vps_deepvoice_inference_duration_seconds`)으로 계측된다 |
-| 구현 현황 | **계측 배선만 완료**(`1414f30`, `8bef4da`) — 실측: F-03 v2 추론 0.54초, 콜드스타트 2.47초(CPU). **N-05가 요구하는 "평균 5초 이내"를 실트래픽 기준으로 검증하는 것은 아직 TODO** — 표본이 쌓이지 않았다 |
-| 검증 근거 | FastAPI TestClient로 `/metrics` 노출 확인. Grafana 대시보드 연동은 아직(design.md 참고) |
+| 구현 현황 | 계측 배선(`1414f30`, `8bef4da`) + **실트래픽 SLA 검증 완료**(2026-09-01). 단일 요청(순차 26건, 합성 데이터셋 전량): 평균 2.11초, p95 2.81초, p99 3.02초 — SLA(평균 5초 이내) 충족. **단, 동시 요청 4건(78건, 3라운드)에서는 평균 8.75초, p95 18.86초로 SLA 미충족**(94.9%가 5초 초과) — Ollama(LLM)·wav2vec2(딥보이스)·임베딩·STT가 GPU 1장(RTX 3050)을 공유하는 구조적 한계로, 코드 결함이 아니라 인프라 용량 문제. 개선 방향(요청 큐잉/동시성 제한, 또는 GPU 추가)은 `docs/design.md` 참고 |
+| 검증 근거 | 실제 `/api/v1/calls/analyze` 호출 104건(순차 26 + 동시성4×3라운드 78) + Prometheus `histogram_quantile`로 교차검증(p95 4.45초/p99 5.00초 — 두 조건이 섞인 누적치라 위 분리측정이 더 정확). Grafana 대시보드에 p95/p99 패널 추가(`gpu-fleet-ops/dashboards/gpu-fleet-monitoring.json`) |
 
 ### N-06 확장성
 
@@ -204,7 +204,7 @@ F-01/F-02(핵심 판정)를 먼저, 비기능 요구사항을 나중에 채웠�
 | N-02 | `apps/api/src/infrastructure/adapters/api_key_role_auth.py` | `test_rbac.py`(양쪽 앱) | `a9480fd`, `c9799af` |
 | N-03 | `apps/api/src/domain/pii_masking.py` | `test_pii_masking.py` | `0f6440f` |
 | N-04 | (F-03/F-05에 걸쳐 구현) | 위 F-03/F-05 테스트에 포함 | — |
-| N-05 | `apps/api/src/infrastructure/metrics.py` | (메트릭 노출 확인, 실트래픽 검증 TODO) | `1414f30`, `8bef4da` |
+| N-05 | `apps/api/src/infrastructure/metrics.py` | 실트래픽 104건 부하테스트(단일요청/동시성4) + Prometheus 교차검증 | `1414f30`, `8bef4da` |
 | N-06 | 전체 포트-어댑터 구조 | (각 축의 어댑터 테스트로 간접 검증) | `docs/design.md` 참고 |
 
 ## 5. 제약사항 및 가정

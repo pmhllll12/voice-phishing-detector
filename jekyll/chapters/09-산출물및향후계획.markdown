@@ -43,13 +43,16 @@ permalink: /09-산출물및향후계획/
 1. ~~F-03 딥보이스 v2 교체~~ 완료(2026-08-31) — `DeepvoiceDetectionPort` 인터페이스를
    그대로 유지한 채(N-06, 0줄 변경) wav2vec2 기반 스푸핑 탐지 모델로 교체했다.
    다음 과제는 이 모델의 일반화 여부를 더 큰 데이터셋으로 검증하는 것이다(8장 3절).
-2. **`docker-compose.yaml` 실기동 검증 + EC2 배포** — 현재는 뼈대만 있고 TODO로
-   표시된 항목(healthcheck, .env 분리, 네트워크 정책 등)이 남아있다.
-3. **`docs/requirements.md`/`docs/test-plan.md` 작성** — RFP를 요구사항정의서·
-   시험계획서 수준으로 구체화.
-4. **N-05 SLA 실트래픽 관측** — 지금은 메트릭 배선만 완료했으므로, Grafana에서
-   p95/p99 응답시간 대시보드를 구성하고 실제 부하 시나리오로 SLA 충족 여부를
-   확인한다.
+2. ~~`docker-compose.yaml` 실기동 검증~~ 완료(2026-08-31) — 전체 스택
+   `docker compose up --build`로 8개 서비스 정상 기동 확인. **EC2 배포는
+   아직 TODO** — 설계(`docs/design.md` 4장)는 계획 수준으로 완료, 실제
+   인스턴스 생성은 남아있다.
+3. ~~`docs/requirements.md`/`docs/test-plan.md` 작성~~ 완료(2026-08-31).
+4. ~~N-05 SLA 실트래픽 관측~~ 완료(2026-09-01) — 순차 요청은 평균 2.11초로
+   SLA(5초) 충족, 동시 요청 4건에서는 평균 8.75초/p95 18.86초로 94.9%가
+   위반. GPU 1장을 4개 모델이 나눠 쓰는 구조적 한계로, 요청 큐잉이나 GPU
+   추가 같은 해결책은 다음 과제(`docs/test-plan.md` N-05 절 참고). Grafana에
+   p95/p99 패널 추가.
 5. **postgres 단일 장애점 완화** — `/ready`가 다운을 반영하는 것과 별개로, 재기동
    자동화(systemd `Restart=`, docker healthcheck) 또는 복제/백업 정책을 추가한다.
 6. **PII 마스킹(N-03) 정량 평가** — 특히 이름 마스킹의 오탐/누락률을 정량 데이터셋으로

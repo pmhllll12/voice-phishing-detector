@@ -426,5 +426,14 @@ stt-worker) 전부에 대한 scrape 대상이 설정돼 있고, `docker compose 
       공개범위 표, Nginx+Cloudflare Origin CA로 Full(strict) TLS 구성, GPU vs CPU
       인스턴스 트레이드오프, 배포 절차 7단계 — 실제 EC2 배포 전이라 인스턴스 스펙
       등은 "미확정"으로 정직하게 표시). **실제 EC2 배포 자체는 여전히 TODO**
+- [x] N-05 응답시간 SLA 실트래픽 검증 (2026-09-01) — 합성 데이터셋 26건으로
+      실제 `/api/v1/calls/analyze`에 부하를 걸어 측정. 순차 요청(동시성 1)은
+      평균 2.11초/p95 2.81초로 SLA(5초) 충족, **동시 요청 4건에서는 평균
+      8.75초/p95 18.86초로 94.9%가 SLA 위반** — GPU 1장(RTX 3050)을
+      Ollama/wav2vec2/임베딩/STT가 나눠 쓰는 구조적 한계. gpu-fleet-ops
+      Prometheus에 `vps-api` 스크레이프 job 추가 + Grafana에 p95/p99 패널
+      추가(`gpu-fleet-ops/dashboards/gpu-fleet-monitoring.json`)로 실측/교차검증.
+      해결책(요청 큐잉, GPU 추가 등)은 아직 미적용 — `docs/design.md`/
+      `docs/test-plan.md`에 정직하게 명시
 <img width="1900" height="1014" alt="Screenshot 2026-08-26 151128_edited" src="https://github.com/user-attachments/assets/5bf57efc-0385-4623-8cec-82461d236ffd" />
 <img width="1910" height="1046" alt="Screenshot 2026-08-26 151151_edited" src="https://github.com/user-attachments/assets/4b36260b-be9d-400e-bbbb-15154a82a299" />
