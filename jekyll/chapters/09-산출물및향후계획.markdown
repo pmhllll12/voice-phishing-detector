@@ -53,8 +53,13 @@ permalink: /09-산출물및향후계획/
    위반. GPU 1장을 4개 모델이 나눠 쓰는 구조적 한계로, 요청 큐잉이나 GPU
    추가 같은 해결책은 다음 과제(`docs/test-plan.md` N-05 절 참고). Grafana에
    p95/p99 패널 추가.
-5. **postgres 단일 장애점 완화** — `/ready`가 다운을 반영하는 것과 별개로, 재기동
-   자동화(systemd `Restart=`, docker healthcheck) 또는 복제/백업 정책을 추가한다.
+5. ~~postgres 단일 장애점 완화~~ 완료(2026-09-01) — docker-compose 전 서비스에
+   `restart: unless-stopped` 적용(의도된 `docker stop`/`kill`은 예외라는 걸
+   실측 확인). 더 중요한 발견은 postgres가 재기동돼도 api/mcp-server/
+   rag-worker의 커넥션 객체가 끊긴 채로 남는다는 것 — 3곳에 재연결 로직을
+   추가하고 api 재시작 없이 postgres만 재기동해 자동 복구되는 것까지 라이브로
+   검증했다. `infra/db/backup_postgres.sh`로 백업/복구 왕복도 실측. 복제/자동
+   페일오버는 비용 대비 실익이 적어 미도입(`docs/design.md` 6장 참고).
 6. ~~PII 마스킹(N-03) 정량 평가~~ 완료(2026-09-01) — 라벨 28건으로 측정한
    보정 전 정밀도 0.615/재현율 0.727을, "고객님/이용자님" 같은 흔한 단어
    오탐 10건을 블록리스트로 걸러 정밀도 1.0으로 개선(재현율은 그대로).

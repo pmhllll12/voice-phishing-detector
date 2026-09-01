@@ -9,9 +9,16 @@
 # __init__에서 연결하면 pytest가 src.main을 import하기만 해도 postgres가 떠 있어야
 # 하는 문제가 생긴다 (apps/rag-worker·apps/stt-worker의 readiness.py를 분리한 것과
 # 동일한 이유 — 커밋 d17ba24 참고). 연결은 uvicorn 기본 실행 방식(단일 워커/이벤트루프)
-# 기준으로 별도 커넥션 풀 없이도 요청이 직렬화되어 처리된다. 연결이 끊기면(postgres
-# 재시작 등) 재연결 로직 없이 다음 호출에서 예외가 난다 — 지금 규모에서는 재연결/풀링까지
-# 갖추는 것이 과설계라고 판단해 TODO로만 남긴다.
+# 기준으로 별도 커넥션 풀 없이도 요청이 직렬화되어 처리된다.
+#
+# 재연결(postgres 단일 장애점 완화, 2026-09-01): docker-compose.yaml의
+# `restart: unless-stopped`로 postgres 프로세스 자체는 크래시 후 자동으로 다시 뜨지만,
+# 이 클래스가 들고 있던 psycopg 연결 객체는 여전히 끊긴 채로 남는다 — 실제로 로컬에서
+# postgres 컨테이너를 재기동시켜보고 `/ready`가 "OperationalError: the connection is
+# closed"로 계속 실패하는 걸 확인했다(api를 수동 재시작해야만 복구됐음). 그래서 쿼리가
+# OperationalError로 실패하면 연결을 버리고 한 번 재연결해 재시도한다 — 재시도까지
+# 실패하면(진짜 다운) 예외를 그대로 올린다. 커넥션 풀링(예: psycopg_pool)까지는 지금
+# 규모(단일 워커, 요청 직렬화)에서 과설계라고 판단해 도입하지 않았다.
 
 import psycopg
 from psycopg.types.json import Jsonb
@@ -33,23 +40,34 @@ _SELECT_COLUMNS = (
 
 
 class PostgresCallLogRepository:
-    # TODO: 커넥션이 끊기면(postgres 재시작 등) 재연결하지 않는다 — 위 모듈 주석 참고.
     def __init__(self, dsn: str, options: str | None = None):
         self._dsn = dsn
         self._options = options
         self._conn: psycopg.Connection | None = None
 
+    def _connect(self) -> psycopg.Connection:
+        return psycopg.connect(self._dsn, autocommit=True, options=self._options)
+
     def _get_conn(self) -> psycopg.Connection:
         if self._conn is None:
-            self._conn = psycopg.connect(self._dsn, autocommit=True, options=self._options)
+            self._conn = self._connect()
         return self._conn
+
+    def _execute(self, query: str, params: tuple = ()):
+        """OperationalError(연결 끊김)면 재연결 후 한 번만 재시도한다 — 클래스 상단
+        주석 "재연결" 절 참고."""
+        try:
+            return self._get_conn().execute(query, params)
+        except psycopg.OperationalError:
+            self._conn = self._connect()
+            return self._conn.execute(query, params)
 
     def ping(self) -> None:
         """/ready 체크 전용 — 연결이 살아있는지만 확인한다. 예외를 그대로 전파한다."""
-        self._get_conn().execute("SELECT 1")
+        self._execute("SELECT 1")
 
     def add(self, result: CallAnalysisResult) -> None:
-        self._get_conn().execute(
+        self._execute(
             f"""
             INSERT INTO call_analysis_results
                 ({_SELECT_COLUMNS})
@@ -87,14 +105,14 @@ class PostgresCallLogRepository:
         )
 
     def list_recent(self, limit: int) -> list[CallAnalysisResult]:
-        rows = self._get_conn().execute(
+        rows = self._execute(
             f"SELECT {_SELECT_COLUMNS} FROM call_analysis_results ORDER BY analyzed_at DESC LIMIT %s",
             (limit,),
         ).fetchall()
         return [self._row_to_result(row) for row in rows]
 
     def stats_summary(self) -> StatsSummary:
-        rows = self._get_conn().execute(f"SELECT {_SELECT_COLUMNS} FROM call_analysis_results").fetchall()
+        rows = self._execute(f"SELECT {_SELECT_COLUMNS} FROM call_analysis_results").fetchall()
         return compute_stats_summary([self._row_to_result(row) for row in rows])
 
     @staticmethod

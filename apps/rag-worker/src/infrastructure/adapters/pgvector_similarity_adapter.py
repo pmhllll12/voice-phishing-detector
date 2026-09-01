@@ -20,7 +20,9 @@
 # 연결 관리: apps/api의 PostgresCallLogRepository와 동일한 패턴 — 연결은 __init__이
 # 아니라 첫 실제 검색 시점에 1회만 맺고(autocommit) 재사용한다. __init__에서 바로
 # 연결하면 main.py가 모듈 스코프에서 인스턴스화할 때 postgres가 항상 떠 있어야 하는
-# 문제가 생긴다.
+# 문제가 생긴다. 재연결(postgres 단일 장애점 완화, 2026-09-01)도 apps/api와 동일한
+# 이유/방식 — 재연결한 새 커넥션에도 register_vector를 다시 걸어야 vector 타입
+# 어댑팅이 유지된다(까먹기 쉬운 부분이라 명시).
 #
 # ANN 인덱스(ivfflat/hnsw)는 아직 안 만든다 — 코퍼스가 10건이라 순차 스캔이면 충분하다
 # (infra/db/init.sql 참고).
@@ -75,16 +77,28 @@ class PgvectorSimilarityAdapter:
             load_seconds,
         )
 
+    def _connect(self) -> psycopg.Connection:
+        conn = psycopg.connect(self._dsn, autocommit=True, options=self._options)
+        register_vector(conn)
+        return conn
+
     def _get_conn(self) -> psycopg.Connection:
         if self._conn is None:
-            conn = psycopg.connect(self._dsn, autocommit=True, options=self._options)
-            register_vector(conn)
-            self._conn = conn
+            self._conn = self._connect()
         return self._conn
+
+    def _execute(self, query: str, params: tuple = ()):
+        """OperationalError(연결 끊김)면 재연결(register_vector 재적용 포함) 후 한 번만
+        재시도한다."""
+        try:
+            return self._get_conn().execute(query, params)
+        except psycopg.OperationalError:
+            self._conn = self._connect()
+            return self._conn.execute(query, params)
 
     def ping(self) -> None:
         """/ready 체크 전용 — 연결이 살아있는지만 확인한다. 예외를 그대로 전파한다."""
-        self._get_conn().execute("SELECT 1")
+        self._execute("SELECT 1")
 
     def _update_gpu_memory_metric(self) -> None:
         allocated = torch.cuda.memory_allocated() if self.device == "cuda" else 0
@@ -100,7 +114,7 @@ class PgvectorSimilarityAdapter:
                 )
             self._update_gpu_memory_metric()
 
-            rows = self._get_conn().execute(
+            rows = self._execute(
                 f"""
                 SELECT {_SELECT_COLUMNS}, 1 - (embedding <=> %s) AS similarity
                 FROM fraud_cases

@@ -321,3 +321,69 @@ F-01/F-02 합성 데이터셋 검증(`767eac1`)에서 나머지 3개 카테고�
   이상으로 정확히 분류했지만, 학습 데이터셋이 모델 카드에 명시돼 있지 않아 우리
   데이터셋과 겹칠 가능성을 배제할 수 없다 — "포트가 있다"에서 "실제로 교체해봤다"로는
   올라섰지만, "이 정확도가 일반화된다"는 아직 별개의 증명되지 않은 주장이다.
+
+## 6. postgres 단일 장애점 완화 (2026-09-01)
+
+postgres가 죽으면 N-01(감사증적)·F-04(유사사례 검색)가 전부 멈춘다 — api/mcp-server/
+rag-worker 모두 postgres 하나에 의존하는 단일 장애점이다. 아래 3가지를 실제로
+적용/실측했다.
+
+### 6.1 프로세스 크래시 자동 복구 — `restart: unless-stopped`
+
+`docker-compose.yaml`의 모든 서비스(postgres 포함)에 `restart: unless-stopped`를
+추가했다. **실측으로 확인한 중요한 경계선**: 이 정책은 "프로세스가 죽으면 다시
+켠다"이지 "누가 멈춘 걸 되돌린다"가 아니다 — 로컬 `vps-postgres` 컨테이너에 이
+정책을 걸고 `docker kill`로 직접 꺼봤더니 `RestartCount=0`, `Status=exited`로
+**자동 재기동되지 않았다**(Docker의 표준 동작 — `docker stop`/`docker kill`처럼
+의도된 중지는 재시작 정책이 무시한다). 반대로 정말 예기치 않게 프로세스가
+죽는 경우(OOM-kill 등)엔 이 정책이 그대로 살아난다 — 다만 이 개발 환경(샌드박스화된
+WSL2 docker)에서는 컨테이너 내부 PID 1에 직접 SIGKILL을 보내는 것 자체가 막혀 있어
+그 경로까지는 실측하지 못했다(스크래치 컨테이너로도 동일하게 재현 안 됨을 확인해,
+vps-postgres 고유의 문제가 아니라 이 샌드박스의 제약임을 확인함). "의도된 중지엔
+재시작 안 함" 쪽은 실측 검증 완료, "진짜 크래시엔 재시작함" 쪽은 Docker 표준 동작에
+근거한 것이지 이 환경에서 직접 재현하진 못했다 — 정직하게 구분해서 밝힌다.
+
+### 6.2 애플리케이션단 재연결 — 더 중요한 발견
+
+**restart 정책만으로는 부족했다.** postgres가 재기동돼도 api/mcp-server/rag-worker가
+들고 있던 psycopg 연결 객체는 여전히 끊긴 채로 남는다 — 실제로 `docker restart
+vps-postgres` 후 api를 건드리지 않고 `/ready`를 호출해보니 `"OperationalError: the
+connection is closed"`로 계속 실패했다(api를 수동 재시작해야만 복구됐음). 즉
+postgres 자체의 가용성을 아무리 개선해도, 그걸 쓰는 3개 서비스가 재연결을 못 하면
+장애가 그대로 지속된다 — restart 정책 하나만으로는 이 장애점이 완화되지 않는다는
+뜻이다.
+
+그래서 `PostgresCallLogRepository`(apps/api), `PostgresReportRepository`
+(mcp-server), `PgvectorSimilarityAdapter`(rag-worker) 3곳 전부에 동일한 패턴을
+추가했다 — 쿼리가 `psycopg.OperationalError`로 실패하면 연결을 버리고 한 번
+재연결해 재시도한다(pgvector 쪽은 재연결한 커넥션에 `register_vector`도 다시
+건다). 라이브로 검증: api를 재시작하지 않은 채 `docker restart vps-postgres`만
+실행하고 곧바로 `/ready`와 `POST /api/v1/calls/analyze`를 호출해 둘 다 정상
+응답하는 것까지 확인했다. 각 서비스에 회귀 가드 테스트도 추가했다(연결을 강제로
+닫고 다음 호출이 재연결 후 성공하는지 확인).
+
+커넥션 풀링(예: psycopg_pool)까지는 도입하지 않았다 — 지금 규모(uvicorn 단일
+워커, 요청이 사실상 직렬화됨)에서 풀은 복잡도만 늘리고 실익이 적다고 판단했다.
+연결이 여러 개 필요해질 정도로 동시 요청이 늘어나면(N-05 SLA 절의 동시성 문제와
+같은 방향의 확장) 그때 재검토할 항목이다.
+
+### 6.3 데이터 자체의 보존 — 백업/복구
+
+restart 정책은 볼륨 손상이나 실수로 인한 데이터 삭제는 못 막는다. `infra/db/
+backup_postgres.sh`(pg_dump + gzip, 보관 기간 지난 백업 자동 정리)를 추가하고
+**실제로 백업→복구 왕복까지 검증**했다 — `vps-postgres`에서 백업을 뜬 뒤, 별도
+스크래치 postgres 컨테이너에 복구해서 `fraud_cases` 10건이 그대로 돌아오는 것까지
+확인했다. 이 스크립트를 cron/systemd timer에 등록하는 건 배포 환경마다 방식이
+달라 이 저장소엔 스케줄 등록까지는 하지 않았다(README "postgres 백업/복구" 절에
+등록 예시만 남김).
+
+### 아직 안 한 것 (정직하게 밝힘)
+
+- **복제(replica)/자동 페일오버**: 단일 인스턴스 규모에서 두 번째 postgres를
+  상시 운영하는 비용/복잡도가, "재기동 자동화 + 백업"으로 얻는 가용성 개선 대비
+  과하다고 판단해 도입하지 않았다. 인스턴스 자체가 아예 사라지는 장애(디스크
+  고장 등)는 여전히 백업 복구(RPO는 백업 주기만큼, 수동 트리거)로만 대응한다 —
+  RTO/RPO를 수치로 약속할 수 있는 수준은 아니다.
+- 진짜 프로세스 크래시(OOM-kill 등) 시 `restart: unless-stopped`가 실제로
+  작동하는지는 이 개발 환경의 샌드박스 제약으로 직접 재현하지 못했다(6.1 참고) —
+  Docker 표준 동작에 근거한 것이지 이 프로젝트에서 실측한 것은 아니다.

@@ -155,6 +155,32 @@ def test_ping_succeeds_when_reachable(repository):
     repository.ping()  # 예외 없이 통과하면 성공
 
 
+def test_reconnects_and_succeeds_after_connection_is_closed(repository):
+    """postgres 단일 장애점 완화 실측(2026-09-01) 회귀 가드 — 실제로 로컬 postgres를
+    재기동시켜보고 재현했던 문제(연결이 끊긴 채로 남아 `/ready`가 계속 실패)를 여기서
+    재현한다. `.close()`로 클라이언트 쪽에서 연결을 끊어 "postgres 재시작으로 서버가
+    연결을 끊었다"를 흉내내고, 다음 호출이 예외 없이 성공하며 실제로 새 연결 객체로
+    교체됐는지 확인한다."""
+    repository.ping()  # 최초 연결을 맺어둔다
+    stale_conn = repository._conn
+    stale_conn.close()
+
+    repository.ping()  # 예외 없이 통과해야 한다 — 내부적으로 재연결됨
+
+    assert repository._conn is not stale_conn
+    assert not repository._conn.closed
+
+
+def test_write_survives_connection_drop_between_calls(repository):
+    """ping뿐 아니라 실제 쓰기 경로(add)도 재연결 후 정상 동작해야 한다."""
+    repository.add(_make_result())
+    repository._conn.close()
+
+    repository.add(_make_result())  # 재연결 후 재시도되어 성공해야 함
+
+    assert len(repository.list_recent(10)) == 2
+
+
 def test_legacy_row_without_masked_transcript_is_masked_on_read():
     """N-03 도입(2026-08-31) 전에 적재된 행은 masked_transcript가 NULL이다(컬럼을
     ALTER TABLE로 추가했고 기존 행을 backfill하지 않음, infra/db/init.sql 참고). 이런

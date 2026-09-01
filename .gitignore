@@ -27,6 +27,9 @@ out/
 postgres_data/
 grafana_data/
 
+# postgres 백업 산출물 (infra/db/backup_postgres.sh) — 실제 감사증적/PII가 담길 수 있음
+backups/
+
 # Jekyll (jekyll/ — 제안서 사이트, Gemfile.lock은 커밋함)
 jekyll/_site/
 jekyll/.jekyll-cache/

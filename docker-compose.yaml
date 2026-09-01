@@ -19,6 +19,7 @@ services:
     build:
       context: ./apps/api
       dockerfile: Dockerfile
+    restart: unless-stopped
     ports:
       - "${API_PORT:-8000}:8000"
     environment:
@@ -56,6 +57,7 @@ services:
     build:
       context: ./apps/mcp-server
       dockerfile: Dockerfile
+    restart: unless-stopped
     ports:
       - "${MCP_SERVER_PORT:-8100}:8100"
     environment:
@@ -90,6 +92,7 @@ services:
     build:
       context: ./apps/rag-worker
       dockerfile: Dockerfile
+    restart: unless-stopped
     ports:
       - "${RAG_WORKER_PORT:-8200}:8200"
     environment:
@@ -114,6 +117,7 @@ services:
     build:
       context: ./apps/stt-worker
       dockerfile: Dockerfile
+    restart: unless-stopped
     ports:
       - "${STT_WORKER_PORT:-8300}:8300"
     healthcheck:
@@ -128,9 +132,19 @@ services:
   # 초기 스키마는 infra/db/init.sql — call_analysis_results/report_records 테이블과
   # append-only 강제 트리거, fraud_cases(pgvector) 테이블을 만든다(컨테이너 최초 기동
   # 시 1회 자동 실행, postgres 공식 이미지의 /docker-entrypoint-initdb.d/ 관례).
+  #
+  # 단일 장애점 완화(N-01/N-05 커버리지 공백이었음, 2026-09-01 실측 검증):
+  #   - restart: unless-stopped — 프로세스 크래시 시 도커가 자동 재기동(아래 실측).
+  #     복제(replica)는 도입하지 않았다 — 단일 EC2/로컬 인스턴스 규모에서 두 번째
+  #     postgres를 운영하는 비용/복잡도가 "재기동 자동화"로 얻는 가용성 개선 대비
+  #     과하다고 판단(N-06 설계 문서의 "왜 안 했는가" 서술과 같은 성격의 판단).
+  #   - 데이터 자체가 사라지는 건 restart 정책으로 못 막는다(볼륨 손상/실수 삭제 등) —
+  #     그건 이 restart 정책이 아니라 scripts/backup_postgres.sh(정기 pg_dump)가
+  #     커버한다. README "postgres 백업/복구" 절 참고.
   # ---------------------------------------------------------------------------
   postgres:
     image: pgvector/pgvector:pg16
+    restart: unless-stopped
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     environment:
@@ -155,6 +169,7 @@ services:
     build:
       context: ./apps/frontend
       dockerfile: Dockerfile
+    restart: unless-stopped
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
     environment:
@@ -183,6 +198,7 @@ services:
   # ---------------------------------------------------------------------------
   prometheus:
     image: prom/prometheus:latest
+    restart: unless-stopped
     ports:
       - "${PROMETHEUS_PORT:-9090}:9090"
     volumes:
@@ -195,6 +211,7 @@ services:
   # ---------------------------------------------------------------------------
   grafana:
     image: grafana/grafana:latest
+    restart: unless-stopped
     ports:
       - "${GRAFANA_PORT:-3001}:3000"
     environment:

@@ -104,3 +104,16 @@ def test_append_only_trigger_rejects_delete(repository):
 
 def test_ping_succeeds_when_reachable(repository):
     repository.ping()
+
+
+def test_reconnects_and_succeeds_after_connection_is_closed(repository):
+    """postgres 단일 장애점 완화 실측(2026-09-01) 회귀 가드 — apps/api의 동일 테스트와
+    같은 이유(그쪽 상단 주석 참고)."""
+    repository.ping()
+    stale_conn = repository._conn
+    stale_conn.close()
+
+    repository.ping()
+
+    assert repository._conn is not stale_conn
+    assert not repository._conn.closed

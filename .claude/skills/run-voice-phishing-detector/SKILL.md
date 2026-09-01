@@ -36,13 +36,19 @@ apps/api/src/main.py `_check_database_ready` and apps/rag-worker/src/infrastruct
 
 ```bash
 docker exec vps-postgres pg_isready -U vps_app -d vps_detector 2>/dev/null || {
-  docker start vps-postgres 2>/dev/null || docker run -d --name vps-postgres \
+  docker start vps-postgres 2>/dev/null || docker run -d --name vps-postgres --restart unless-stopped \
     -e POSTGRES_USER=vps_app -e POSTGRES_PASSWORD=vps_dev_password -e POSTGRES_DB=vps_detector \
     -p 5432:5432 -v vps_postgres_data:/var/lib/postgresql/data pgvector/pgvector:pg16
   until docker exec vps-postgres pg_isready -U vps_app -d vps_detector 2>/dev/null; do sleep 1; done
   PGPASSWORD=vps_dev_password psql -h localhost -U vps_app -d vps_detector -f infra/db/init.sql
 }
 ```
+
+`--restart unless-stopped`는 postgres 단일 장애점 완화(2026-09-01)의 일부다 — 프로세스가
+크래시해도 도커가 자동으로 다시 띄운다. 이미 떠 있는 컨테이너에 나중에 추가하려면
+`docker update --restart=unless-stopped vps-postgres`(컨테이너 재생성 없이 정책만 적용).
+단, `docker stop`/`docker kill`처럼 **의도적으로** 멈춘 경우엔 이 정책이 다시 켜주지
+않는다(Docker의 표준 동작 — "크래시 복구"이지 "누른 정지 버튼 되돌리기"가 아니다).
 
 The schema (`CREATE TABLE IF NOT EXISTS` + `DROP TRIGGER IF EXISTS`/`CREATE TRIGGER`) is
 idempotent, so re-running `init.sql` against an already-initialized DB is safe — no need

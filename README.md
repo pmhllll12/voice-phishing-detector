@@ -11,7 +11,7 @@ AI 데이터센터/AI 인프라 엔지니어 직무 취업을 위한 개인 포�
 > **현재 상태**: F-01~F-07(기능)과 N-01~N-06(비기능) 요구사항 모두 최소 1차 구현 및
 > 로컬 검증 완료(2026-08-31). `docker compose up --build`로 전체 스택(frontend/api/
 > mcp-server/rag-worker/stt-worker/postgres/prometheus/grafana) 실기동 확인, PR마다
-> pytest 141개 자동 실행하는 CI도 구축됨. RFP → 요구사항정의서 → 설계서 → 시험계획서
+> pytest 145개 자동 실행하는 CI도 구축됨. RFP → 요구사항정의서 → 설계서 → 시험계획서
 > 4개 문서 전부 작성 완료. **EC2 배포만 아직 TODO**입니다. 자세한 건 아래 "진행 현황" 참고.
 
 ## 문서
@@ -245,6 +245,34 @@ N-01 감사증적(api의 통화 판정 로그, mcp-server의 신고 접수 기�
 `/health`는 기존 그대로이므로 `run-voice-phishing-detector` 스킬의 기동 확인 폴링,
 프런트엔드 에러 처리 등 기존 동작에 영향이 없습니다.
 
+## postgres 단일 장애점 완화
+
+api/mcp-server/rag-worker가 전부 postgres 하나에 의존하는 단일 장애점이라
+2026-09-01에 3가지를 실측 적용했습니다. 상세 근거는 [design.md 6장](docs/design.md)
+참고.
+
+1. **`restart: unless-stopped`** — `docker-compose.yaml` 전 서비스에 적용. 단,
+   `docker stop`/`docker kill`처럼 의도된 중지는 이 정책이 되돌리지 않습니다(Docker
+   표준 동작, 실측 확인).
+2. **애플리케이션단 재연결** — postgres가 재기동돼도 커넥션 객체가 끊긴 채로 남아
+   `/ready`가 계속 실패하는 걸 실제로 재현했습니다. `PostgresCallLogRepository`/
+   `PostgresReportRepository`/`PgvectorSimilarityAdapter` 3곳에 재연결 로직을
+   추가하고, api를 재시작하지 않은 채 postgres만 재기동시켜 자동 복구되는 것까지
+   라이브로 확인했습니다.
+3. **백업/복구** — `infra/db/backup_postgres.sh`(pg_dump + gzip)로 정기 백업하고,
+   복구는 아래처럼 합니다(스크래치 컨테이너로 왕복 검증 완료):
+   ```bash
+   ./infra/db/backup_postgres.sh   # backups/vps_detector_<timestamp>.sql.gz 생성
+   # 복구:
+   gunzip -c backups/vps_detector_<timestamp>.sql.gz | \
+     PGPASSWORD=vps_dev_password psql -h localhost -U vps_app -d vps_detector
+   ```
+   정기 실행은 배포 환경에 맞는 스케줄러로 등록하세요(예: cron
+   `0 3 * * * cd /path/to/repo && ./infra/db/backup_postgres.sh`).
+
+복제(replica)/자동 페일오버는 도입하지 않았습니다 — 단일 인스턴스 규모에서 비용/
+복잡도 대비 실익이 적다고 판단했습니다(design.md 6장 "아직 안 한 것" 참고).
+
 ## GPU 자원 사용
 
 RTX 3050(8GB VRAM) 한 장에서 임베딩 모델(rag-worker)과 LLM(mcp-server가 호출하는 Ollama)을
@@ -410,7 +438,7 @@ stt-worker) 전부에 대한 scrape 대상이 설정돼 있고, `docker compose 
       판단해 도입하지 않음 — 판단 근거와 재검토 조건은
       `wav2vec2_deepvoice_adapter.py` 상단 "WHY 전용 추론 서버가 아직 없는가" 참고)
 - [x] GitHub Actions CI 구축 (`.github/workflows/tests.yml` — push/PR마다 4개
-      서비스 pytest 141개를 병렬 job으로 자동 실행. postgres 의존 테스트는
+      서비스 pytest 145개를 병렬 job으로 자동 실행. postgres 의존 테스트는
       skipif로 건너뛰지 않고 서비스 컨테이너로 실제로 돌림. Ollama 없이도
       mcp-server 71개가 전부 통과하는 걸 로컬에서 Ollama를 직접 내려서 확인한
       뒤 워크플로우를 작성함. 2026-08-31 기준 push/PR 양쪽에서 8개 job 전부 통과)
@@ -443,5 +471,16 @@ stt-worker) 전부에 대한 scrape 대상이 설정돼 있고, `docker compose 
       블록리스트는 정밀도만 개선). 남은 재현율 공백(성씨 목록 밖/호칭 분리/
       반말)은 정규식 기반의 근본 한계로 문서화, `test_pii_masking_eval.py`로
       회귀 가드
+- [x] postgres 단일 장애점 완화 (2026-09-01) — docker-compose 전 서비스에
+      `restart: unless-stopped` 적용(단, 의도된 `docker stop`/`kill`은 안
+      살아남을 실측 확인). **더 중요한 발견**: postgres가 재기동돼도
+      api/mcp-server/rag-worker의 커넥션 객체는 끊긴 채로 남아 `/ready`가
+      계속 실패하는 걸 재현 — 3곳(`PostgresCallLogRepository`/
+      `PostgresReportRepository`/`PgvectorSimilarityAdapter`)에 재연결 로직
+      추가하고, api 재시작 없이 postgres만 재기동시켜 자동 복구되는 것까지
+      라이브로 검증. `infra/db/backup_postgres.sh`(pg_dump)로 백업/복구
+      왕복도 실측(스크래치 컨테이너에 복구해 10건 정확히 돌아옴 확인).
+      복제/자동 페일오버는 비용 대비 실익이 적다고 판단해 미도입
+      (`docs/design.md` 6장 참고)
 <img width="1900" height="1014" alt="Screenshot 2026-08-26 151128_edited" src="https://github.com/user-attachments/assets/5bf57efc-0385-4623-8cec-82461d236ffd" />
 <img width="1910" height="1046" alt="Screenshot 2026-08-26 151151_edited" src="https://github.com/user-attachments/assets/4b36260b-be9d-400e-bbbb-15154a82a299" />

@@ -3,7 +3,7 @@
 **기준 문서**: [`docs/requirements.md`](requirements.md), [`docs/RFP.md`](RFP.md)
 **작성일**: 2026-08-31
 
-> 이 문서는 이미 실행된 검증(pytest 141개, 실측 데이터셋, RBAC 실측, docker-compose
+> 이 문서는 이미 실행된 검증(pytest 145개, 실측 데이터셋, RBAC 실측, docker-compose
 > e2e, CI)을 사후에 정리한 것이지, 앞으로 할 계획만 나열한 것이 아니다 — "계획"과
 > "실측 결과"를 구분해서 표기한다.
 
@@ -35,11 +35,11 @@
 
 | 서비스 | 테스트 파일 | 테스트 수 | postgres 필요 | 비고 |
 |---|---|---|---|---|
-| `apps/api` | 11개 | 57 | 일부(skipif) | F-03 v1/v2 실측 데이터셋 검증 + N-03 이름 마스킹 정량 평가 포함 |
-| `apps/mcp-server` | 11개 | 71 | 일부(skipif) | Ollama 없이도 자동 폴백으로 전부 통과(실측 확인) |
-| `apps/rag-worker` | 3개 | 11 | 일부(skipif) | pgvector 검색 통합 테스트 포함 |
+| `apps/api` | 11개 | 59 | 일부(skipif) | F-03 v1/v2 실측 데이터셋 검증 + N-03 이름 마스킹 정량 평가 + postgres 재연결 회귀 포함 |
+| `apps/mcp-server` | 11개 | 72 | 일부(skipif) | Ollama 없이도 자동 폴백으로 전부 통과(실측 확인) + postgres 재연결 회귀 포함 |
+| `apps/rag-worker` | 3개 | 12 | 일부(skipif) | pgvector 검색 통합 테스트 + 재연결 회귀 포함 |
 | `apps/stt-worker` | 1개 | 2 | 불필요 | 가짜 어댑터만 사용, 실제 모델 로드 없음(의도적 — 무겁고 GPU 의존적이라) |
-| **합계** | **26개** | **141** | | |
+| **합계** | **26개** | **145** | | |
 
 postgres가 필요한 테스트는 `TEST_DATABASE_URL`(또는 `DATABASE_URL`) 접속 가능
 여부를 `pytest.mark.skipif`로 확인해 접속 불가 시 건너뛴다. **로컬에서는
@@ -126,6 +126,31 @@ wav2vec2(딥보이스)/임베딩/STT가 GPU 1장(RTX 3050)을 나눠 쓰는 인�
 세분화하는 게 후속 개선 과제다. Grafana 대시보드에 p95/p99 패널을
 추가했다(`gpu-fleet-ops/dashboards/gpu-fleet-monitoring.json`, "N-05 판정
 응답시간 p95/p99" 패널).
+
+### postgres 단일 장애점 완화 검증 (2026-09-01)
+
+`docker-compose.yaml` 전 서비스에 `restart: unless-stopped`를 추가하고, 실제
+`vps-postgres` 컨테이너로 3가지를 라이브 검증했다.
+
+| # | 시나리오 | 기대 결과 | 실측 결과 |
+|---|---|---|---|
+| 1 | `docker kill vps-postgres`로 의도적 중지 | Docker 표준 동작상 자동 재기동 안 됨 | `Status=exited`, `RestartCount=0` — 확인됨 |
+| 2 | `docker restart vps-postgres`로 postgres만 재기동(api는 안 건드림) | api가 재연결 로직으로 자동 복구 | 재기동 직후 `GET /ready` 200, `POST /api/v1/calls/analyze` 정상 응답 확인 |
+| 3 | `infra/db/backup_postgres.sh`로 백업 후 스크래치 컨테이너에 복구 | 데이터 무손실 복구 | `fraud_cases` 10건 정확히 복구됨 확인 |
+
+시나리오 1은 "이 정책이 만능이 아니다"를 정직하게 보여주는 경계 조건이다 —
+`unless-stopped`는 크래시 복구용이지, 의도된 중지를 되돌리는 게 아니다. 진짜
+프로세스 크래시(OOM-kill 등) 시 자동 재기동되는 경로는 이 개발 환경의 샌드박스
+제약(컨테이너 PID 1에 직접 SIGKILL을 못 보냄, 스크래치 컨테이너로도 동일 확인)
+때문에 직접 재현하지는 못했다 — Docker 표준 동작에 근거한 것이지 이 프로젝트에서
+실측한 것은 아니다(`docs/design.md` 6장 참고).
+
+시나리오 2를 발견하기 전엔 postgres restart 정책만으로 충분하다고 가정했는데,
+실제로는 api/mcp-server/rag-worker가 재연결 로직 없이 postgres 재시작 후에도
+계속 `"OperationalError: the connection is closed"`로 실패하는 걸 먼저
+재현했다 — 그래서 3개 어댑터에 재연결 로직을 추가하고 각각 회귀 테스트를
+붙였다(`test_reconnects_and_succeeds_after_connection_is_closed` 등, 위 3절
+테스트 수 증가분 참고).
 
 ### F-05/F-06: 오디오 입력 → 대시보드 반영 (E2E)
 

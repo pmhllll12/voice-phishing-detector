@@ -94,3 +94,18 @@ def test_results_are_sorted_by_similarity_descending(seeded_adapter):
 
 def test_ping_succeeds_when_reachable(seeded_adapter):
     seeded_adapter.ping()  # 예외 없이 통과하면 성공
+
+
+def test_search_reconnects_and_succeeds_after_connection_is_closed(seeded_adapter):
+    """postgres 단일 장애점 완화 실측(2026-09-01) 회귀 가드 — apps/api의 동일 테스트와
+    같은 이유(그쪽 상단 주석 참고). search()가 vector 타입을 쓰므로, 재연결한 새
+    커넥션에도 register_vector가 다시 걸렸는지까지 실제 검색으로 확인한다(ping만으로는
+    vector 어댑터가 살아있는지 확인이 안 됨)."""
+    seeded_adapter.ping()
+    stale_conn = seeded_adapter._conn
+    stale_conn.close()
+
+    matches = seeded_adapter.search("검찰청 수사관인데 지금 즉시 송금하세요", top_k=2)
+
+    assert len(matches) == 2
+    assert seeded_adapter._conn is not stale_conn
