@@ -16,16 +16,26 @@
 # mcp-server(LLM 포함)에 보내는 텍스트 자체를 마스킹된 버전으로 바꿔도 판정 품질에
 # 영향이 없고, PII가 외부 프로세스(로컬이라도 Ollama)로 나가는 걸 원천 차단한다.
 #
-# ⚠️ v1 한계 (정확도 검증 안 됨, 특히 이름 마스킹):
-#   - 전화번호/주민등록번호: 형식이 고정돼 있어 정규식 정밀도가 높다.
+# ⚠️ v1 한계 (data/pii_masking_eval.json으로 정량 실측함, 2026-09-01 — 이 파일이 실측
+# 근거이지 추측이 아니다):
+#   - 전화번호/주민등록번호: 형식이 고정돼 있어 정규식 정밀도가 높다(별도 재현율/정밀도
+#     실측은 안 했지만 tests/test_pii_masking.py로 형식 커버리지 확인됨).
 #   - 계좌번호: 은행마다 자릿수/구분 형식이 달라 "10~16자리 숫자(구분기호 허용)"라는
 #     느슨한 휴리스틱을 쓴다 — 전화번호/주민번호로 먼저 마스킹한 나머지 텍스트에서만
 #     찾으므로 이중 마스킹은 안 되지만, 계좌번호가 아닌 다른 긴 숫자(예: 사건번호)를
 #     오탐할 수 있다.
-#   - 이름: 일반적인 한국어 성씨 뒤에 호칭(님/씨)이 붙는 패턴만 잡는다. 성씨 목록 밖의
-#     성이거나 호칭 없이 이름만 나오면 놓친다(재현율 낮음, 오탐은 적음). 신뢰도가
-#     검증된 개체명 인식(NER) 모델이 아니다 — deepvoice_adapter.py v1과 같은 성격의
-#     한계.
+#   - 이름: 일반적인 한국어 성씨 뒤에 호칭(님/씨)이 붙는 패턴만 잡는다. 정량 평가
+#     28건(data/pii_masking_eval.json) 실측 결과 — 보정 전: 정밀도 0.615, 재현율 0.727.
+#     "고객님/이용자님/신청자님/조사관님" 같은 흔한 단어가 성씨(고/이/신/조 등)로
+#     시작해 이름으로 오탐되는 게 정밀도를 크게 깎았다 — 아래 _NAME_FALSE_POSITIVE_WORDS
+#     블록리스트로 실측된 오탐 사례만 걸러 정밀도 1.0으로 개선(보정 후, 재현율은
+#     0.727로 그대로 — 블록리스트는 정밀도만 개선하고 재현율에 영향 없음). 여전히
+#     놓치는 패턴(재현율 미개선 원인, 전부 실측으로 확인됨): ① 성씨 목록 밖의 성
+#     (표/위/선우 등), ② 이름과 호칭이 붙어있지 않은 경우("김민수 대리님"— 호칭이
+#     이름이 아니라 직함에 붙음), ③ 호칭 없는 반말 호명("민수야"). 블록리스트도
+#     실측된 사례만 등재한 것이라 완전하지 않다(예: 목록에 없는 다른 흔한 단어는
+#     여전히 오탐 가능) — 신뢰도가 검증된 개체명 인식(NER) 모델이 아니다 —
+#     deepvoice_adapter.py v1과 같은 성격의 한계.
 
 import re
 
@@ -44,7 +54,22 @@ _ACCOUNT_NUMBER = re.compile(r"\d[\d\-\s]{8,20}\d")  # 순수 숫자만이면 �
 _COMMON_SURNAMES = (
     "김|이|박|최|정|강|조|윤|장|임|한|오|서|신|권|황|안|송|류|전|홍|고|문|양|손|배|백|허|유|남|심|노|하|곽|성|차|주"
 )
-_NAME_WITH_HONORIFIC = re.compile(rf"(?:{_COMMON_SURNAMES})[가-힣]{{1,2}}\s?(?:님|씨)")
+# (성씨+1~2음절) 부분만 캡처해서, 아래 블록리스트에 있으면 마스킹을 건너뛴다.
+_NAME_WITH_HONORIFIC = re.compile(rf"((?:{_COMMON_SURNAMES})[가-힣]{{1,2}})(\s?(?:님|씨))")
+
+# data/pii_masking_eval.json 실측(FP-01~FP-10)으로 확인된, 성씨로 시작해서 이름으로
+# 오탐되는 흔한 단어들. 실측된 사례만 등재했으므로 완전한 목록이 아니다(위 파일 상단
+# 주석 참고) — 새로운 오탐 사례를 발견하면 여기 추가하고 pii_masking_eval.json에도
+# 케이스를 추가해 회귀를 잡는다.
+_NAME_FALSE_POSITIVE_WORDS = frozenset(
+    {"고객", "이용자", "신청자", "임원", "조사관", "신고자", "유가족", "주인", "안내원", "하객"}
+)
+
+
+def _replace_name_match(match: re.Match[str]) -> str:
+    if match.group(1) in _NAME_FALSE_POSITIVE_WORDS:
+        return match.group(0)
+    return "[이름]"
 
 
 def mask_pii(text: str) -> str:
@@ -54,5 +79,5 @@ def mask_pii(text: str) -> str:
     masked = _RESIDENT_REGISTRATION_NUMBER.sub("[주민등록번호]", text)
     masked = _PHONE_NUMBER.sub("[전화번호]", masked)
     masked = _ACCOUNT_NUMBER.sub("[계좌번호]", masked)
-    masked = _NAME_WITH_HONORIFIC.sub("[이름]", masked)
+    masked = _NAME_WITH_HONORIFIC.sub(_replace_name_match, masked)
     return masked

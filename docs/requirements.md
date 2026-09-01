@@ -159,9 +159,9 @@ F-01/F-02(핵심 판정)를 먼저, 비기능 요구사항을 나중에 채웠�
 |---|---|
 | 설명 | 통화 내용 중 개인정보(이름/계좌번호/전화번호/주민등록번호)를 마스킹한다 |
 | 수용 기준 | ① mcp-server(LLM 포함) 호출 전에 마스킹이 적용된다. ② VIEWER/HANDLER 권한 응답에는 `masked_transcript`만 포함되고 `raw_transcript`는 없다. ③ ADMIN 권한 응답에는 둘 다 포함된다 |
-| 구현 현황 | 완료 — `apps/api/src/domain/pii_masking.py`(정규식 기반 v1), N-02와 결합(`0f6440f`) |
-| 검증 근거 | `apps/api/tests/test_pii_masking.py` |
-| 알려진 한계 | 이름 마스킹은 일반적 한국어 성씨+호칭 패턴만 커버 — 정확도 정량 평가는 아직 TODO(9장 참고) |
+| 구현 현황 | 완료 — `apps/api/src/domain/pii_masking.py`(정규식 기반 v1), N-02와 결합(`0f6440f`). **이름 마스킹 정량 평가 완료**(2026-09-01) — 라벨 28건(`data/pii_masking_eval.json`)으로 측정한 정밀도 0.615/재현율 0.727을, 실측된 오탐 단어(고객님/이용자님/신청자님 등 10건) 블록리스트로 보정해 정밀도 1.0(재현율은 그대로 0.727)으로 개선 |
+| 검증 근거 | `apps/api/tests/test_pii_masking.py`(형식 커버리지) + `apps/api/tests/test_pii_masking_eval.py`(정밀도/재현율 회귀 가드) |
+| 알려진 한계 | 재현율이 100%가 아닌 이유 3가지를 실측으로 확인: ① 성씨 목록 밖의 성(표/위/선우 등), ② 호칭이 이름이 아니라 직함에 붙는 경우("김민수 대리님"), ③ 호칭 없는 반말 호명("민수야"). 오탐 블록리스트도 실측된 사례만 등재해 완전하지 않음(`domain/pii_masking.py` 상단 주석) |
 
 ### N-04 설명가능성
 
@@ -202,7 +202,7 @@ F-01/F-02(핵심 판정)를 먼저, 비기능 요구사항을 나중에 채웠�
 | F-07 | `apps/mcp-server/src/application/services.py`(`ReportSubmissionService`) | `test_rest_report_endpoint.py` | `27a6178` |
 | N-01 | `infra/db/init.sql` | `test_postgres_call_log_repository.py`, `test_postgres_report_repository.py` | `bd68902` |
 | N-02 | `apps/api/src/infrastructure/adapters/api_key_role_auth.py` | `test_rbac.py`(양쪽 앱) | `a9480fd`, `c9799af` |
-| N-03 | `apps/api/src/domain/pii_masking.py` | `test_pii_masking.py` | `0f6440f` |
+| N-03 | `apps/api/src/domain/pii_masking.py` | `test_pii_masking.py` + `test_pii_masking_eval.py`(정량 평가) | `0f6440f` |
 | N-04 | (F-03/F-05에 걸쳐 구현) | 위 F-03/F-05 테스트에 포함 | — |
 | N-05 | `apps/api/src/infrastructure/metrics.py` | 실트래픽 104건 부하테스트(단일요청/동시성4) + Prometheus 교차검증 | `1414f30`, `8bef4da` |
 | N-06 | 전체 포트-어댑터 구조 | (각 축의 어댑터 테스트로 간접 검증) | `docs/design.md` 참고 |

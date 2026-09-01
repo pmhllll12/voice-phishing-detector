@@ -6,11 +6,11 @@ permalink: /08-테스트및검증계획/
 
 ## 1) 테스트 계획
 
-각 Python 서비스는 pytest 기반 자동 테스트를 갖는다(2026-08-31 기준).
+각 Python 서비스는 pytest 기반 자동 테스트를 갖는다(2026-09-01 기준).
 
 | 서비스 | 테스트 파일 수 | 주요 검증 대상 |
 |---|---|---|
-| `apps/api` | 9 | RBAC(N-02), PII 마스킹(N-03), 딥보이스 데이터셋 회귀(`test_deepvoice_dataset_calibration.py`) 등 |
+| `apps/api` | 11 | RBAC(N-02), PII 마스킹(N-03, 정량 평가 `test_pii_masking_eval.py` 포함), 딥보이스 데이터셋 회귀(`test_deepvoice_dataset_calibration.py`) 등 |
 | `apps/mcp-server` | 11 | RBAC(`tests/test_rbac.py`), F-01/F-02/F-04/F-07 유스케이스 |
 | `apps/rag-worker` | 3 | 임베딩/pgvector 검색 어댑터 |
 | `apps/stt-worker` | 1 | faster-whisper 어댑터 로드/폴백 |

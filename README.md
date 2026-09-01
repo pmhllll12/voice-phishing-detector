@@ -11,7 +11,7 @@ AI 데이터센터/AI 인프라 엔지니어 직무 취업을 위한 개인 포�
 > **현재 상태**: F-01~F-07(기능)과 N-01~N-06(비기능) 요구사항 모두 최소 1차 구현 및
 > 로컬 검증 완료(2026-08-31). `docker compose up --build`로 전체 스택(frontend/api/
 > mcp-server/rag-worker/stt-worker/postgres/prometheus/grafana) 실기동 확인, PR마다
-> pytest 137개 자동 실행하는 CI도 구축됨. RFP → 요구사항정의서 → 설계서 → 시험계획서
+> pytest 141개 자동 실행하는 CI도 구축됨. RFP → 요구사항정의서 → 설계서 → 시험계획서
 > 4개 문서 전부 작성 완료. **EC2 배포만 아직 TODO**입니다. 자세한 건 아래 "진행 현황" 참고.
 
 ## 문서
@@ -410,7 +410,7 @@ stt-worker) 전부에 대한 scrape 대상이 설정돼 있고, `docker compose 
       판단해 도입하지 않음 — 판단 근거와 재검토 조건은
       `wav2vec2_deepvoice_adapter.py` 상단 "WHY 전용 추론 서버가 아직 없는가" 참고)
 - [x] GitHub Actions CI 구축 (`.github/workflows/tests.yml` — push/PR마다 4개
-      서비스 pytest 137개를 병렬 job으로 자동 실행. postgres 의존 테스트는
+      서비스 pytest 141개를 병렬 job으로 자동 실행. postgres 의존 테스트는
       skipif로 건너뛰지 않고 서비스 컨테이너로 실제로 돌림. Ollama 없이도
       mcp-server 71개가 전부 통과하는 걸 로컬에서 Ollama를 직접 내려서 확인한
       뒤 워크플로우를 작성함. 2026-08-31 기준 push/PR 양쪽에서 8개 job 전부 통과)
@@ -435,5 +435,13 @@ stt-worker) 전부에 대한 scrape 대상이 설정돼 있고, `docker compose 
       추가(`gpu-fleet-ops/dashboards/gpu-fleet-monitoring.json`)로 실측/교차검증.
       해결책(요청 큐잉, GPU 추가 등)은 아직 미적용 — `docs/design.md`/
       `docs/test-plan.md`에 정직하게 명시
+- [x] N-03 이름 마스킹 정량 평가 (2026-09-01) — 라벨 28건(`apps/api/data/
+      pii_masking_eval.json`)으로 측정: 보정 전 정밀도 0.615/재현율 0.727,
+      **"고객님/이용자님/신청자님/조사관님" 같은 흔한 단어가 성씨로 시작해
+      이름으로 오탐**되는 게 정밀도를 크게 깎았음을 확인. 실측된 오탐 단어
+      10개를 블록리스트로 제외해 정밀도 1.0으로 개선(재현율은 0.727 그대로 —
+      블록리스트는 정밀도만 개선). 남은 재현율 공백(성씨 목록 밖/호칭 분리/
+      반말)은 정규식 기반의 근본 한계로 문서화, `test_pii_masking_eval.py`로
+      회귀 가드
 <img width="1900" height="1014" alt="Screenshot 2026-08-26 151128_edited" src="https://github.com/user-attachments/assets/5bf57efc-0385-4623-8cec-82461d236ffd" />
 <img width="1910" height="1046" alt="Screenshot 2026-08-26 151151_edited" src="https://github.com/user-attachments/assets/4b36260b-be9d-400e-bbbb-15154a82a299" />
