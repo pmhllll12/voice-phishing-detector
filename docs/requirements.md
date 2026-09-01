@@ -178,8 +178,8 @@ F-01/F-02(핵심 판정)를 먼저, 비기능 요구사항을 나중에 채웠�
 |---|---|
 | 설명 | 통화 종료 후 평균 5초 이내에 판정 결과를 산출한다 |
 | 수용 기준 | ① `vps_analysis_duration_seconds` 히스토그램이 판정 성공 경로에서 기록된다(에러 경로는 제외 — 가용성 문제와 SLA 위반을 구분). ② F-03 v2도 별도 메트릭(`vps_deepvoice_inference_duration_seconds`)으로 계측된다 |
-| 구현 현황 | 계측 배선(`1414f30`, `8bef4da`) + **실트래픽 SLA 검증 완료**(2026-09-01). 단일 요청(순차 26건, 합성 데이터셋 전량): 평균 2.11초, p95 2.81초, p99 3.02초 — SLA(평균 5초 이내) 충족. **단, 동시 요청 4건(78건, 3라운드)에서는 평균 8.75초, p95 18.86초로 SLA 미충족**(94.9%가 5초 초과) — Ollama(LLM)·wav2vec2(딥보이스)·임베딩·STT가 GPU 1장(RTX 3050)을 공유하는 구조적 한계로, 코드 결함이 아니라 인프라 용량 문제. 개선 방향(요청 큐잉/동시성 제한, 또는 GPU 추가)은 `docs/design.md` 참고 |
-| 검증 근거 | 실제 `/api/v1/calls/analyze` 호출 104건(순차 26 + 동시성4×3라운드 78) + Prometheus `histogram_quantile`로 교차검증(p95 4.45초/p99 5.00초 — 두 조건이 섞인 누적치라 위 분리측정이 더 정확). Grafana 대시보드에 p95/p99 패널 추가(`gpu-fleet-ops/dashboards/gpu-fleet-monitoring.json`) |
+| 구현 현황 | 계측 배선(`1414f30`, `8bef4da`) + **실트래픽 SLA 검증 완료**(2026-09-01). 단일 요청(순차 26건): 평균 2.11초, p95 2.81초 — SLA(평균 5초 이내) 충족. 동시 요청 4건(78건, 3라운드)에서는 평균 8.75초로 미충족(94.9%가 5초 초과) — 원인을 mcp-server/rag-worker의 "동기 블로킹 호출이 async 이벤트 루프를 막아 우발적으로 전체 직렬화되는" 소프트웨어 문제와 "GPU 1장(RTX 3050)의 처리 용량" 인프라 문제로 분리 진단. **동시성 SLA 해결 시도**(같은 날): `run_in_threadpool`+`asyncio.Semaphore`로 전자를 고쳐 꼬리 지연(p95/p99/최대)을 30~40% 개선(최대 22.1초→11~14초대)했지만, 평균 지연(8.1~8.3초)과 SLA 위반 비율(96~99%)은 거의 그대로 — 후자(GPU 용량)가 진짜 병목임을 확정했다. GPU 증설 또는 수요 측 속도제한/큐잉은 미도입(`docs/test-plan.md` N-05 절 참고) |
+| 검증 근거 | 실제 `/api/v1/calls/analyze`에 대한 반복 부하테스트(수정 전/후, LLM_MAX_CONCURRENCY 1/2/4 각각) + Prometheus `histogram_quantile` 교차검증 + `test_llm_concurrency_limit.py`(세마포어 동작 회귀 가드). Grafana 대시보드에 p95/p99 패널 추가(`gpu-fleet-ops/dashboards/gpu-fleet-monitoring.json`) |
 
 ### N-06 확장성
 

@@ -22,6 +22,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse, PlainTextResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from src.application.services import SimilarCaseSearchService
 from src.infrastructure.adapters.debug_compare_adapter import DebugCompareAdapter
@@ -90,7 +91,12 @@ class SearchRequest(BaseModel):
 
 @app.post("/api/v1/similar-cases")
 async def search_similar_cases(req: SearchRequest) -> dict:
-    matches = similar_case_search_service.execute(req.transcript, req.top_k)
+    """N-05 동시성 SLA 대응(2026-09-01) — apps/mcp-server/src/rest_server.py의 동일
+    주석 참고: SimilarCaseSearchService.execute()는 동기 코드(GPU 임베딩 인코딩 +
+    psycopg 쿼리)라 그냥 부르면 이 프로세스의 이벤트 루프를 막는다. mcp-server가
+    F-04 결합을 위해 이 엔드포인트를 호출하는 경로에서 이중으로 직렬화되는 걸
+    막기 위해 스레드풀에 위임한다."""
+    matches = await run_in_threadpool(similar_case_search_service.execute, req.transcript, req.top_k)
     return {
         "matches": [
             {

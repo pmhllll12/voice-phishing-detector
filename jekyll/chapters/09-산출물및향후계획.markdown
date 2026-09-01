@@ -48,11 +48,14 @@ permalink: /09-산출물및향후계획/
    아직 TODO** — 설계(`docs/design.md` 4장)는 계획 수준으로 완료, 실제
    인스턴스 생성은 남아있다.
 3. ~~`docs/requirements.md`/`docs/test-plan.md` 작성~~ 완료(2026-08-31).
-4. ~~N-05 SLA 실트래픽 관측~~ 완료(2026-09-01) — 순차 요청은 평균 2.11초로
-   SLA(5초) 충족, 동시 요청 4건에서는 평균 8.75초/p95 18.86초로 94.9%가
-   위반. GPU 1장을 4개 모델이 나눠 쓰는 구조적 한계로, 요청 큐잉이나 GPU
-   추가 같은 해결책은 다음 과제(`docs/test-plan.md` N-05 절 참고). Grafana에
-   p95/p99 패널 추가.
+4. ~~N-05 SLA 실트래픽 관측 + 동시성 해결 시도~~ 완료(2026-09-01) — 순차
+   요청은 평균 2.11초로 SLA(5초) 충족, 동시 요청 4건에서는 평균 8.75초로
+   94.9% 위반. 원인 진단(mcp-server/rag-worker가 동기 블로킹 호출로 이벤트
+   루프를 막아 우발적으로 직렬화됨) 후 `run_in_threadpool`+`asyncio.
+   Semaphore`로 수정 — 꼬리 지연시간(p95/p99/최대)은 30~40% 개선했지만
+   평균 지연/SLA 위반 비율은 거의 그대로였다. 진짜 병목이 소프트웨어가
+   아니라 GPU 1장의 처리 용량임을 확정(`docs/test-plan.md` N-05 절 참고).
+   GPU 증설/수요측 속도제한은 다음 과제로 남음. Grafana에 p95/p99 패널 추가.
 5. ~~postgres 단일 장애점 완화~~ 완료(2026-09-01) — docker-compose 전 서비스에
    `restart: unless-stopped` 적용(의도된 `docker stop`/`kill`은 예외라는 걸
    실측 확인). 더 중요한 발견은 postgres가 재기동돼도 api/mcp-server/

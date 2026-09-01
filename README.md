@@ -11,7 +11,7 @@ AI 데이터센터/AI 인프라 엔지니어 직무 취업을 위한 개인 포�
 > **현재 상태**: F-01~F-07(기능)과 N-01~N-06(비기능) 요구사항 모두 최소 1차 구현 및
 > 로컬 검증 완료(2026-08-31). `docker compose up --build`로 전체 스택(frontend/api/
 > mcp-server/rag-worker/stt-worker/postgres/prometheus/grafana) 실기동 확인, PR마다
-> pytest 145개 자동 실행하는 CI도 구축됨. RFP → 요구사항정의서 → 설계서 → 시험계획서
+> pytest 146개 자동 실행하는 CI도 구축됨. RFP → 요구사항정의서 → 설계서 → 시험계획서
 > 4개 문서 전부 작성 완료. **EC2 배포만 아직 TODO**입니다. 자세한 건 아래 "진행 현황" 참고.
 
 ## 문서
@@ -438,7 +438,7 @@ stt-worker) 전부에 대한 scrape 대상이 설정돼 있고, `docker compose 
       판단해 도입하지 않음 — 판단 근거와 재검토 조건은
       `wav2vec2_deepvoice_adapter.py` 상단 "WHY 전용 추론 서버가 아직 없는가" 참고)
 - [x] GitHub Actions CI 구축 (`.github/workflows/tests.yml` — push/PR마다 4개
-      서비스 pytest 145개를 병렬 job으로 자동 실행. postgres 의존 테스트는
+      서비스 pytest 146개를 병렬 job으로 자동 실행. postgres 의존 테스트는
       skipif로 건너뛰지 않고 서비스 컨테이너로 실제로 돌림. Ollama 없이도
       mcp-server 71개가 전부 통과하는 걸 로컬에서 Ollama를 직접 내려서 확인한
       뒤 워크플로우를 작성함. 2026-08-31 기준 push/PR 양쪽에서 8개 job 전부 통과)
@@ -461,8 +461,7 @@ stt-worker) 전부에 대한 scrape 대상이 설정돼 있고, `docker compose 
       Ollama/wav2vec2/임베딩/STT가 나눠 쓰는 구조적 한계. gpu-fleet-ops
       Prometheus에 `vps-api` 스크레이프 job 추가 + Grafana에 p95/p99 패널
       추가(`gpu-fleet-ops/dashboards/gpu-fleet-monitoring.json`)로 실측/교차검증.
-      해결책(요청 큐잉, GPU 추가 등)은 아직 미적용 — `docs/design.md`/
-      `docs/test-plan.md`에 정직하게 명시
+      해결 시도는 아래 항목 참고
 - [x] N-03 이름 마스킹 정량 평가 (2026-09-01) — 라벨 28건(`apps/api/data/
       pii_masking_eval.json`)으로 측정: 보정 전 정밀도 0.615/재현율 0.727,
       **"고객님/이용자님/신청자님/조사관님" 같은 흔한 단어가 성씨로 시작해
@@ -482,5 +481,15 @@ stt-worker) 전부에 대한 scrape 대상이 설정돼 있고, `docker compose 
       왕복도 실측(스크래치 컨테이너에 복구해 10건 정확히 돌아옴 확인).
       복제/자동 페일오버는 비용 대비 실익이 적다고 판단해 미도입
       (`docs/design.md` 6장 참고)
+- [x] N-05 동시성 SLA 해결 시도 (2026-09-01) — mcp-server/rag-worker의 REST
+      핸들러가 동기 블로킹 호출(Ollama/GPU 임베딩)을 직접 불러 이벤트
+      루프를 막던 버그를 발견(우발적으로 요청이 한 번에 하나씩만 처리됨).
+      `run_in_threadpool` + `asyncio.Semaphore`(`LLM_MAX_CONCURRENCY`)로
+      수정해 재측정: 꼬리 지연시간(p95/p99/최대)은 30~40% 개선(최대
+      22.1초→11~14초대)했지만, **평균 지연시간(8.1~8.3초)과 SLA 위반
+      비율(96~99%)은 거의 그대로** — 세마포어 값(1/2/4)도 결과에 거의
+      영향 없었음. 이걸로 병목이 소프트웨어가 아니라 GPU 용량 자체임을
+      확정. GPU 증설/수요측 속도제한은 아직 미도입 — `test_llm_concurrency_
+      limit.py`로 제한 메커니즘 자체는 회귀 가드
 <img width="1900" height="1014" alt="Screenshot 2026-08-26 151128_edited" src="https://github.com/user-attachments/assets/5bf57efc-0385-4623-8cec-82461d236ffd" />
 <img width="1910" height="1046" alt="Screenshot 2026-08-26 151151_edited" src="https://github.com/user-attachments/assets/4b36260b-be9d-400e-bbbb-15154a82a299" />

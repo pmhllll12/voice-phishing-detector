@@ -16,6 +16,7 @@
 # MCP_SERVICE_API_KEY를 보냄). MCP stdio(server.py)는 이 인증 대상이 아니다 — 그쪽
 # 상단 주석 참고.
 
+import asyncio
 import logging
 import os
 
@@ -25,6 +26,7 @@ from fastapi import Depends, FastAPI
 from fastapi.responses import JSONResponse, PlainTextResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from application.dto import serialize_analysis, serialize_report
 from application.services import CallAnalysisService, ReportSubmissionService
@@ -66,6 +68,31 @@ DATABASE_URL = os.environ.get(
 call_analysis_service = CallAnalysisService(_call_analysis_adapter, RagWorkerSearchAdapter(RAG_WORKER_URL))
 _report_repository = PostgresReportRepository(DATABASE_URL)
 report_submission_service = ReportSubmissionService(_report_repository)
+
+# N-05 동시성 SLA 대응(2026-09-01, 실측 근거는 docs/test-plan.md N-05 절):
+# CallAnalysisService.execute()는 동기 코드(httpx.post로 Ollama/rag-worker를 블로킹
+# 호출)라, 이 async 핸들러 안에서 그냥 직접 부르면 요청 하나가 끝날 때까지 이벤트
+# 루프 전체가 막힌다 — 즉 동시 요청이 몇 개 오든 이 프로세스 안에서는 우발적으로
+# 한 번에 하나씩만 처리된다(의도한 직렬화가 아니라 사고에 가깝다).
+#
+# 고친 방식: run_in_threadpool로 스레드풀에 위임해 이벤트 루프를 막지 않게 했다.
+# asyncio.Semaphore로 동시 실행 개수를 명시적으로도 제한한다(무제한 스레드풀
+# 위임만 하면 스레드 수만큼 GPU에 요청이 몰릴 수 있어서).
+#
+# 실측 결과(중요, 정직하게 밝힘): 이 수정은 p95를 18.86초 → 11~13초대로
+# 줄였다(동시성 4, LLM_MAX_CONCURRENCY 1/2/4 전부 비슷하게 개선 — 즉 세마포어
+# 값 자체는 이 구간에서 결과를 거의 안 바꿨다). **하지만 평균 지연시간(약
+# 8.1~8.3초)과 SLA(5초) 위반 비율(96~99%)은 거의 그대로다.** 즉 이 수정은
+# "우발적 전체 직렬화로 인한 꼬리 지연(worst-case)"은 줄였지만, "GPU 1장을
+# 여러 요청이 실제로 나눠 쓰면서 생기는 평균적인 처리시간 증가"는 못 고친다 —
+# 이건 소프트웨어 버그가 아니라 인프라 용량(GPU 처리량) 문제이기 때문이다
+# (`docs/design.md` 6장 결론과 일치). LLM_MAX_CONCURRENCY 값 자체(1/2/4)는
+# 실측상 거의 차이가 없었다 — 2를 기본값으로 둔 건 그중 근소하게 나은 실측치
+# 때문이지, 최적값을 확정했다는 뜻은 아니다. 진짜 SLA 충족은 GPU 용량 확충이나
+# 수요 측 제어(요청 큐잉/속도 제한)가 필요하다 — 아직 미도입(`docs/test-plan.md`
+# N-05 절 "알려진 커버리지 공백" 참고).
+LLM_MAX_CONCURRENCY = int(os.environ.get("LLM_MAX_CONCURRENCY", "2"))
+_llm_semaphore = asyncio.Semaphore(LLM_MAX_CONCURRENCY)
 
 
 # N-02: /health, /ready, /metrics는 apps/api와 동일한 이유로 인증을 걸지 않는다 —
@@ -145,8 +172,10 @@ async def analyze(req: AnalyzeRequest, _role: Role = Depends(require_role(Role.H
     F-04: 위험 정황이 감지되면 rag-worker 유사 사례도 함께 검색해 근거에 결합한다
     (CallAnalysisService 참고). rag-worker가 꺼져 있어도 이 엔드포인트는 정상 동작한다.
     N-02: apps/api와 동일하게 "처리" 행위라 HANDLER 이상 권한이 필요하다.
+    N-05: 동시성 제한/스레드풀 위임 이유는 위 _llm_semaphore 선언부 주석 참고.
     """
-    result = call_analysis_service.execute(req.transcript)
+    async with _llm_semaphore:
+        result = await run_in_threadpool(call_analysis_service.execute, req.transcript)
     return serialize_analysis(result.detection, result.risk, result.explanation, result.similar_cases)
 
 
