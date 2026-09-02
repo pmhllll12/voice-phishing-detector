@@ -207,12 +207,14 @@ python scripts/poll_gmail_inbox.py --loop 60  # 60초 간격으로 계속 폴링
 1일 상한은 계정을 잘못 연결해도 메일함 전체 역사를 훑지 않도록 하는 안전장치이고
 `GmailEmailSourceAdapter(service, lookback_query=...)`로 조정 가능합니다.
 
-✅ 2026-09-02 실제 Gmail 계정 연결로 OAuth 동의→폴링→F-01/F-02 판정까지 파이프라인
-자체는 끝까지 돌아가는 것까지 확인함(위 경고문의 그 사고가 이 실측 중 발생) —
-다만 그 실측은 실수로 연결된 계정 기준이라, 원래 의도한 테스트용 계정으로
-"깨끗하게" 재검증하는 건 아직 남아있습니다. 라벨 방식으로 바꾼 뒤의 회귀 테스트는
-가짜 Gmail API 응답으로 커버돼 있습니다(`test_gmail_email_source_adapter.py`,
-`test_email_ingestion_service.py`).
+✅ 2026-09-02 의도한 테스트 계정으로 재검증 완료 — 첫 시도에서 계정 선택 실수로
+위 사고가 났었지만(라벨 방식으로 재설계한 계기), 테스트 사용자를 올바르게
+재등록(등록 안 하면 Google이 자체적으로 403으로 막아주는 것도 확인)하고
+`getProfile`로 연결 계정을 먼저 확인한 뒤 폴링을 실행 — 메일 2건을 F-01/F-02로
+정상 판정, 전용 라벨만 추가되고 **UNREAD는 그대로 유지됨**을 `messages.get`
+으로 직접 확인했습니다. 재실행 시 "새 메일 없음"으로 중복 처리도 없었습니다.
+라벨 방식 회귀 테스트는 가짜 Gmail API 응답으로도 커버돼 있습니다
+(`test_gmail_email_source_adapter.py`, `test_email_ingestion_service.py`).
 
 ## rag-worker 로컬 실행 (F-04 유사사례 검색에 필요)
 
@@ -680,8 +682,11 @@ stt-worker) 전부에 대한 scrape 대상이 설정돼 있고, `docker compose 
       로그의 message_id 전부로 UNREAD를 다시 추가해 100/100 즉시 복구했고,
       재발을 구조적으로 막기 위해 상태 추적을 "전용 라벨 추가"(기존 라벨/읽음
       상태를 절대 안 바꾸는 순수 추가 연산) 방식으로 다시 설계하고 검색에
-      `newer_than:1d` 상한을 걸었다(회귀 가드 4건 추가). 이 사고로 파이프라인
-      자체(OAuth→폴링→F-01/F-02 판정)가 실제로 작동함은 확인됐지만, 의도한
-      테스트 계정으로 "깨끗하게" 재검증하는 건 아직 남아있다
+      `newer_than:1d` 상한을 걸었다(회귀 가드 4건 추가). **재설계 이후 의도한
+      테스트 계정으로 재검증까지 완료** — 테스트 사용자 미등록 시 Google이
+      자체적으로 403으로 막아주는 것도 확인했고, `getProfile`로 연결 계정을
+      먼저 확인한 뒤 폴링 실행 → 메일 2건 정상 판정, 전용 라벨만 추가되고
+      UNREAD는 그대로 유지됨을 `messages.get`으로 직접 확인, 재실행 시 "새
+      메일 없음"으로 중복 처리 없음까지 확인함
 <img width="1900" height="1014" alt="Screenshot 2026-08-26 151128_edited" src="https://github.com/user-attachments/assets/5bf57efc-0385-4623-8cec-82461d236ffd" />
 <img width="1910" height="1046" alt="Screenshot 2026-08-26 151151_edited" src="https://github.com/user-attachments/assets/4b36260b-be9d-400e-bbbb-15154a82a299" />

@@ -619,13 +619,17 @@ scripts/poll_gmail_inbox.py   (반복 실행) →
 - **의존성 격리**: `google-api-python-client` 등은 무거운 데다 REST/MCP stdio
   진입점 어디에서도 안 쓰여서, 메인 `requirements.txt`가 아니라 별도
   `requirements-gmail.txt`로 분리했다 — 이 스크립트를 실제로 돌릴 때만 설치한다.
-- **검증 상태**: 위 사고가 난 실측 자체는(계정은 잘못됐지만) OAuth 동의→폴링→
-  F-01/F-02 판정까지 파이프라인 전체가 실제로 작동함을 보여줬다. 다만 그건
-  의도한 테스트 계정 기준이 아니었고, 라벨 방식으로 재설계한 뒤 원래 의도한
-  테스트용 계정으로 "깨끗하게" 재검증하는 건 아직 남아있다. 파싱 로직
-  (`_parse_message`/`_find_body`, 멀티파트/HTML 폴백 포함)과 오케스트레이션
-  (`EmailIngestionService`), 재설계된 라벨 기반 상태 추적은 가짜 Gmail API
-  응답/가짜 서비스로 회귀 테스트가 커버한다.
+- **검증 완료(2026-09-02, 라벨 재설계 후 재검증)**: 사고 이후 테스트 사용자를
+  다시 등록하고(OAuth 동의 화면의 "테스트 사용자" 목록에 정확한 계정을 추가하지
+  않으면 Google이 자체적으로 `403 access_denied`로 막아준다는 것도 이 과정에서
+  확인) 사용자가 의도한 테스트 계정으로 OAuth 동의를 재진행 — `getProfile`로
+  연결된 계정을 먼저 확인한 뒤 폴링을 실행했다. 실측 결과: `newer_than:1d` 범위
+  안의 메일 2건을 F-01/F-02로 정상 판정(둘 다 LOW)하고 전용 라벨(`Label_1` =
+  VPS-Detector-Processed)만 추가됐음을 `messages.get`으로 직접 확인 — **UNREAD
+  라벨은 그대로 유지됨**(사고 재발 없음 검증 완료). 같은 폴링을 한 번 더
+  실행하니 "새 메일 없음"으로 중복 처리도 안 됨을 확인했다. 파싱 로직
+  (`_parse_message`/`_find_body`)과 오케스트레이션(`EmailIngestionService`)은
+  가짜 Gmail API 응답/가짜 서비스로도 회귀 테스트가 커버한다.
 
 #### SMS (설계만, 미구현)
 
