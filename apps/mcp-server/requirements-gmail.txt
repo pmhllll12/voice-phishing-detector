@@ -1,0 +1,13 @@
+# 우선순위 2(SMS/email 실채널 연동, 선택 스크립트 전용) — Gmail API 폴링 스크립트
+# (scripts/gmail_oauth_setup.py, scripts/poll_gmail_inbox.py)만 필요로 하는 의존성.
+# 메인 mcp-server(rest_server.py/server.py) requirements.txt에는 넣지 않는다 —
+# 이 무거운 Google 클라이언트 라이브러리들은 REST/MCP stdio 진입점 어디에서도 안
+# 쓰이므로, docker 이미지/CI 설치 시간을 불필요하게 늘리지 않기 위함
+# (infrastructure/adapters/gmail_email_source_adapter.py의 build_gmail_service()가
+# 이 패키지들을 함수 내부에서 import하는 이유도 같다).
+#
+# 설치(로컬에서 Gmail 폴링 스크립트를 실제로 돌릴 때만):
+#   cd apps/mcp-server && source .venv/bin/activate && pip install -r requirements-gmail.txt
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib

@@ -566,6 +566,81 @@ API v4(`threatMatches:find`)로 실제 악성 URL 목록과 대조한다.
   발급 가능하지만 이 세션에서는 코드/폴백 경로만 준비해뒀고, 키 발급은 사용자
   본인 계정이 필요해 다음 단계로 남긴다.
 
+### SMS/email 실채널 연동 (2026-09-02) — email은 구현, SMS는 설계만
+
+우선순위 2의 1차 이터레이션(위 섹션들)은 합성 문자/이메일 텍스트를
+`correlate_multichannel_signals` 툴로 수동 주입해 검증했다. 이 섹션은 "진짜"
+채널 이벤트가 실제로 들어오는 유입 경로를 다룬다 — 사용자가 이메일은 실제로
+연동하고, SMS는 비용(전화번호 임대+건당 과금) 문제로 설계만 하기로 결정했다.
+
+#### email (구현 완료)
+
+Gmail API를 **폴링** 방식으로 연동했다(웹훅이 아니라) — Gmail의 실시간 푸시는
+Cloud Pub/Sub을 거쳐 외부에서 도달 가능한 공개 엔드포인트가 필요한데, 이
+프로젝트는 아직 실배포 전이다(AWS EC2를 시도했다가 Oracle Cloud로 전환 결정,
+4장 참고). 배포가 끝나기 전엔 웹훅을 받을 곳이 없어서, 폴링으로 시작하고
+배포 후 웹훅으로 전환하는 걸 다음 과제로 남긴다 — `EmailSourcePort` 인터페이스는
+그대로 유지되므로(N-06과 같은 원칙) 전환 비용은 어댑터 교체 수준이다.
+
+```
+scripts/gmail_oauth_setup.py  (최초 1회, 브라우저 동의) → gmail_token.json
+scripts/poll_gmail_inbox.py   (반복 실행) →
+  GmailEmailSourceAdapter.fetch_new_emails()  # is:unread 검색
+    → EmailIngestionService.poll_once()
+        → CallAnalysisService.execute(제목+본문, channel=EMAIL, occurred_at=수신시각)
+            (= server.py가 이미 쓰는 것과 완전히 같은 인스턴스, import server로 재사용)
+        → GmailEmailSourceAdapter.mark_processed()  # UNREAD 라벨 제거
+```
+
+- **왜 CallAnalysisService.execute()를 재사용하는가**: "통화든 문자든 이메일이든
+  텍스트 판정 로직은 같다"는 게 이 설계의 핵심 전제다. `execute()`에
+  `channel`/`occurred_at` 매개변수를 추가해(기본값은 기존과 동일하게 CALL/now)
+  일반화했다 — F-01/F-02/F-05 로직을 이메일용으로 새로 만들지 않는다.
+- **상태 관리**: 별도 저장소 없이 Gmail의 UNREAD 라벨 자체를 처리 상태로 쓴다 —
+  처리 완료된 메일은 라벨을 지우고, 폴링 프로세스가 재시작돼도 중복 처리가
+  없다(Gmail이 진실의 원천).
+- **회귀 버그 발견/수정**: 이 작업 중 `CallAnalysisService.execute()`의 상관관계
+  결합 조건이 `if correlation.matches:`로만 돼 있어서, Google Safe Browsing이
+  크로스채널 매치 없이 flagged_urls만으로 가산점을 준 경우(위 섹션)를 놓치는
+  버그를 발견해 `if correlation.matches or correlation.flagged_urls:`로 고쳤다.
+- **의존성 격리**: `google-api-python-client` 등은 무거운 데다 REST/MCP stdio
+  진입점 어디에서도 안 쓰여서, 메인 `requirements.txt`가 아니라 별도
+  `requirements-gmail.txt`로 분리했다 — 이 스크립트를 실제로 돌릴 때만 설치한다.
+- **미검증 부분**: 실제 Gmail 계정으로 OAuth 동의를 받아 폴링을 돌려보는 것은
+  사용자의 새 테스트용 Gmail 계정 생성이 필요해 이번 세션 범위 밖이다 — 파싱
+  로직(`_parse_message`/`_find_body`, 멀티파트/HTML 폴백 포함)과 오케스트레이션
+  (`EmailIngestionService`)은 가짜 Gmail API 응답/가짜 서비스로 단위 테스트했다.
+
+#### SMS (설계만, 미구현)
+
+실제 SMS 수신에는 SMS 게이트웨이(Twilio, 네이버 클라우드 SENS 등) 계약 +
+전화번호 임대(월 임대비) + 수신 건당 과금이 필요하다 — Always Free 티어가 있는
+AWS/Oracle Cloud와 달리 무료로 시작할 방법이 없어서 이번 세션에는 실연동을
+안 하기로 했다. 다만 구조는 email과 대칭적으로 설계해뒀다:
+
+```
+Twilio(또는 유사 서비스) 인바운드 SMS
+   │ (X-Twilio-Signature 헤더로 서명된 웹훅 POST, form-urlencoded)
+   ▼
+POST /api/v1/webhooks/sms  (신규 엔드포인트, mcp-server 또는 api)
+   │ 1. 서명 검증(Twilio Auth Token으로 HMAC 재계산 — 이게 이 엔드포인트의
+   │    실질적 인증. 인터넷에 공개돼야 하는 엔드포인트라 N-02 API Key 인증과는
+   │    다른 방식이 필요하다)
+   │ 2. form 필드에서 Body(문자 내용) 파싱
+   ▼
+CallAnalysisService.execute(Body, channel=SMS, occurred_at=now)
+   (email과 완전히 같은 재사용 지점 — 새 판정 로직 불필요)
+```
+
+- email과 마찬가지로 웹훅은 공개 엔드포인트가 필요해 실배포(Oracle Cloud) 이후에나
+  의미가 있다 — 그전까지는 `correlate_multichannel_signals` 툴로 합성 SMS를
+  계속 주입해서 검증한다(기존 방식 유지).
+- Twilio 웹훅 서명 검증은 N-02(API 키 RBAC)와 다른 인증 축이라는 점이 설계상
+  포인트다 — 외부 서비스가 부르는 엔드포인트는 API 키를 발급해줄 수 없으므로
+  (Twilio가 우리 키를 어떻게 알겠는가), "이 요청이 정말 Twilio가 보낸 것인가"를
+  검증하는 별도 메커니즘(서명)이 필요하다. 이건 SMS/이메일 실채널 연동을 실제로
+  구현할 때 처음 맞닥뜨리는 문제라 미리 문서화해둔다.
+
 ### 실측 검증
 
 - 합성 시나리오 4건(`apps/mcp-server/data/synthetic_multichannel_signals.json`) —

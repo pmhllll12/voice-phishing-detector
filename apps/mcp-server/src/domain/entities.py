@@ -276,3 +276,16 @@ class ReportRecord:
     channel: str  # "auto" | "manual" — TODO: 채널이 늘어나면 Enum으로 승격 검토
     status: str  # 지금은 항상 "submitted" (mock이라 상태 전이가 없음)
     submitted_at: datetime
+
+
+@dataclass
+class EmailMessage:
+    """우선순위 2(SMS/email 실채널 연동, 2026-09-02): Gmail 받은편지함에서 읽어온
+    메일 1건. EmailSourcePort.fetch_new_emails()의 반환 타입 — Gmail API 응답 형식을
+    이 계층까지 그대로 노출하지 않고 여기서 필요한 필드만 뽑아 순수 도메인 모델로
+    옮겨 담는다(infrastructure/adapters/gmail_email_source_adapter.py 참고)."""
+
+    message_id: str
+    subject: str
+    body: str
+    received_at: datetime

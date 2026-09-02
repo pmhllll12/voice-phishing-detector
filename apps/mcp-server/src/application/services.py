@@ -12,6 +12,7 @@ from domain.entities import (
     CorrelationMatch,
     CorrelationResult,
     DetectedPattern,
+    EmailMessage,
     EntityType,
     ExtractedEntity,
     PatternDetectionResult,
@@ -31,6 +32,7 @@ from domain.pattern_rules import CATEGORY_WEIGHTS, PATTERN_RULES
 from domain.ports import (
     CallAnalysisPort,
     ChannelSignalRepositoryPort,
+    EmailSourcePort,
     FraudCaseSearchPort,
     ReportRepositoryPort,
     ThreatIntelligencePort,
@@ -338,7 +340,16 @@ class CallAnalysisService:
         self._fraud_case_search_port = fraud_case_search_port
         self._correlation_service = correlation_service
 
-    def execute(self, transcript: str) -> CallAnalysisResult:
+    def execute(
+        self,
+        transcript: str,
+        channel: Channel = Channel.CALL,
+        occurred_at: datetime | None = None,
+    ) -> CallAnalysisResult:
+        """channel/occurred_at은 우선순위 2(SMS/email 실채널 연동)를 위해 일반화했다 —
+        기본값(CALL/now)은 기존 호출부(server.py/rest_server.py의 analyze_call_pattern)
+        와 완전히 동일하게 동작한다. EmailIngestionService가 channel=EMAIL로 이 메서드를
+        재사용해서, F-01/F-02/F-05 판정 로직을 이메일용으로 새로 만들지 않는다."""
         result = self._port.analyze(transcript)
 
         if self._fraud_case_search_port is not None and result.detection.has_risk_indicators:
@@ -357,13 +368,15 @@ class CallAnalysisService:
             entities = extract_entities(transcript)
             if entities:
                 correlation = self._correlation_service.correlate(
-                    Channel.CALL,
+                    channel,
                     entities,
-                    occurred_at=datetime.now(timezone.utc),
+                    occurred_at=occurred_at or datetime.now(timezone.utc),
                     context_excerpt=transcript[:200],
                     current_risk_score=result.risk.score,
                 )
-                if correlation.matches:
+                # 크로스채널 매치가 없어도 악성 URL(flagged_urls)만으로 가산점이 붙을 수
+                # 있다(Google Safe Browsing 연동) — matches만 보면 그 경우를 놓친다.
+                if correlation.matches or correlation.flagged_urls:
                     new_risk = RiskAssessment(
                         score=correlation.updated_risk_score,
                         level=correlation.updated_risk_level,
@@ -378,6 +391,35 @@ class CallAnalysisService:
                     )
 
         return result
+
+
+class EmailIngestionService:
+    """우선순위 2(SMS/email 실채널 연동, 2026-09-02) — email만 실제 구현. SMS는 실제
+    수신에 유료 SMS 게이트웨이(Twilio 등, 전화번호 임대+건당 과금)가 필요해 이번
+    범위에서는 설계만 하고 실연동은 하지 않았다(docs/design.md 7장 참고).
+
+    합성 데이터로 검증하던 크로스채널 상관관계(우선순위 2 1차 이터레이션)에 "진짜"
+    email 채널 이벤트를 공급하는 유입 경로다. F-01/F-02/F-05 판정 로직을 이메일용
+    으로 새로 만들지 않고, CallAnalysisService.execute()를 channel=Channel.EMAIL로
+    재사용한다 — "통화든 문자든 이메일이든 텍스트 판정 로직은 같다"는 게 이 설계의
+    핵심 전제(제목+본문을 합쳐 하나의 텍스트로 넘긴다).
+    """
+
+    def __init__(self, email_source: EmailSourcePort, call_analysis_service: CallAnalysisService):
+        self._email_source = email_source
+        self._call_analysis_service = call_analysis_service
+
+    def poll_once(self) -> list[tuple[EmailMessage, CallAnalysisResult]]:
+        """새 메일을 전부 가져와 판정하고 처리 완료 표시까지 한다. 판정 자체가
+        예외를 던지면(예: 개별 메일 파싱 실패) 그 메일은 처리 완료 표시를 안 하고
+        건너뛴다 — 다음 폴링에서 재시도된다."""
+        results: list[tuple[EmailMessage, CallAnalysisResult]] = []
+        for email in self._email_source.fetch_new_emails():
+            text = f"{email.subject}\n\n{email.body}"
+            analysis = self._call_analysis_service.execute(text, channel=Channel.EMAIL, occurred_at=email.received_at)
+            results.append((email, analysis))
+            self._email_source.mark_processed(email.message_id)
+        return results
 
 
 class ReportSubmissionService:

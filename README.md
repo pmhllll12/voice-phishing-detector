@@ -11,7 +11,7 @@ AI 데이터센터/AI 인프라 엔지니어 직무 취업을 위한 개인 포�
 > **현재 상태**: F-01~F-07(기능)과 N-01~N-06(비기능) 요구사항 모두 최소 1차 구현 및
 > 로컬 검증 완료(2026-08-31). `docker compose up --build`로 전체 스택(frontend/api/
 > mcp-server/rag-worker/stt-worker/postgres/prometheus/grafana) 실기동 확인, PR마다
-> pytest 211개 자동 실행하는 CI도 구축됨. RFP → 요구사항정의서 → 설계서 → 시험계획서
+> pytest 226개 자동 실행하는 CI도 구축됨. RFP → 요구사항정의서 → 설계서 → 시험계획서
 > 4개 문서 전부 작성 완료. 2026-09-02: 시중 어떤 보이스피싱 차단 앱에도 없는 **크로스채널
 > 상관관계 탐지**(통화→문자→이메일 다단계 공격 연계 탐지)를 신규 추가, N-03 마스킹 경유
 > 경로까지 해소. AWS EC2로 실제 배포를 시도해 실배포로만 드러나는 버그 2건을 잡았지만
@@ -159,6 +159,45 @@ print(resp.risk_score, resp.risk_level)
 
 `.proto`를 바꾸면 `protos/voice_phishing.proto` 상단 주석의 재생성 명령을 따르세요
 (생성된 `_pb2_grpc.py`의 import를 상대경로로 수동 수정해야 하는 점 포함).
+
+## Gmail 이메일 채널 연동 (우선순위 2 SMS/email 실채널 연동, 선택 기능)
+
+크로스채널 상관관계 탐지에 "진짜" 이메일을 흘려보내는 폴링 스크립트입니다
+(`docs/design.md` 7장 "SMS/email 실채널 연동" 참고 — SMS는 유료 SMS 게이트웨이가
+필요해 설계만 해뒀습니다). 개인정보 보호를 위해 **본인 받은편지함을 스캔하는 대신
+새 테스트용 Gmail 계정을 따로 만드는 걸 권장**합니다.
+
+**1) Google Cloud 프로젝트 준비** (Google Safe Browsing과 같은 프로젝트를 재사용해도 됨):
+1. [Google Cloud Console](https://console.cloud.google.com) → 새 프로젝트 생성(또는 기존 프로젝트 선택)
+2. "API 및 서비스" → "라이브러리"에서 **Gmail API** 검색 후 활성화
+3. "API 및 서비스" → "OAuth 동의 화면" — User Type은 "외부", 테스트 사용자에 연동할 Gmail 주소 추가
+4. "API 및 서비스" → "사용자 인증 정보" → "사용자 인증 정보 만들기" → "OAuth 클라이언트 ID" → 애플리케이션 유형 **"데스크톱 앱"**
+5. 다운받은 JSON을 `apps/mcp-server/gmail_client_secret.json`으로 저장 (`.gitignore`에 이미 등록돼 있어 커밋되지 않습니다)
+
+**2) 최초 1회 동의**:
+```bash
+cd apps/mcp-server
+source .venv/bin/activate
+pip install -r requirements-gmail.txt   # google-api-python-client 등, 메인 requirements.txt에는 없음
+python scripts/gmail_oauth_setup.py     # 브라우저가 열리고 로그인/동의 → gmail_token.json 생성
+```
+
+**3) 폴링 실행** (mcp-server REST가 쓰는 것과 같은 `DATABASE_URL`/`OLLAMA_BASE_URL` 등
+환경변수가 필요하면 먼저 export):
+```bash
+python scripts/poll_gmail_inbox.py            # 1회만 폴링하고 종료
+python scripts/poll_gmail_inbox.py --loop 60  # 60초 간격으로 계속 폴링(Ctrl+C로 종료)
+```
+
+새 메일이 읽지 않은 상태(`is:unread`)로 도착하면 제목+본문을 F-01/F-02/F-05로
+판정하고 channel=email로 크로스채널 상관관계에 결합한 뒤, 처리 완료 표시로
+UNREAD 라벨을 지웁니다(재시작해도 중복 처리 없음 — 별도 상태 저장소가 필요 없는
+이유는 `docs/design.md` 7장 참고).
+
+⚠️ 실제 Gmail 계정으로 이 흐름을 끝까지 돌려본 적은 아직 없습니다(테스트용
+계정 생성이 사용자 본인 작업이라 이번 세션 범위 밖) — 파싱/오케스트레이션
+로직은 가짜 Gmail API 응답으로 단위 테스트했습니다(`test_gmail_email_source_
+adapter.py`, `test_email_ingestion_service.py`).
 
 ## rag-worker 로컬 실행 (F-04 유사사례 검색에 필요)
 
@@ -599,5 +638,28 @@ stt-worker) 전부에 대한 scrape 대상이 설정돼 있고, `docker compose 
       아직 안 함**(사용자 본인 Google 계정 필요, 다음 단계) — 이번엔 요청 구성/
       응답 파싱/HTTP 실패 폴백을 httpx.post monkeypatch로만 검증(`test_google_
       safe_browsing_adapter.py`)
+- [x] SMS/email 실채널 연동 — email 구현, SMS는 설계만 (2026-09-02) — 지금까지
+      크로스채널 상관관계는 합성 문자/이메일을 수동 주입해서만 검증했는데, 여기
+      "진짜" 채널 이벤트가 들어오는 유입 경로를 만들었다. Gmail API를 **폴링**
+      방식(웹훅 아님 — 실배포 전이라 공개 엔드포인트가 없음)으로 연동:
+      `scripts/gmail_oauth_setup.py`(최초 1회 브라우저 동의) →
+      `scripts/poll_gmail_inbox.py`가 `is:unread` 메일을 가져와 판정하고 UNREAD
+      라벨을 지운다(별도 상태 저장소 없이 Gmail 자체가 처리 상태를 들고 있어
+      재시작해도 중복 처리 없음). `GmailEmailSourceAdapter`/`EmailIngestionService`
+      추가, `CallAnalysisService.execute()`에 `channel`/`occurred_at` 매개변수를
+      더해(기본값은 기존과 동일) 이메일용 판정 로직을 새로 안 만들고 그대로
+      재사용했다. **이 작업 중 회귀 버그 발견/수정**: `execute()`의 상관관계
+      결합 조건이 `if correlation.matches:`뿐이라, Google Safe Browsing이
+      크로스채널 매치 없이 flagged_urls만으로 가산점을 준 경우를 놓치고
+      있었음 — `if correlation.matches or correlation.flagged_urls:`로 고침
+      (`test_call_analysis_correlation.py`에 회귀 가드 추가). google-api-python-
+      client 등은 무겁고 REST/MCP stdio 어디에서도 안 쓰여서 메인
+      `requirements.txt`가 아니라 `requirements-gmail.txt`로 분리. SMS는 유료
+      SMS 게이트웨이(Twilio 등, 전화번호 임대+건당 과금)가 필요해 이번엔 웹훅
+      아키텍처만 설계하고 구현은 안 함(`docs/design.md` 7장 참고). ⚠️ 파싱/
+      오케스트레이션은 가짜 Gmail API 응답으로 단위 테스트(`test_gmail_email_
+      source_adapter.py`, `test_email_ingestion_service.py`)했지만, 실제 Gmail
+      계정으로 OAuth 동의부터 끝까지 돌려본 적은 아직 없음(테스트용 계정 생성이
+      사용자 본인 작업이라 이번 세션 범위 밖)
 <img width="1900" height="1014" alt="Screenshot 2026-08-26 151128_edited" src="https://github.com/user-attachments/assets/5bf57efc-0385-4623-8cec-82461d236ffd" />
 <img width="1910" height="1046" alt="Screenshot 2026-08-26 151151_edited" src="https://github.com/user-attachments/assets/4b36260b-be9d-400e-bbbb-15154a82a299" />

@@ -30,6 +30,11 @@ grafana_data/
 # postgres 백업 산출물 (infra/db/backup_postgres.sh) — 실제 감사증적/PII가 담길 수 있음
 backups/
 
+# 우선순위 2(SMS/email 실채널 연동) — Gmail OAuth 자격증명. 절대 커밋하지 말 것
+# (scripts/gmail_oauth_setup.py 상단 주석 참고)
+apps/mcp-server/gmail_client_secret.json
+apps/mcp-server/gmail_token.json
+
 # Jekyll (jekyll/ — 제안서 사이트, Gemfile.lock은 커밋함)
 jekyll/_site/
 jekyll/.jekyll-cache/

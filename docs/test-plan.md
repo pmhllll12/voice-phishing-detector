@@ -3,7 +3,7 @@
 **기준 문서**: [`docs/requirements.md`](requirements.md), [`docs/RFP.md`](RFP.md)
 **작성일**: 2026-08-31
 
-> 이 문서는 이미 실행된 검증(pytest 211개, 실측 데이터셋, RBAC 실측, docker-compose
+> 이 문서는 이미 실행된 검증(pytest 226개, 실측 데이터셋, RBAC 실측, docker-compose
 > e2e, CI)을 사후에 정리한 것이지, 앞으로 할 계획만 나열한 것이 아니다 — "계획"과
 > "실측 결과"를 구분해서 표기한다.
 
@@ -36,10 +36,10 @@
 | 서비스 | 테스트 파일 | 테스트 수 | postgres 필요 | 비고 |
 |---|---|---|---|---|
 | `apps/api` | 14개 | 74 | 일부(skipif) | F-03 v1/v2 실측 데이터셋 검증 + N-03 이름 마스킹 정량 평가 + postgres 재연결 회귀 + 크로스채널 상관관계(우선순위 2) N-03 경유 경로 2개 파일 10건 포함 |
-| `apps/mcp-server` | 20개 | 123 | 일부(skipif) | Ollama 없이도 자동 폴백으로 전부 통과(실측 확인) + postgres 재연결/N-05 동시성 제한 회귀 + 크로스채널 상관관계(우선순위 2, Google Safe Browsing 포함) 7개 파일 47건 포함 |
+| `apps/mcp-server` | 22개 | 138 | 일부(skipif) | Ollama 없이도 자동 폴백으로 전부 통과(실측 확인) + postgres 재연결/N-05 동시성 제한 회귀 + 크로스채널 상관관계(우선순위 2, Google Safe Browsing + email 실채널 연동 포함) 9개 파일 62건 포함 |
 | `apps/rag-worker` | 3개 | 12 | 일부(skipif) | pgvector 검색 통합 테스트 + 재연결 회귀 포함 |
 | `apps/stt-worker` | 1개 | 2 | 불필요 | 가짜 어댑터만 사용, 실제 모델 로드 없음(의도적 — 무겁고 GPU 의존적이라) |
-| **합계** | **38개** | **211** | | |
+| **합계** | **40개** | **226** | | |
 
 postgres가 필요한 테스트는 `TEST_DATABASE_URL`(또는 `DATABASE_URL`) 접속 가능
 여부를 `pytest.mark.skipif`로 확인해 접속 불가 시 건너뛴다. **로컬에서는
@@ -132,6 +132,19 @@ httpx.post monkeypatch로 검증. `test_multichannel_correlation_service.py`에 
 전부 no-op인지. **실제 Google API 키로의 검증은 아직 안 함** — 무료 발급 가능하나
 사용자 본인 Google 계정이 필요해 이번 세션 범위에서는 코드/폴백 경로까지만
 완성했다(`docs/design.md` 7장 "선택 항목: Google Safe Browsing 연동" 참고).
+
+**SMS/email 실채널 연동 — email 구현(2026-09-02)**: Gmail 폴링 파이프라인
+(`GmailEmailSourceAdapter`/`EmailIngestionService`)을 가짜 Gmail API 응답 +
+가짜 서비스로 검증 — `test_gmail_email_source_adapter.py`(단순/멀티파트/HTML
+폴백 파싱, 목록 조회 실패 시 개별 메일 건너뛰기, UNREAD 라벨 제거),
+`test_email_ingestion_service.py`(메일→채널=email 판정 결합, 수신시각
+전달, 처리 완료 표시). 이 작업 중 `CallAnalysisService.execute()`의
+`if correlation.matches:` 조건이 Google Safe Browsing 단독 가산점(크로스채널
+매치 없이 flagged_urls만 있는 경우)을 놓치는 회귀를 발견해
+`test_call_analysis_correlation.py`에 가드 테스트를 추가하고 수정함. **실제
+Gmail 계정으로 끝까지 돌려보는 것(OAuth 동의→실제 메일 수신→판정)은 아직
+안 함** — 테스트용 Gmail 계정 생성이 사용자 본인 작업이라 이번 세션 범위 밖.
+SMS는 설계만 하고 구현하지 않음(`docs/design.md` 7장 참고).
 
 ### N-02: 접근통제(RBAC) — mcp-server 실측 매트릭스
 
@@ -311,4 +324,5 @@ Dockerfile이 `scripts/`를 안 담아 F-04 코퍼스 시딩이 크래시하던 
 | F-03 v2 일반화 — 48건 이상 규모 미검증 | 홀드아웃 48건(엔진 2종×언어 2종)으로 47/48 검증 완료(위 "F-03 v2 일반화 검증" 절), 프로덕션 규모(수백~수천 건)에서의 유지 여부는 미검증 |
 | frontend(F-06) 단위/컴포넌트 테스트 | Playwright E2E만 있고 React 컴포넌트 단위 테스트는 없음 |
 | gRPC 진입점(N-06) 프로덕션 미배포 + F-07 미포함 | `Analyze` RPC 1개만 검증했고 `submit_report`(F-07)는 gRPC로 노출 안 함. docker-compose 미등록이라 실제 운영 트래픽으로는 검증 안 됨 |
-| 크로스채널 상관관계(우선순위 2) — sms/email 실채널 미연동 | 실제 SMS 수신/Gmail API 연동은 범위 밖 — 합성 이벤트를 `correlate_multichannel_signals` 툴로 수동 주입해서만 검증됨(위 "부가기능" 절 참고). apps/api 경유 시 전화번호/계좌번호 매칭 문제는 2026-09-02에 해소됨(더 이상 공백 아님) |
+| 크로스채널 상관관계(우선순위 2) — SMS 실채널 미연동, email 실계정 미검증 | SMS는 유료 SMS 게이트웨이가 필요해 설계만 함(`docs/design.md` 7장). email(Gmail API)은 코드/파싱/오케스트레이션을 가짜 응답으로 단위 테스트했지만, 실제 Gmail 계정으로 OAuth 동의→실제 메일 수신→판정까지 끝까지 돌려본 적은 없음(테스트용 계정 생성이 사용자 본인 작업) |
+| Gmail 폴링 — 웹훅 미전환, 배치 규모 미검증 | 실배포(공개 엔드포인트) 전이라 폴링 방식만 구현. 한 번에 처리하는 이메일 수가 많을 때(예: 수십~수백 건 동시 미확인)의 성능/Ollama 부하는 미검증 |

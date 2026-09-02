@@ -121,3 +121,50 @@ def test_analysis_is_unaffected_without_correlation_service():
     result = service.execute("010-1234-5678로 안전계좌 이체 부탁드립니다")
 
     assert result is base_result
+
+
+def test_flagged_url_alone_raises_score_even_without_cross_channel_match():
+    """회귀 가드: matches가 비어 있어도 flagged_urls(Google Safe Browsing)만으로
+    가산점이 붙으면 결과에 반영돼야 한다 — `if correlation.matches:`만 보면 이 경우를
+    놓친다(2026-09-02 SMS/email 실채널 연동 작업 중 발견/수정)."""
+    correlation = CorrelationResult(
+        matches=[],
+        flagged_urls=["evil.example.com"],
+        risk_boost=40,
+        reasons=["URL(evil.example.com)이 Google Safe Browsing에 등록된 악성 사이트로 확인되었습니다 — 외부 위협 인텔리전스 연동"],
+        updated_risk_score=75,
+        updated_risk_level=RiskLevel.HIGH,
+    )
+    correlation_port = _FakeCorrelationService(correlation)
+    service = CallAnalysisService(_FakeCallAnalysisPort(_medium_risk_result()), correlation_service=correlation_port)
+
+    result = service.execute("010-1234-5678로 안전계좌 이체 부탁드립니다")
+
+    assert result.risk.score == 75
+    assert result.risk.level == RiskLevel.HIGH
+    assert any("Google Safe Browsing" in r for r in result.explanation.reasons)
+
+
+def test_channel_and_occurred_at_are_forwarded_to_correlation_service():
+    """우선순위 2(SMS/email 실채널 연동): channel/occurred_at을 명시하면 그대로
+    전달돼야 한다 — EmailIngestionService가 channel=EMAIL로 이 메서드를 재사용한다."""
+    occurred_at = datetime.datetime(2026, 9, 2, 9, 0, tzinfo=datetime.timezone.utc)
+    correlation_port = _FakeCorrelationService(CorrelationResult())
+    service = CallAnalysisService(
+        _FakeCallAnalysisPort(_medium_risk_result()), correlation_service=correlation_port
+    )
+
+    service.execute("010-1234-5678로 안전계좌 이체 부탁드립니다", channel=Channel.EMAIL, occurred_at=occurred_at)
+
+    assert correlation_port.received[0] == Channel.EMAIL
+
+
+def test_channel_defaults_to_call_for_existing_callers():
+    correlation_port = _FakeCorrelationService(CorrelationResult())
+    service = CallAnalysisService(
+        _FakeCallAnalysisPort(_medium_risk_result()), correlation_service=correlation_port
+    )
+
+    service.execute("010-1234-5678로 안전계좌 이체 부탁드립니다")
+
+    assert correlation_port.received[0] == Channel.CALL

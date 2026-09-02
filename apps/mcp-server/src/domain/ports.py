@@ -4,7 +4,16 @@
 from datetime import datetime
 from typing import Protocol
 
-from .entities import CallAnalysisResult, Channel, ChannelSignal, CorrelationMatch, ExtractedEntity, ReportRecord, SimilarCase
+from .entities import (
+    CallAnalysisResult,
+    Channel,
+    ChannelSignal,
+    CorrelationMatch,
+    EmailMessage,
+    ExtractedEntity,
+    ReportRecord,
+    SimilarCase,
+)
 
 
 class ReportRepositoryPort(Protocol):
@@ -55,4 +64,17 @@ class ThreatIntelligencePort(Protocol):
 
     def check_urls(self, urls: list[str]) -> list[str]:
         """urls 중 악성으로 확인된 것만 골라 반환한다(순서 무관, 부분집합)."""
+        ...
+
+
+class EmailSourcePort(Protocol):
+    """우선순위 2(SMS/email 실채널 연동): 이메일 받은편지함에서 아직 처리 안 한
+    새 메일을 가져온다. Gmail이 구현체지만, 포트만 보면 어떤 메일 제공자인지 모른다
+    (F-04의 FraudCaseSearchPort와 같은 원칙 — infrastructure만 구체 API를 안다)."""
+
+    def fetch_new_emails(self) -> list[EmailMessage]: ...
+
+    def mark_processed(self, message_id: str) -> None:
+        """처리 완료 표시(예: Gmail의 UNREAD 라벨 제거) — 다음 폴링에서 중복 처리되지
+        않게 한다."""
         ...
