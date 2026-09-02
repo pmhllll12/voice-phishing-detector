@@ -67,6 +67,16 @@ services:
       # 그대로 쓴다.
       - API_KEYS=${API_KEYS:-dev-viewer-key:viewer,dev-handler-key:handler,dev-admin-key:admin}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      # F-04: rag-worker 어댑터(server.py/rest_server.py)의 기본값이 "http://localhost:8200"
+      # 인데, 이 컨테이너 안에서 localhost는 mcp-server 자기 자신이라 rag-worker 컨테이너에
+      # 절대 닿지 않는다 — 이 줄이 없으면 F-04 유사사례 결합이 조용히 항상 빈 리스트로
+      # 폴백된다(예외로 안 뜨고 로그 경고만 남음, RagWorkerSearchAdapter 상단 주석 참고).
+      # 실제 EC2 배포 검증(2026-09-02) 중 발견한 버그 — docker-compose 서비스명으로 연결한다.
+      - RAG_WORKER_URL=http://rag-worker:8200
+      # CPU 전용 인스턴스에서 LLM(v2) 추론이 기본 타임아웃(20초)을 넘어 규칙 기반(v1)으로
+      # 계속 폴백되는 걸 실측으로 확인(docs/design.md 4장) — GPU 로컬 환경은 비워두면
+      # 기본값(20초)을 그대로 쓴다.
+      - OLLAMA_TIMEOUT_SECONDS=${OLLAMA_TIMEOUT_SECONDS:-20.0}
     depends_on:
       postgres:
         condition: service_healthy
