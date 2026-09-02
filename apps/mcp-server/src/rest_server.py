@@ -31,7 +31,7 @@ from starlette.concurrency import run_in_threadpool
 
 from application.dto import serialize_analysis, serialize_correlation, serialize_report
 from application.services import CallAnalysisService, MultichannelCorrelationService, ReportSubmissionService
-from domain.entities import Channel, Role, RiskLevel
+from domain.entities import Channel, EntityType, ExtractedEntity, Role, RiskLevel
 from domain.entity_extraction import extract_entities
 from infrastructure.adapters.api_key_role_auth import require_role
 from infrastructure.adapters.debug_compare_adapter import DebugCompareAdapter
@@ -203,10 +203,26 @@ async def submit_report(req: ReportRequest, _role: Role = Depends(require_role(R
     return serialize_report(record)
 
 
+class EntityInput(BaseModel):
+    entity_type: str
+    value: str
+
+
 class CorrelateRequest(BaseModel):
     channel: str
-    text: str
+    # text 또는 entities 중 하나는 반드시 있어야 한다(아래 검증 참고). apps/api는 N-03
+    # 마스킹 "전" 원문에서 자기가 직접 추출한 entities만 보낸다(원문 자체를 이 서비스로
+    # 보내지 않기 위함 — docs/design.md 7장 "N-03과의 상호작용" 참고). text는 Claude
+    # Code/합성 문자·이메일 주입 등 원문을 그대로 넣어도 되는 경로용이다.
+    text: str | None = None
+    entities: list[EntityInput] | None = None
     occurred_at: datetime | None = None
+    # 주어지지 않으면 text[:200](text가 있을 때) 또는 빈 문자열을 쓴다. apps/api는
+    # 마스킹된 텍스트의 발췌를 명시적으로 넘긴다 — entities만 보내고 원문은 안 보내므로.
+    context_excerpt: str | None = None
+    # 주어지면 매치된 만큼 가산점을 더한 updated_risk_score/updated_risk_level을 함께
+    # 돌려준다(CallAnalysisService.execute()의 call 채널 자동 결합과 동일한 계산).
+    current_risk_score: int | None = None
 
 
 @app.post("/api/v1/correlate")
@@ -221,9 +237,22 @@ async def correlate(req: CorrelateRequest, _role: Role = Depends(require_role(Ro
             status_code=422, content={"error": f"알 수 없는 channel '{req.channel}' — call/sms/email 중 하나여야 합니다."}
         )
 
+    if req.entities is not None:
+        try:
+            entities = [ExtractedEntity(EntityType(e.entity_type), e.value) for e in req.entities]
+        except ValueError as e:
+            return JSONResponse(
+                status_code=422,
+                content={"error": f"알 수 없는 entity_type — phone/account/url 중 하나여야 합니다: {e}"},
+            )
+    elif req.text is not None:
+        entities = extract_entities(req.text)
+    else:
+        return JSONResponse(status_code=422, content={"error": "text 또는 entities 중 하나는 반드시 있어야 합니다."})
+
     occurred_at = req.occurred_at or datetime.now(timezone.utc)
-    entities = extract_entities(req.text)
+    context_excerpt = req.context_excerpt if req.context_excerpt is not None else (req.text[:200] if req.text else "")
     correlation = await run_in_threadpool(
-        correlation_service.correlate, channel, entities, occurred_at, req.text[:200]
+        correlation_service.correlate, channel, entities, occurred_at, context_excerpt, req.current_risk_score
     )
     return serialize_correlation(correlation)

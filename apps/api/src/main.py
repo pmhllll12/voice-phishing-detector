@@ -37,6 +37,7 @@ from src.domain.entities import CallAnalysisResult, Role, role_satisfies
 from src.infrastructure.adapters.api_key_role_auth import require_role
 from src.infrastructure.adapters.deepvoice_adapter import HeuristicDeepvoiceAdapter
 from src.infrastructure.adapters.mcp_client_adapter import McpServerCallAnalysisAdapter
+from src.infrastructure.adapters.mcp_correlation_adapter import McpCorrelationAdapter
 from src.infrastructure.adapters.postgres_call_log_repository import PostgresCallLogRepository
 from src.infrastructure.adapters.report_client_adapter import McpServerReportAdapter
 from src.infrastructure.adapters.stt_client_adapter import SttWorkerTranscriptionAdapter
@@ -88,6 +89,7 @@ call_log_repository = PostgresCallLogRepository(DATABASE_URL)
 analyze_call_service = AnalyzeCallService(
     McpServerCallAnalysisAdapter(MCP_SERVER_URL, MCP_SERVICE_API_KEY, timeout=MCP_ANALYZE_TIMEOUT_SECONDS),
     call_log_repository,
+    McpCorrelationAdapter(MCP_SERVER_URL, MCP_SERVICE_API_KEY),
 )
 transcribe_and_analyze_call_service = TranscribeAndAnalyzeCallService(
     SttWorkerTranscriptionAdapter(STT_WORKER_URL), analyze_call_service

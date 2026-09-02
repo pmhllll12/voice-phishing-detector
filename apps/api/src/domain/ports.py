@@ -39,3 +39,20 @@ class ReportPort(Protocol):
     반환값은 mcp-server REST 응답 그대로의 dict — CallAnalysisPort와 동일한 패턴."""
 
     def submit(self, case_summary: str, risk_level: str) -> dict: ...
+
+
+class MultichannelCorrelationPort(Protocol):
+    """우선순위 2(크로스채널 상관관계 탐지): mcp-server(/api/v1/correlate)에 위임하는
+    포트. entities는 마스킹 "전" 원문(raw_transcript)에서 이 계층이 직접 추출한
+    값만 담는다 — 원문 자체는 mcp-server로 보내지 않는다(N-03과의 상호작용,
+    docs/design.md 7장 참고). 반환값은 mcp-server REST 응답 그대로의 dict —
+    CallAnalysisPort와 동일한 패턴."""
+
+    def correlate(
+        self,
+        channel: str,
+        entities: list[dict],
+        occurred_at: str,
+        context_excerpt: str,
+        current_risk_score: int,
+    ) -> dict: ...

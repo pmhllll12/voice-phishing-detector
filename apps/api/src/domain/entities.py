@@ -35,6 +35,16 @@ def role_satisfies(actual: Role, required: Role) -> bool:
     return _ROLE_RANK[actual] >= _ROLE_RANK[required]
 
 
+@dataclass(frozen=True)
+class ExtractedEntity:
+    """우선순위 2(크로스채널 상관관계 탐지): domain/entity_extraction.py가 raw_transcript
+    에서 뽑아낸 엔티티 1건. entity_type은 "phone"/"account"/"url" 중 하나 — mcp-server의
+    EntityType enum과 값 체계가 동일하지만(Role enum과 같은 이유로) 별도 정의다."""
+
+    entity_type: str
+    value: str
+
+
 @dataclass
 class DetectedPatternSummary:
     """F-01 탐지 결과 요약. 실제 탐지 로직은 mcp-server(analyze_call_pattern)에 있고,

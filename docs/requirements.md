@@ -142,9 +142,9 @@ F-01/F-02(핵심 판정)를 먼저, 비기능 요구사항을 나중에 채웠�
 | 처리 | mcp-server `correlate_multichannel_signals` — 전화번호/계좌번호/URL을 정규식으로 추출해 `channel_signals`(postgres)에 기록하고, 다른 채널에서 같은 값이 시간 윈도우(기본 30분) 안에 있었는지 조회. 매치 건당 위험도 +15점(상한 30점), F-02 등급 재산정, F-05 근거 문장 추가. `analyze_call_pattern`이 call 채널에 대해 자동으로 결합한다 |
 | 출력 | 매치 목록(채널/엔티티 타입/마스킹된 값/시각), `risk_boost`, 근거 문장 목록, (있으면) 재산정된 `updated_risk_score`/`updated_risk_level` |
 | 수용 기준 | ① 다른 채널에 같은 엔티티가 시간 윈도우 안에 기록돼 있으면 매치가 반환되고 위험도가 오른다. ② 채널이 같거나 시간 윈도우 밖이면 매치되지 않는다. ③ 응답에 노출되는 엔티티 값은 항상 마스킹된다(N-03과 같은 원칙 — raw 값은 저장소에만 있고 API로 나가지 않는다) |
-| 구현 현황 | 완료 — `apps/mcp-server`(domain/application/infrastructure 전 계층) + `infra/db/init.sql`의 `channel_signals` 테이블 신규 추가. 실제 REST 호출(`/api/v1/correlate` → `/api/v1/analyze`)로 65점 판정이 80점(HIGH)으로 오르는 것까지 로컬 postgres로 실측 |
-| 검증 근거 | `test_entity_extraction.py`, `test_multichannel_correlation_service.py`, `test_call_analysis_correlation.py`, `test_postgres_channel_signal_repository.py`, `test_rest_correlate_endpoint.py`, `test_multichannel_synthetic_scenarios.py`(합성 시나리오 4건) |
-| 알려진 한계 | apps/api는 mcp-server 호출 전에 통화 텍스트를 마스킹(N-03)하므로, REST 경로(apps/api 경유)에서는 전화번호/계좌번호 상관관계가 실질적으로 매칭되지 않고 URL만 자동 작동한다 — MCP stdio 직접 호출이나 `correlate_multichannel_signals` 툴로 원문을 직접 넣는 경로에서만 전화번호/계좌번호까지 매칭된다(`docs/design.md` 7장 참고). sms/email 채널의 실제 유입 경로(SMS 수신, Gmail API 등)와 Google Safe Browsing 연동은 범위 밖 |
+| 구현 현황 | 완료 — `apps/mcp-server`(domain/application/infrastructure 전 계층) + `infra/db/init.sql`의 `channel_signals` 테이블 신규 추가. `apps/api`도 N-03 마스킹 "전" 원문에서 엔티티를 추출해 값만 mcp-server로 넘기는 경로(`domain/entity_extraction.py`, `MultichannelCorrelationPort`)를 추가해, 실제 프런트 대시보드가 쓰는 REST 경로에서도 전화번호/계좌번호 상관관계가 정상 동작한다(2026-09-02). apps/api 경유 종단 실측: masked_transcript에 `[계좌번호]` 태그가 찍히면서도 95점→100점(HIGH) 상승 확인 |
+| 검증 근거 | `apps/mcp-server`: `test_entity_extraction.py`, `test_multichannel_correlation_service.py`, `test_call_analysis_correlation.py`, `test_postgres_channel_signal_repository.py`, `test_rest_correlate_endpoint.py`, `test_multichannel_synthetic_scenarios.py`(합성 시나리오 4건). `apps/api`: `test_entity_extraction.py`, `test_analyze_call_correlation.py`(N-03 마스킹 전/후 엔티티 추출 회귀 가드 포함) |
+| 알려진 한계 | sms/email 채널의 실제 유입 경로(SMS 수신, Gmail API 등)와 Google Safe Browsing 연동은 범위 밖 — `correlate_multichannel_signals` 툴로 합성 이벤트를 수동 주입해 검증하는 것으로 대체 |
 
 ## 3. 비기능 요구사항 (N-01~N-06)
 

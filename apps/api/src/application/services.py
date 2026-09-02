@@ -13,14 +13,41 @@ from src.domain.entities import (
     SimilarCaseSummary,
     StatsSummary,
 )
+from src.domain.entity_extraction import extract_entities
 from src.domain.pii_masking import mask_pii
 from src.domain.ports import (
     CallAnalysisPort,
     CallLogPort,
     DeepvoiceDetectionPort,
+    MultichannelCorrelationPort,
     ReportPort,
     TranscriptionPort,
 )
+
+_RISK_LEVEL_LABELS = {"low": "저위험", "medium": "중위험", "high": "고위험"}
+
+
+def _merge_correlation_into_raw(raw: dict, correlation: dict) -> dict:
+    """mcp-server(/api/v1/correlate) 응답을 analyze 결과 dict에 결합한다. mcp-server
+    내부의 CallAnalysisService(call 채널 자동 결합)와 달리 여기서는 응답의 summary
+    문장 전체를 재생성하지 않는다 — 대신 원래 문장은 그대로 두고 상관관계로 바뀐
+    점수/등급과 근거를 명시적으로 덧붙인다(N-04: 어느 쪽이 원래 판정이고 어느 쪽이
+    상관관계로 추가된 것인지 구분되게)."""
+    updated_score = correlation["updated_risk_score"]
+    updated_level = correlation["updated_risk_level"]
+    reasons = correlation["reasons"]
+    level_label = _RISK_LEVEL_LABELS.get(updated_level, updated_level)
+
+    merged = dict(raw)
+    merged["risk_score"] = updated_score
+    merged["risk_level"] = updated_level
+    merged["explanation_summary"] = (
+        raw["explanation_summary"] + f" (크로스채널 상관관계 +{correlation['risk_boost']}점 반영, "
+        f"최종 {updated_score}점/{level_label})"
+    )
+    merged["explanation_reasons"] = raw["explanation_reasons"] + reasons
+    merged["explanation"] = raw["explanation"] + "\n\n크로스채널 상관관계:\n" + "\n".join(f"- {r}" for r in reasons)
+    return merged
 
 
 class AnalyzeCallService:
@@ -39,15 +66,38 @@ class AnalyzeCallService:
       3. (완료) N-03 개인정보 마스킹 — mcp-server에 넘기기 전에 적용(아래 참고)
     """
 
-    def __init__(self, call_analysis_port: CallAnalysisPort, call_log_port: CallLogPort):
+    def __init__(
+        self,
+        call_analysis_port: CallAnalysisPort,
+        call_log_port: CallLogPort,
+        correlation_port: MultichannelCorrelationPort | None = None,
+    ):
         self._call_analysis_port = call_analysis_port
         self._call_log_port = call_log_port
+        self._correlation_port = correlation_port
 
     async def execute(self, transcript: str) -> CallAnalysisResult:
         # N-03: mcp-server(LLM 포함)에는 마스킹된 텍스트만 보낸다 — domain/pii_masking.py
         # 상단 주석 참고("WHY 마스킹을 mcp-server 호출 전에 적용하는가").
         masked_transcript = mask_pii(transcript)
         raw = self._call_analysis_port.analyze(masked_transcript)
+
+        # 우선순위 2(크로스채널 상관관계 탐지): mask_pii()가 지우기 "전" 원문에서
+        # 엔티티(전화번호/계좌번호/URL)를 추출한다 — mcp-server가 받는 masked_transcript
+        # 에는 이미 이 값들이 태그로 치환돼 있어서 추출할 게 없다(entity_extraction.py
+        # 상단 주석 참고). entities만 mcp-server로 보내고 원문 자체는 안 보낸다.
+        if self._correlation_port is not None:
+            entities = extract_entities(transcript)
+            if entities:
+                correlation = self._correlation_port.correlate(
+                    channel="call",
+                    entities=[{"entity_type": e.entity_type, "value": e.value} for e in entities],
+                    occurred_at=datetime.now(timezone.utc).isoformat(),
+                    context_excerpt=masked_transcript[:200],
+                    current_risk_score=raw["risk_score"],
+                )
+                if correlation.get("matches"):
+                    raw = _merge_correlation_into_raw(raw, correlation)
 
         result = CallAnalysisResult(
             call_id=str(uuid.uuid4()),

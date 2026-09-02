@@ -3,7 +3,7 @@
 **기준 문서**: [`docs/requirements.md`](requirements.md), [`docs/RFP.md`](RFP.md)
 **작성일**: 2026-08-31
 
-> 이 문서는 이미 실행된 검증(pytest 186개, 실측 데이터셋, RBAC 실측, docker-compose
+> 이 문서는 이미 실행된 검증(pytest 200개, 실측 데이터셋, RBAC 실측, docker-compose
 > e2e, CI)을 사후에 정리한 것이지, 앞으로 할 계획만 나열한 것이 아니다 — "계획"과
 > "실측 결과"를 구분해서 표기한다.
 
@@ -35,11 +35,11 @@
 
 | 서비스 | 테스트 파일 | 테스트 수 | postgres 필요 | 비고 |
 |---|---|---|---|---|
-| `apps/api` | 12개 | 64 | 일부(skipif) | F-03 v1/v2 실측 데이터셋 검증 + N-03 이름 마스킹 정량 평가 + postgres 재연결 회귀 포함 |
-| `apps/mcp-server` | 19개 | 108 | 일부(skipif) | Ollama 없이도 자동 폴백으로 전부 통과(실측 확인) + postgres 재연결/N-05 동시성 제한 회귀 + 크로스채널 상관관계(우선순위 2) 6개 파일 32건 신규 포함 |
+| `apps/api` | 14개 | 74 | 일부(skipif) | F-03 v1/v2 실측 데이터셋 검증 + N-03 이름 마스킹 정량 평가 + postgres 재연결 회귀 + 크로스채널 상관관계(우선순위 2) N-03 경유 경로 2개 파일 10건 포함 |
+| `apps/mcp-server` | 19개 | 112 | 일부(skipif) | Ollama 없이도 자동 폴백으로 전부 통과(실측 확인) + postgres 재연결/N-05 동시성 제한 회귀 + 크로스채널 상관관계(우선순위 2) 6개 파일 36건 포함 |
 | `apps/rag-worker` | 3개 | 12 | 일부(skipif) | pgvector 검색 통합 테스트 + 재연결 회귀 포함 |
 | `apps/stt-worker` | 1개 | 2 | 불필요 | 가짜 어댑터만 사용, 실제 모델 로드 없음(의도적 — 무겁고 GPU 의존적이라) |
-| **합계** | **35개** | **186** | | |
+| **합계** | **37개** | **200** | | |
 
 postgres가 필요한 테스트는 `TEST_DATABASE_URL`(또는 `DATABASE_URL`) 접속 가능
 여부를 `pytest.mark.skipif`로 확인해 접속 불가 시 건너뛴다. **로컬에서는
@@ -108,19 +108,21 @@ postgres가 필요한 테스트는 `TEST_DATABASE_URL`(또는 `DATABASE_URL`) �
 | MC-03 | 동일 계좌번호, 31분 뒤 등장(윈도우 30분 밖) | 매칭 없음 | PASS |
 | MC-04 | 동일 계좌번호, 정확히 30분 뒤 등장(윈도우 경계값) | 매칭됨(경계 포함) | PASS |
 
-추가로 실제 REST 스택(로컬 postgres, `CALL_ANALYSIS_BACKEND=rule`)에 대해 종단 실측을
+mcp-server REST 스택(로컬 postgres, `CALL_ANALYSIS_BACKEND=rule`)에 대해 종단 실측을
 수행했다: `/api/v1/correlate`로 문자 채널에 계좌번호를 먼저 기록 → `/api/v1/analyze`로
 같은 계좌번호가 포함된 검찰 사칭 통화를 분석 → 기본 판정 65점(기관사칭 30 + 긴급송금유도
-35)이 크로스채널 상관관계 가산점 15점을 더해 80점(HIGH)으로 상승하고, 판정 근거에
-"0분 전 문자 채널에서 동일 계좌번호(마스킹됨)가 감지되었습니다"가 실제로 포함되는 것을
-curl로 직접 확인함(`docs/design.md` 7장 "실측 검증" 참고).
+35)이 크로스채널 상관관계 가산점 15점을 더해 80점(HIGH)으로 상승.
 
-**알려진 커버리지 공백**: N-03(개인정보 마스킹)이 적용되는 실제 apps/api 경로(프런트
-대시보드에서 통화 텍스트를 입력하는 경로)에서 전화번호/계좌번호 상관관계가 실제로
-매칭되는 E2E 테스트는 아직 없다 — 위 실측은 apps/api를 우회해 mcp-server REST에 직접
-호출한 것이다. apps/api가 마스킹 전 원문에서 엔티티를 추출해 넘기는 경로가 아직
-없기 때문에(`docs/design.md` 7장 "알려진 한계" 참고) 이 E2E 테스트는 지금 작성해도
-항상 매칭 실패로 끝난다 — 그 경로가 구현된 뒤에 추가할 항목으로 남긴다.
+**N-03(개인정보 마스킹) 경유 E2E까지 실측 완료(2026-09-02)**: apps/api에
+`domain/entity_extraction.py`(마스킹 "전" 원문에서 추출)와 `MultichannelCorrelationPort`
+를 추가해, 실제 프런트 대시보드가 쓰는 `/api/v1/calls/analyze`(apps/api) 경로로
+같은 시나리오를 재현 — 응답의 `masked_transcript`에 `[계좌번호]` 태그가 정상
+찍혀 있는데도(N-03 마스킹 적용 확인) risk_score가 95점→100점(HIGH)으로 오르고,
+explanation에 "0분 전 문자 채널에서 동일 계좌번호(********9888)이(가)
+감지되었습니다"가 실제로 포함됨을 curl로 직접 확인함(`docs/design.md` 7장
+"실측 검증" 참고). 이전에는 apps/api를 우회해 mcp-server REST에 직접 호출한
+경우에만 검증했고 N-03과의 상호작용은 "알려진 한계"로 남겨뒀었는데, 이번에
+그 공백을 실제로 메웠다.
 
 ### N-02: 접근통제(RBAC) — mcp-server 실측 매트릭스
 
@@ -300,4 +302,4 @@ Dockerfile이 `scripts/`를 안 담아 F-04 코퍼스 시딩이 크래시하던 
 | F-03 v2 일반화 — 48건 이상 규모 미검증 | 홀드아웃 48건(엔진 2종×언어 2종)으로 47/48 검증 완료(위 "F-03 v2 일반화 검증" 절), 프로덕션 규모(수백~수천 건)에서의 유지 여부는 미검증 |
 | frontend(F-06) 단위/컴포넌트 테스트 | Playwright E2E만 있고 React 컴포넌트 단위 테스트는 없음 |
 | gRPC 진입점(N-06) 프로덕션 미배포 + F-07 미포함 | `Analyze` RPC 1개만 검증했고 `submit_report`(F-07)는 gRPC로 노출 안 함. docker-compose 미등록이라 실제 운영 트래픽으로는 검증 안 됨 |
-| 크로스채널 상관관계(우선순위 2) — apps/api 경유 시 전화번호/계좌번호 매칭 안 됨 | N-03 마스킹이 apps/api에서 mcp-server 호출 전에 적용되므로, 실제 프런트 대시보드 경로에서는 URL만 자동 상관관계가 작동하고 전화번호/계좌번호는 매칭 안 됨(mcp-server REST 직접 호출/MCP stdio 경로에서만 정상 작동, 위 "부가기능" 절 참고). apps/api가 마스킹 전 원문에서 엔티티만 추출해 넘기는 경로는 미구현 |
+| 크로스채널 상관관계(우선순위 2) — sms/email 실채널 미연동 | 실제 SMS 수신/Gmail API 연동은 범위 밖 — 합성 이벤트를 `correlate_multichannel_signals` 툴로 수동 주입해서만 검증됨(위 "부가기능" 절 참고). apps/api 경유 시 전화번호/계좌번호 매칭 문제는 2026-09-02에 해소됨(더 이상 공백 아님) |

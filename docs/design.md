@@ -101,11 +101,44 @@ MCP stdio 진입점(`server.py`, Claude Code가 `.mcp.json`으로 직접 호출)
 두 진입점이 같은 application 서비스를 재사용하지만 배선 코드는 아직 복붙 상태다
 (4장 "확장성이 아직 검증 안 된 지점" 참고).
 
-## 4. 배포 구조 (계획 — 실배포 전)
+## 4. 배포 구조 (계획 — 실배포 전, 클라우드 사업자 전환 중)
 
-> 아직 EC2에 올리지 않았다. 이 챕터는 gpu-fleet-ops에서 검증한 패턴을 이
-> 프로젝트의 서비스 구성(`docker-compose.yaml`)에 맞춰 재적용하는 **계획**이다.
-> 실제로 배포하면 인스턴스 스펙·도메인 등 확정값으로 이 절을 교체한다.
+> **2026-09-02 결정**: AWS EC2(t3.large)로 실제 인스턴스를 띄워 아래 4.1~4.5의
+> 계획을 검증까지 해봤다 — Docker/Docker Compose 설치, 8개 컨테이너 전체
+> healthy 기동, 호스트 Ollama(CPU) 연동, 실제 API 호출까지 전부 성공했고
+> 그 과정에서 실배포로만 드러나는 버그 2건도 발견/수정했다(아래 "AWS EC2
+> 실배포 실측 결과" 참고). 하지만 최종적으로는 **Oracle Cloud Always Free
+> 티어로 전환하기로 결정**했다 — 포트폴리오 규모에서 t3.large는 24/7 기준
+> 월 약 $60가 드는데, Oracle의 Always Free ARM 인스턴스(최대 4 OCPU/24GB
+> RAM)를 쓰면 이 스택 전체를 컴퓨팅 비용 0원으로 상시 운영할 수 있다.
+> AWS 인스턴스/보안그룹/키페어는 전환 결정 직후 정리(terminate)했다 — 아래
+> 4.1~4.5는 사업자에 무관하게 그대로 적용되는 설계(Cloudflare Tunnel로
+> 인바운드 포트 자체를 안 여는 방식 등)라 그대로 두고, Oracle Cloud 인스턴스
+> 스펙 등 확정값은 실제로 만들 때 이 절을 교체한다.
+
+### AWS EC2 실배포 실측 결과 (2026-09-02, 이후 Oracle Cloud로 전환)
+
+- t3.large(2vCPU/8GB) + Ubuntu 24.04, 보안그룹은 SSH(관리자 IP만)만 개방, 나머지는
+  4.1의 설계대로 인바운드 미개방 — `docker compose up --build`로 8개 컨테이너
+  전부 healthy 확인, 호스트 Ollama(EXAONE 3.5 2.4B, CPU)까지 실제 기동.
+- **버그 발견 1**: `docker-compose.yaml`의 mcp-server 서비스에 `RAG_WORKER_URL`
+  환경변수가 아예 없어서, 어댑터 기본값(`http://localhost:8200`)이 컨테이너
+  안에서는 mcp-server 자기 자신을 가리켜 F-04(유사사례 결합)가 모든
+  docker-compose 배포(로컬 포함)에서 조용히 항상 빈 결과로 폴백하고 있었다 —
+  실배포 전까지 아무도 눈치채지 못한 이유는 이 실패가 예외 없이 로그 경고만
+  남기고 넘어가도록 설계돼 있어서다(`rag_worker_search_adapter.py` 참고). 서비스
+  이름(`http://rag-worker:8200`)으로 고쳐서 해결.
+- **버그 발견 2**: CPU 전용 인스턴스에서 EXAONE 2.4B 추론이 mcp-server의 LLM
+  호출 타임아웃(20초)을 넘겨 규칙 기반(v1)으로 계속 폴백됐다(자동 폴백 자체는
+  의도한 설계라 정상 동작이지만, "v2가 실제로 완료되는 경우"를 실측하려면
+  타임아웃을 늘려야 했다). `OLLAMA_TIMEOUT_SECONDS`/`MCP_ANALYZE_TIMEOUT_SECONDS`
+  환경변수를 새로 노출해 워밍업된 모델 기준 실제 추론 시간(약 54초, 콜드스타트는
+  약 73초)까지 실측 확인 — 다만 배포에는 기본값(20초/30초)을 그대로 뒀다:
+  73초까지 기다리는 것보다 20초 안에 v1으로 폴백하는 쪽이 데모 응답성 측면에서
+  낫다고 판단(N-05 SLA 관점에서도 20초가 5초보다 이미 한참 느리지만, 73초보다는
+  낫다).
+- 이 두 수정은 클라우드 사업자와 무관한 코드/설정 버그라 커밋에 그대로 남아있고
+  (Oracle Cloud로 배포해도 동일하게 적용됨), AWS 인스턴스 자체만 정리했다.
 
 ### 4.1 왜 인바운드 포트를 하나도 열지 않는가
 
@@ -477,21 +510,30 @@ D.5b 참고.
 자체를 확장**해야 했다 — N-06이 "재설계 없는 확장"을 약속하는 건 전자의 범위이고,
 후자(새로운 질의 패턴)는 정직하게 스키마 변경이 필요하다는 걸 이 사례가 보여준다.
 
-### N-03(개인정보 마스킹)과의 상호작용 — 알려진 한계
+### N-03(개인정보 마스킹)과의 상호작용 — 해소됨 (2026-09-02)
 
-`apps/api`는 mcp-server를 호출하기 **전에** 통화 텍스트를 마스킹한다(전화번호/
-계좌번호가 `[전화번호]`/`[계좌번호]` 태그로 치환됨, `apps/api/src/domain/pii_masking.py`).
-즉 REST 경로(`apps/api → apps/mcp-server`)에서는 `analyze_call_pattern`이 받는
-transcript 자체가 이미 마스킹된 뒤라, 전화번호/계좌번호 상관관계는 실질적으로 매칭되지
-않는다 — URL은 N-03의 마스킹 대상이 아니라 그대로 작동한다. MCP stdio 직접 호출(Claude
-Code)이나 `correlate_multichannel_signals` 툴/REST(`/api/v1/correlate`)로 원문을 직접
-넣는 경로에서는 정상 작동한다(아래 실측 참고).
+첫 이터레이션에서는 `apps/api`가 mcp-server를 호출하기 **전에** 통화 텍스트를
+마스킹하는 것(전화번호/계좌번호가 `[전화번호]`/`[계좌번호]` 태그로 치환됨,
+`apps/api/src/domain/pii_masking.py`) 때문에, REST 경로(`apps/api → apps/mcp-server`)
+에서는 `analyze_call_pattern`이 받는 transcript 자체가 이미 마스킹된 뒤라 전화번호/
+계좌번호 상관관계가 매칭되지 않는 한계가 있었다.
 
-이 트레이드오프를 해소하려면 `apps/api`가 마스킹 "전" 원문에서 엔티티만 추출해(원문
-전체가 아니라 전화번호/계좌번호/URL **값만**) mcp-server로 넘기는 별도 경로가 필요하다.
-검토는 했지만 apps/api에 정규식 추출 모듈을 새로 두고 두 서비스 간 데이터 계약을
-바꿔야 해서 범위가 크다고 판단해 이번 이터레이션에는 포함하지 않았다 — 다음 과제로
-남긴다.
+**해소 방식**: `apps/api`에 정규식 추출 모듈(`domain/entity_extraction.py`)을 새로
+추가해, `mask_pii()`를 적용하기 **전** raw_transcript에서 먼저 엔티티를 추출한다.
+mcp-server로는 원문 전체가 아니라 **추출된 엔티티 값만**(`entity_type`+`value`
+목록) 보낸다 — `POST /api/v1/correlate`가 `text`(정규식 추출을 mcp-server가
+대신 해주는 경로, Claude Code/합성 데이터 주입용)와 `entities`(이미 추출된 값,
+apps/api용) 두 입력을 모두 받도록 확장했다(`domain/ports.py`의
+`MultichannelCorrelationPort`, `infrastructure/adapters/mcp_correlation_adapter.py`).
+이렇게 하면 raw_transcript 자체는 여전히 mcp-server로 나가지 않아(N-03의 핵심
+목표 유지) 크로스채널 매칭에 필요한 최소한의 값만 전달된다.
+
+`AnalyzeCallService.execute()`가 `/api/v1/analyze` 응답을 받은 뒤 이 흐름을
+호출하고, 매치가 있으면 응답의 `risk_score`/`risk_level`을 갱신하고 근거 문장을
+추가한다(`_merge_correlation_into_raw`). mcp-server 내부 결합(`CallAnalysisService`)
+과 달리 summary 문장 전체를 재생성하지 않고, 원래 문장에 "(크로스채널 상관관계
++15점 반영, 최종 100점/고위험)" 식으로 덧붙이는 방식을 택했다 — 두 계층에 같은
+등급 라벨/문장 템플릿을 중복 유지하지 않기 위함.
 
 ### 실측 검증
 
@@ -499,9 +541,15 @@ Code)이나 `correlate_multichannel_signals` 툴/REST(`/api/v1/correlate`)로 �
   다단계 공격 연쇄(통화→12분 뒤 동일 계좌번호 문자→35분 뒤 동일 URL 이메일), 무관한
   채널 간 오탐 없음, 시간 윈도우(30분) 밖 배제, 윈도우 경계값(정확히 30분) 포함 여부까지
   `test_multichannel_synthetic_scenarios.py`로 검증.
-- 실제 REST 호출로 종단 검증: `/api/v1/correlate`로 문자 채널에 계좌번호를 먼저
-  기록한 뒤, `/api/v1/analyze`로 같은 계좌번호가 포함된 검찰 사칭 통화를 분석 —
-  기본 판정 점수(기관사칭 30 + 긴급송금유도 35 = 65점)가 크로스채널 상관관계 가산점
-  15점을 더해 80점(HIGH)으로 오르고, 판정 근거에 "0분 전 문자 채널에서 동일
-  계좌번호가 감지되었습니다"가 실제로 포함되는 것까지 로컬 postgres(vps-postgres)로
-  확인함.
+- mcp-server REST 직접 호출로 종단 검증(2026-09-02): `/api/v1/correlate`로 문자
+  채널에 계좌번호를 먼저 기록한 뒤, `/api/v1/analyze`로 같은 계좌번호가 포함된
+  검찰 사칭 통화를 분석 — 기본 판정 65점이 상관관계 가산점 15점을 더해 80점(HIGH)
+  으로 상승.
+- **apps/api 경유(N-03 마스킹 포함) 종단 검증(2026-09-02)**: 같은 시나리오를
+  `/api/v1/calls/analyze`(apps/api)로 호출 — 응답의 `masked_transcript`에
+  `[계좌번호]` 태그가 정상적으로 찍혀 있는데도(N-03 마스킹이 여전히 적용됨을
+  확인), risk_score가 95점→100점(상한, HIGH)으로 오르고 explanation_summary에
+  "(크로스채널 상관관계 +15점 반영, 최종 100점/고위험)"이, explanation에 "0분
+  전 문자 채널에서 동일 계좌번호(********9888)이(가) 감지되었습니다"가 실제로
+  포함됨을 확인 — N-03 마스킹과 우선순위 2가 서로 상충하지 않고 함께 동작함을
+  실측으로 증명했다.

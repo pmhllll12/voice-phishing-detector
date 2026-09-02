@@ -11,10 +11,12 @@ AI 데이터센터/AI 인프라 엔지니어 직무 취업을 위한 개인 포�
 > **현재 상태**: F-01~F-07(기능)과 N-01~N-06(비기능) 요구사항 모두 최소 1차 구현 및
 > 로컬 검증 완료(2026-08-31). `docker compose up --build`로 전체 스택(frontend/api/
 > mcp-server/rag-worker/stt-worker/postgres/prometheus/grafana) 실기동 확인, PR마다
-> pytest 186개 자동 실행하는 CI도 구축됨. RFP → 요구사항정의서 → 설계서 → 시험계획서
+> pytest 200개 자동 실행하는 CI도 구축됨. RFP → 요구사항정의서 → 설계서 → 시험계획서
 > 4개 문서 전부 작성 완료. 2026-09-02: 시중 어떤 보이스피싱 차단 앱에도 없는 **크로스채널
-> 상관관계 탐지**(통화→문자→이메일 다단계 공격 연계 탐지)를 신규 추가. **EC2 배포만
-> 아직 TODO**입니다. 자세한 건 아래 "진행 현황" 참고.
+> 상관관계 탐지**(통화→문자→이메일 다단계 공격 연계 탐지)를 신규 추가, N-03 마스킹 경유
+> 경로까지 해소. AWS EC2로 실제 배포를 시도해 실배포로만 드러나는 버그 2건을 잡았지만
+> (아래 참고), **실배포 인프라는 Oracle Cloud(Always Free 티어)로 전환하기로 결정**
+> —아직 진행 전입니다. 자세한 건 아래 "진행 현황" 참고.
 
 ## 문서
 
@@ -22,8 +24,9 @@ AI 데이터센터/AI 인프라 엔지니어 직무 취업을 위한 개인 포�
 - [requirements.md (요구사항정의서)](docs/requirements.md) — F-01~F-07/N-01~N-06 각각의
   입력/처리/출력/수용기준(acceptance criteria)과 구현·테스트 근거
 - [design.md (설계서)](docs/design.md) — 시스템 아키텍처/데이터 모델/API 명세/N-06
-  확장성/배포 구조(EC2, 계획 수준) 전부 작성 완료. 배포 구조는 실배포 전이라
-  인스턴스 스펙 등 세부값이 미확정으로 표시됨
+  확장성/배포 구조 전부 작성 완료. AWS EC2로 실배포까지 검증했으나 비용(Always
+  Free 대비) 때문에 Oracle Cloud로 전환 결정 — 배포 구조 자체(4.1~4.5)는
+  사업자 무관하게 재사용, Oracle 인스턴스 확정값은 아직 미확정으로 표시됨
 - [test-plan.md (시험계획서)](docs/test-plan.md) — 테스트 전략(단위/실측데이터셋/E2E
   3계층), F-01~F-07 검수 시나리오와 실측 결과, CI 파이프라인, 알려진 커버리지 공백
 
@@ -56,7 +59,8 @@ prometheus ──► grafana  (애플리케이션 메트릭 관측)
 - Docker Compose 멀티 컨테이너 구성
 - Prometheus + Grafana 모니터링 (관측 대상: GPU 메트릭 → 애플리케이션 메트릭으로 교체)
 - 헥사고날 아키텍처 (domain/application/infrastructure 분리)
-- AWS EC2 배포, Cloudflare Tunnel/도메인 연결
+- 클라우드 인스턴스 + Cloudflare Tunnel/도메인 연결 (AWS EC2로 실배포까지 검증 후
+  비용 때문에 Oracle Cloud Always Free 티어로 전환 결정, `docs/design.md` 4장 참고)
 - Claude Code + MCP 서버 설정 (`.mcp.json`)
 - Nginx 리버스 프록시, Full(strict) SSL
 - Prometheus/Grafana 연동: rag-worker가 노출하는 `vps_rag_*` 메트릭(F-04)을 이 저장소가
@@ -462,7 +466,8 @@ stt-worker) 전부에 대한 scrape 대상이 설정돼 있고, `docker compose 
       안 담아서 F-04 코퍼스 시딩이 실패하던 것, 쓰이지 않는 redis 서비스가 남아있던
       것, grafana 비밀번호가 문자 그대로 `"TODO"`였던 것을 실제로 발견해 고쳤다.
       환경변수는 `${VAR:-기본값}` 패턴으로 빼서 `.env.example`로 문서화함.
-      **EC2 배포는 아직 TODO** — 다음 단계로 별도 진행 예정
+      **EC2 배포는 아직 TODO** — 다음 단계로 별도 진행 예정 (2026-09-02 업데이트:
+      AWS EC2로 실제 진행해봤고, 이후 Oracle Cloud로 전환 결정 — 아래 최신 항목 참고)
 - [x] F-03 v2에 서빙 관측 메트릭 추가 (`vps_deepvoice_inference_duration_seconds`/
       `vps_deepvoice_model_load_duration_seconds`/`vps_deepvoice_model` — rag-worker/
       stt-worker가 이미 갖고 있던 "추론시간/콜드스타트/모델정보" 3종 패턴을 F-03에도
@@ -487,6 +492,8 @@ stt-worker) 전부에 대한 scrape 대상이 설정돼 있고, `docker compose 
       공개범위 표, Nginx+Cloudflare Origin CA로 Full(strict) TLS 구성, GPU vs CPU
       인스턴스 트레이드오프, 배포 절차 7단계 — 실제 EC2 배포 전이라 인스턴스 스펙
       등은 "미확정"으로 정직하게 표시). **실제 EC2 배포 자체는 여전히 TODO**
+      (2026-09-02 업데이트: 그 뒤 AWS EC2로 실제 진행, Oracle Cloud로 전환 결정 —
+      아래 최신 항목 참고)
 - [x] N-05 응답시간 SLA 실트래픽 검증 (2026-09-01) — 합성 데이터셋 26건으로
       실제 `/api/v1/calls/analyze`에 부하를 걸어 측정. 순차 요청(동시성 1)은
       평균 2.11초/p95 2.81초로 SLA(5초) 충족, **동시 요청 4건에서는 평균
@@ -554,13 +561,29 @@ stt-worker) 전부에 대한 scrape 대상이 설정돼 있고, `docker compose 
       설계돼 있어 새 테이블이 불필요하다"고 가정했지만, 재검증 결과 그런 파일/컬럼이
       실제로는 없어서 전용 테이블(`channel_signals`, `infra/db/init.sql`)을 새로
       추가했다 — 이 정정도 N-06 확장성 검증의 일부로 문서화함(`docs/design.md` 참고).
-      엔티티 값은 항상 마스킹해서 노출한다(N-03과 같은 원칙). **알려진 한계**: apps/api는
-      mcp-server 호출 전에 통화 텍스트를 마스킹하므로(N-03), REST 경로에서는 전화번호/
-      계좌번호 상관관계가 실질적으로 매칭되지 않고 URL만 자동 작동한다 — 마스킹 전
-      원문에서 엔티티만 추출해 mcp-server로 넘기는 apps/api 측 별도 경로가 필요한데,
-      범위가 커서 이번 이터레이션에는 포함하지 않았다(다음 과제). sms/email 채널 자체의
-      실채널 연동(SMS 수신, Gmail API 등)도 범위 밖 — 합성 시나리오 데이터셋
+      엔티티 값은 항상 마스킹해서 노출한다(N-03과 같은 원칙). sms/email 채널 자체의
+      실채널 연동(SMS 수신, Gmail API 등)은 범위 밖 — 합성 시나리오 데이터셋
       (`apps/mcp-server/data/synthetic_multichannel_signals.json`, 4개 시나리오)으로
       상관관계 로직만 검증했다. Google Safe Browsing 연동(선택 항목)은 미포함.
+- [x] N-03 마스킹 경유 크로스채널 상관관계 (2026-09-02) — 위 항목의 첫 이터레이션은
+      apps/api가 mcp-server 호출 전에 통화 텍스트를 마스킹하므로(N-03) REST 경로에서는
+      전화번호/계좌번호 상관관계가 매칭되지 않는 한계가 있었다. `apps/api`에도
+      `domain/entity_extraction.py`(마스킹 "전" 원문에서 추출)와
+      `MultichannelCorrelationPort`/`McpCorrelationAdapter`를 추가해, 마스킹 전
+      원문에서 뽑은 엔티티 **값만**(원문 전체는 여전히 안 보냄) mcp-server로 넘기도록
+      확장(`POST /api/v1/correlate`가 `text` 또는 `entities` 중 하나를 받도록 변경).
+      실제 프런트 대시보드 경로(`/api/v1/calls/analyze`)로 종단 검증 — 응답의
+      `masked_transcript`에 `[계좌번호]` 태그가 정상적으로 찍혀 있는데도(N-03 유지
+      확인) risk_score가 95점→100점(HIGH)으로 오르는 것까지 실측 확인함. 이 과정에서
+      실제 AWS EC2 배포 검증 중 발견한 버그 2건(F-04 rag-worker 연결 주소 오류,
+      api/mcp-server 타임아웃 불일치)도 같이 고쳤다 — 상세는 `docs/design.md` 4장
+      "AWS EC2 실배포 실측 결과" 참고(EC2 자체는 이후 Oracle Cloud로 전환 결정하며 정리함).
+- [ ] Oracle Cloud 실배포 (2026-09-02, 진행 전) — AWS EC2(t3.large)로 도커 스택
+      전체 기동까지 실제로 검증했으나(위 항목 참고), 24/7 기준 월 약 $60가 드는
+      비용 문제로 Oracle Cloud Always Free 티어(ARM 최대 4 OCPU/24GB RAM, 컴퓨팅
+      비용 0원)로 전환 결정. AWS 인스턴스/보안그룹/키페어는 정리 완료. Oracle
+      Cloud 계정이 아직 없어 가입부터 필요 — 배포 구조(Cloudflare Tunnel, Nginx,
+      공개 범위 등)는 `docs/design.md` 4장의 기존 설계를 사업자만 바꿔 그대로
+      적용할 예정
 <img width="1900" height="1014" alt="Screenshot 2026-08-26 151128_edited" src="https://github.com/user-attachments/assets/5bf57efc-0385-4623-8cec-82461d236ffd" />
 <img width="1910" height="1046" alt="Screenshot 2026-08-26 151151_edited" src="https://github.com/user-attachments/assets/4b36260b-be9d-400e-bbbb-15154a82a299" />
