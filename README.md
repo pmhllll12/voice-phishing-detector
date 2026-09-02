@@ -712,3 +712,34 @@ stt-worker) 전부에 대한 scrape 대상이 설정돼 있고, `docker compose 
       로는 바로 보임) — 짧은 폴링 주기에서는 감안 필요
 <img width="1900" height="1014" alt="Screenshot 2026-08-26 151128_edited" src="https://github.com/user-attachments/assets/5bf57efc-0385-4623-8cec-82461d236ffd" />
 <img width="1910" height="1046" alt="Screenshot 2026-08-26 151151_edited" src="https://github.com/user-attachments/assets/4b36260b-be9d-400e-bbbb-15154a82a299" />
+- [x] F-06 대시보드 UI/UX 개선 6건 (2026-09-02) — 판정 로직(점수 계산)은 그대로 두고
+      표시/문구/레이아웃만 개선. 항목별로 로컬 실기동(Playwright) 검증 후 커밋함.
+      1. 판정 요약의 "크로스채널 상관관계 +N점 반영, 최종 X점/Y" 같은 내부 로직
+         문구를 "95점 + 크로스채널 근거 15점 → 100점(상한)" 형태의 자연어로 교체
+         (`apps/api` `_merge_correlation_into_raw`).
+      2. 크로스채널 근거가 가리키는 "다른 채널의 그 판정 기록"을 클릭하면 대시보드
+         안에서 그 행으로 스크롤 이동 + 하이라이트. 이걸 위해 `source_ref`를
+         mcp-server(`channel_signals` 테이블/도메인/REST)와 apps/api(판정 시 발급한
+         `call_id`를 상관관계 조회에 실어보냄) 전 구간에 새로 배선 —
+         `CorrelationMatchSummary`로 구조화해 감사증적에도 영구 저장(새로고침해도
+         유지). apps/api를 거치지 않는 경로(mcp-server 내부 자동 결합)는 여전히
+         `source_ref`가 없어 링크 없이 근거 문장만 보임(의도된 동작).
+      3. 위험도 배지(가산 후 최종점수)와 판정 근거 문단 속 점수(가산 전 원점수)가
+         다를 때 "95 → 100 (크로스채널 가산)"을 배지 옆에 바로 표시 —
+         `base_risk_score`를 감사증적에 별도 컬럼으로 보존.
+      4. "내용" 열을 2줄 말줄임(line-clamp)으로 바꾸고, 클릭하면 기존 스타일만
+         재사용한 오버레이 패널에서 전체 내용을 보여준다(새 모달 라이브러리 도입 안 함).
+      5. "더 보기" 버튼으로 목록을 20건씩 늘려 조회(진짜 OFFSET 페이지네이션 대신
+         limit 확장 — `list_recent`가 이미 "최근 N건 중 상위"를 반환해서 서버/DB
+         변경 없이 가능), 채널 탭과 별개 축으로 위험도(저/중/고) 필터 추가.
+      6. 작업 지시 전제 오류를 발견함: "🎤 음성으로 분석" 버튼은 F-03(딥보이스
+         판별)이 아니라 F-05(통화 위험도 판정)에 연결돼 있었다 — 이미 검증된
+         F-03(wav2vec2)이 대시보드에 진입점이 아예 없었던 게 실제 공백이라
+         사용자에게 확인(AskUserQuestion)받고 `DeepvoiceCheckForm` 컴포넌트를
+         신규 추가(WAV 업로드 → `/api/v1/calls/deepvoice-check` → 판정/신뢰도/
+         지표별 근거 표시). 실제 TTS 샘플로 "AI 합성 음성 의심(99.98%)" 판정과
+         근거 4건 노출을 확인, 잘못된 파일 업로드 시 422 에러가 안내 문구로만
+         뜨고 화면이 깨지지 않는 것도 확인함.
+      스키마: `infra/db/init.sql`에 `channel_signals.source_ref`,
+      `call_analysis_results.base_risk_score`/`correlation_matches` 컬럼 추가
+      (모두 nullable/default라 기존 행과 하위호환, 로컬 postgres에 마이그레이션 적용함).
