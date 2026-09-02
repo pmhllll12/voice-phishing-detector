@@ -14,9 +14,11 @@ AI 데이터센터/AI 인프라 엔지니어 직무 취업을 위한 개인 포�
 > pytest 230개 자동 실행하는 CI도 구축됨. RFP → 요구사항정의서 → 설계서 → 시험계획서
 > 4개 문서 전부 작성 완료. 2026-09-02: 시중 어떤 보이스피싱 차단 앱에도 없는 **크로스채널
 > 상관관계 탐지**(통화→문자→이메일 다단계 공격 연계 탐지)를 신규 추가, N-03 마스킹 경유
-> 경로까지 해소. AWS EC2로 실제 배포를 시도해 실배포로만 드러나는 버그 2건을 잡았지만
-> (아래 참고), **실배포 인프라는 Oracle Cloud(Always Free 티어)로 전환하기로 결정**
-> —아직 진행 전입니다. 자세한 건 아래 "진행 현황" 참고.
+> 경로까지 해소하고 Google Safe Browsing 위협 인텔리전스 연동과 Gmail 실채널 연동
+> (email)까지 실제 API 키/실계정으로 검증 완료. AWS EC2로 실제 배포를 시도해
+> 실배포로만 드러나는 버그 2건을 잡았지만(아래 참고), **실배포 인프라는 Oracle
+> Cloud(Always Free 티어)로 전환하기로 결정** — 아직 진행 전입니다. 자세한 건
+> 아래 "진행 현황" 참고.
 
 ## 문서
 
@@ -651,10 +653,14 @@ stt-worker) 전부에 대한 scrape 대상이 설정돼 있고, `docker compose 
       사이트면 그 자체로 위험). `CorrelationResult.flagged_urls`로 근거를
       분리해 추적 가능(N-04). ⚠️ URL을 host로만 정규화해서 대조하므로(크로스채널
       매칭 목적상 그렇게 설계됨) 특정 경로만 악성으로 등재된 경우는 놓칠 수 있음
-      — `docs/design.md` 7장 "선택 항목" 절 참고. **실제 API 키로의 검증은
-      아직 안 함**(사용자 본인 Google 계정 필요, 다음 단계) — 이번엔 요청 구성/
-      응답 파싱/HTTP 실패 폴백을 httpx.post monkeypatch로만 검증(`test_google_
-      safe_browsing_adapter.py`)
+      — `docs/design.md` 7장 "선택 항목" 절 참고. 단위 테스트는 요청 구성/응답
+      파싱/HTTP 실패 폴백을 httpx.post monkeypatch로 검증(`test_google_
+      safe_browsing_adapter.py`). **실제 API 키로 검증 완료**(2026-09-02, Gmail과
+      같은 Google Cloud 프로젝트 재사용, OAuth 없이 API 키만 발급) — 정상
+      URL(`google.com`)은 매치 없음, Google 공식 테스트 악성 URL(전체 경로)은
+      `MALWARE`로 정확히 탐지, 같은 URL을 host-only 파이프라인 그대로 태우면
+      매치가 안 뜨는 것까지 실제 API 응답으로 확인해 위 한계가 실측으로도
+      재현됨을 증명함
 - [x] SMS/email 실채널 연동 — email 구현, SMS는 설계만 (2026-09-02) — 지금까지
       크로스채널 상관관계는 합성 문자/이메일을 수동 주입해서만 검증했는데, 여기
       "진짜" 채널 이벤트가 들어오는 유입 경로를 만들었다. Gmail API를 **폴링**

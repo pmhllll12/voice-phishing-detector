@@ -129,9 +129,11 @@ explanation에 "0분 전 문자 채널에서 동일 계좌번호(********9888)�
 httpx.post monkeypatch로 검증. `test_multichannel_correlation_service.py`에 6건
 추가 — 크로스채널 매치 없이도 악성 URL만으로 가산점(+40)이 붙는지, 두 근거가
 합산되는지(15+40), 여러 URL이 걸려도 가산점이 비례 증가하지 않는지, 포트가 없으면
-전부 no-op인지. **실제 Google API 키로의 검증은 아직 안 함** — 무료 발급 가능하나
-사용자 본인 Google 계정이 필요해 이번 세션 범위에서는 코드/폴백 경로까지만
-완성했다(`docs/design.md` 7장 "선택 항목: Google Safe Browsing 연동" 참고).
+전부 no-op인지. **실제 Google API 키로 검증 완료(2026-09-02)**: Safe Browsing
+API를 활성화하고 발급받은 키로 실제 Google 서버 호출 3건 — 정상 URL(`google.com`)
+매치 없음, Google 공식 테스트 악성 URL(전체 경로)은 `MALWARE`로 정확히 탐지,
+같은 URL을 host-only 파이프라인 그대로 태우면 매치 없음(위 "한계"가 실측으로
+재현됨). `docs/design.md` 7장 참고.
 
 **SMS/email 실채널 연동 — email 구현(2026-09-02)**: Gmail 폴링 파이프라인
 (`GmailEmailSourceAdapter`/`EmailIngestionService`)을 가짜 Gmail API 응답 +

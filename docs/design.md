@@ -555,16 +555,25 @@ API v4(`threatMatches:find`)로 실제 악성 URL 목록과 대조한다.
 - `CorrelationResult`에 `flagged_urls` 필드를 별도로 둬서, "왜 위험도가 올랐는가"를
   크로스채널 재등장(`matches`)과 외부 위협 인텔리전스 확인(`flagged_urls`)으로
   구분해 추적할 수 있게 했다(N-04).
-- **한계(정직하게 밝힘)**: `entity_extraction.py`가 URL을 host로만 정규화하기
-  때문에(경로/쿼리스트링은 버림 — 크로스채널 매칭 목적상 그게 맞는 설계, D.5b
-  참고) 이 어댑터는 원본 URL이 아니라 `http://{host}/`로 재구성한 값을 Safe
-  Browsing에 보낸다. 특정 경로만 악성으로 등재된 경우(도메인 자체는 깨끗함)는
-  놓칠 수 있다.
-- 검증: `test_google_safe_browsing_adapter.py`(httpx.post monkeypatch로 요청
-  구성/응답 파싱/실패 폴백), `test_multichannel_correlation_service.py`(가짜
-  포트로 서비스 결합 로직). **실제 Google API 키로 검증은 아직 안 함** — 무료
-  발급 가능하지만 이 세션에서는 코드/폴백 경로만 준비해뒀고, 키 발급은 사용자
-  본인 계정이 필요해 다음 단계로 남긴다.
+- **한계(정직하게 밝힘, 실측으로 재확인됨)**: `entity_extraction.py`가 URL을
+  host로만 정규화하기 때문에(경로/쿼리스트링은 버림 — 크로스채널 매칭 목적상
+  그게 맞는 설계, D.5b 참고) 이 어댑터는 원본 URL이 아니라 `http://{host}/`로
+  재구성한 값을 Safe Browsing에 보낸다. 특정 경로만 악성으로 등재된 경우(도메인
+  자체는 깨끗함)는 놓칠 수 있다.
+- 검증(단위): `test_google_safe_browsing_adapter.py`(httpx.post monkeypatch로
+  요청 구성/응답 파싱/실패 폴백), `test_multichannel_correlation_service.py`
+  (가짜 포트로 서비스 결합 로직).
+- **실제 Google API 키로 검증 완료(2026-09-02)**: Gmail과 같은 Google Cloud
+  프로젝트(voice-phishing-detector-507405)에서 Safe Browsing API를 활성화하고
+  API 키를 발급받아(OAuth 동의 불필요 — 단순 API 키라 Gmail보다 훨씬 간단했다)
+  실제 Google 서버로 3가지를 확인했다: ① 정상 URL(`google.com`)은 매치 없음,
+  ② Google이 공식 제공하는 테스트용 악성 URL(`testsafebrowsing.appspot.com/
+  s/malware.html`, 전체 경로 그대로)은 `MALWARE`로 정확히 탐지, ③ 같은 URL을
+  실제 파이프라인 그대로(entity_extraction으로 host만 추출한 뒤 대조) 태우면
+  매치가 안 뜬다 — 바로 위에서 "정직하게 밝힌" host-only 한계가 실측으로도
+  그대로 재현됨을 확인했다(버그가 아니라 알려진 트레이드오프가 실제로 작동하는
+  방식 그대로임을 증명한 것). 발급받은 키는 로컬 `.env`(gitignore됨,
+  `GOOGLE_SAFE_BROWSING_API_KEY`)에 저장.
 
 ### SMS/email 실채널 연동 (2026-09-02) — email은 구현, SMS는 설계만
 
