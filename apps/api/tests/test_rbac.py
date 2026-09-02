@@ -66,7 +66,7 @@ def test_viewer_key_is_rejected_with_403_on_handler_endpoint():
 
 
 def test_handler_key_reaches_handler_endpoint_handler(monkeypatch):
-    async def _fake_execute(transcript: str) -> CallAnalysisResult:
+    async def _fake_execute(transcript: str, channel: str = "call", occurred_at=None) -> CallAnalysisResult:
         return CallAnalysisResult(
             call_id="fake-call-id",
             raw_transcript=transcript,
@@ -97,7 +97,7 @@ def test_raw_transcript_hidden_from_handler_but_shown_to_admin(monkeypatch):
     권한에서만 응답에 포함돼야 한다(domain/entities.py CallAnalysisResult, main.py
     _serialize_call_result 참고)."""
 
-    async def _fake_execute(transcript: str) -> CallAnalysisResult:
+    async def _fake_execute(transcript: str, channel: str = "call", occurred_at=None) -> CallAnalysisResult:
         return CallAnalysisResult(
             call_id="fake-call-id",
             raw_transcript="검찰청인데 010-1234-5678로 전화드렸습니다",

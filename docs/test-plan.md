@@ -3,7 +3,7 @@
 **기준 문서**: [`docs/requirements.md`](requirements.md), [`docs/RFP.md`](RFP.md)
 **작성일**: 2026-08-31
 
-> 이 문서는 이미 실행된 검증(pytest 230개, 실측 데이터셋, RBAC 실측, docker-compose
+> 이 문서는 이미 실행된 검증(pytest 233개, 실측 데이터셋, RBAC 실측, docker-compose
 > e2e, CI)을 사후에 정리한 것이지, 앞으로 할 계획만 나열한 것이 아니다 — "계획"과
 > "실측 결과"를 구분해서 표기한다.
 
@@ -36,10 +36,10 @@
 | 서비스 | 테스트 파일 | 테스트 수 | postgres 필요 | 비고 |
 |---|---|---|---|---|
 | `apps/api` | 14개 | 74 | 일부(skipif) | F-03 v1/v2 실측 데이터셋 검증 + N-03 이름 마스킹 정량 평가 + postgres 재연결 회귀 + 크로스채널 상관관계(우선순위 2) N-03 경유 경로 2개 파일 10건 포함 |
-| `apps/mcp-server` | 22개 | 142 | 일부(skipif) | Ollama 없이도 자동 폴백으로 전부 통과(실측 확인) + postgres 재연결/N-05 동시성 제한 회귀 + 크로스채널 상관관계(우선순위 2, Google Safe Browsing + email 실채널 연동 포함) 9개 파일 66건 포함 |
+| `apps/mcp-server` | 23개 | 145 | 일부(skipif) | Ollama 없이도 자동 폴백으로 전부 통과(실측 확인) + postgres 재연결/N-05 동시성 제한 회귀 + 크로스채널 상관관계(우선순위 2, Google Safe Browsing + email 실채널 연동 + 대시보드 이메일 탭 포함) 10개 파일 69건 포함 |
 | `apps/rag-worker` | 3개 | 12 | 일부(skipif) | pgvector 검색 통합 테스트 + 재연결 회귀 포함 |
 | `apps/stt-worker` | 1개 | 2 | 불필요 | 가짜 어댑터만 사용, 실제 모델 로드 없음(의도적 — 무겁고 GPU 의존적이라) |
-| **합계** | **40개** | **230** | | |
+| **합계** | **41개** | **233** | | |
 
 postgres가 필요한 테스트는 `TEST_DATABASE_URL`(또는 `DATABASE_URL`) 접속 가능
 여부를 `pytest.mark.skipif`로 확인해 접속 불가 시 건너뛴다. **로컬에서는
@@ -161,6 +161,26 @@ API를 활성화하고 발급받은 키로 실제 Google 서버 호출 3건 — 
 정상 판정하고 전용 라벨만 추가됨(`messages.get`으로 UNREAD 유지 직접 확인) →
 재실행 시 "새 메일 없음"으로 중복 처리 없음까지 확인했다(`docs/design.md`
 7장 참고). SMS는 설계만 하고 구현하지 않음.
+
+**F-06 대시보드 이메일 탭 (2026-09-02)**: Gmail 폴러가 mcp-server 로컬 판정만
+쓰던 것(터미널에만 결과가 나오고 대시보드엔 안 보임)을 apps/api의
+`POST /api/v1/calls/analyze`(channel="email")로 전환해, 감사증적(postgres)/
+F-06 대시보드에도 이메일 판정이 뜨게 했다. `call_analysis_results`에
+`channel` 컬럼(기본값 `'call'`, 기존 행 전부 자동 backfill) 추가, apps/api·
+mcp-server 양쪽 REST 요청/응답에 `channel` 필드 확장, 프런트에 채널 탭(전체/
+통화/이메일) + 컬럼 추가. 이 작업 중 apps/api의 `AnalyzeCallService`에도
+mcp-server와 동일한 종류의 회귀(크로스채널 매치 없이 flagged_urls만 있을 때
+가산점을 놓치는 조건문)가 있던 걸 발견해 같이 고쳤다.
+
+실측: 새 테스트 이메일(`[금융감독원] 계좌 정지 안내`)을 실제 Gmail 계정으로
+보내 폴러로 처리 → `POST /api/v1/calls/analyze` 호출까지 확인(위험도 85점,
+`call_id` 발급) → `GET /api/v1/calls`로 `channel: "email"`이 정상 저장된 것
+확인 → 브라우저(Playwright)로 대시보드 "이메일" 탭을 클릭해 실제로 그 판정이
+표에 뜨는 것까지 스크린샷으로 확인. 기존 통화 기록도 `channel: "call"`로
+정상 backfill됨을 별도로 확인(하위호환 검증). 이 과정에서 Gmail 검색 연산자
+`newer_than:1d`가 아주 최근(수십 초 이내)에 도착한 메일을 즉시 인덱싱하지
+않는 걸 실측으로 발견 — `in:anywhere`(날짜 필터 없음)로는 바로 보였다. 폴링
+주기가 짧을 때는 알아둘 만한 실측 한계라 기록해둔다.
 
 ### N-02: 접근통제(RBAC) — mcp-server 실측 매트릭스
 

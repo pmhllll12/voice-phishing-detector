@@ -11,7 +11,7 @@ AI 데이터센터/AI 인프라 엔지니어 직무 취업을 위한 개인 포�
 > **현재 상태**: F-01~F-07(기능)과 N-01~N-06(비기능) 요구사항 모두 최소 1차 구현 및
 > 로컬 검증 완료(2026-08-31). `docker compose up --build`로 전체 스택(frontend/api/
 > mcp-server/rag-worker/stt-worker/postgres/prometheus/grafana) 실기동 확인, PR마다
-> pytest 230개 자동 실행하는 CI도 구축됨. RFP → 요구사항정의서 → 설계서 → 시험계획서
+> pytest 233개 자동 실행하는 CI도 구축됨. RFP → 요구사항정의서 → 설계서 → 시험계획서
 > 4개 문서 전부 작성 완료. 2026-09-02: 시중 어떤 보이스피싱 차단 앱에도 없는 **크로스채널
 > 상관관계 탐지**(통화→문자→이메일 다단계 공격 연계 탐지)를 신규 추가, N-03 마스킹 경유
 > 경로까지 해소하고 Google Safe Browsing 위협 인텔리전스 연동과 Gmail 실채널 연동
@@ -694,5 +694,21 @@ stt-worker) 전부에 대한 scrape 대상이 설정돼 있고, `docker compose 
       먼저 확인한 뒤 폴링 실행 → 메일 2건 정상 판정, 전용 라벨만 추가되고
       UNREAD는 그대로 유지됨을 `messages.get`으로 직접 확인, 재실행 시 "새
       메일 없음"으로 중복 처리 없음까지 확인함
+- [x] F-06 대시보드 이메일 탭 (2026-09-02) — Gmail 폴러 결과가 터미널에만 나오고
+      대시보드엔 안 뜨던 걸, 폴러가 mcp-server 로컬 판정 대신 apps/api의
+      `POST /api/v1/calls/analyze`(channel="email")를 호출하도록 바꿔 해결했다 —
+      통화와 완전히 같은 판정/마스킹/크로스채널 상관관계/감사증적 저장 경로를
+      그대로 탄다. `call_analysis_results`에 `channel` 컬럼 신규(기존 행은
+      `'call'`로 자동 backfill), apps/api·mcp-server REST 요청/응답에 `channel`
+      필드 확장, `EmailIngestionService`의 의존성을 mcp-server 구체 클래스에서
+      포트(`EmailAnalysisSinkPort`)로 일반화(`ApiEmailAnalysisAdapter`가 구현),
+      프런트에 채널 탭(전체/통화/이메일)+컬럼 추가. **이 작업 중 apps/api에도
+      mcp-server와 같은 종류의 회귀**(`if correlation.get("matches"):`만 보고
+      Google Safe Browsing 단독 가산점을 놓치는 조건)를 발견해 같이 고쳤다.
+      실측: 실제 Gmail로 보낸 메일이 위험도 85점으로 판정 → `channel: "email"`로
+      postgres 저장 → 대시보드 "이메일" 탭에 실제로 뜨는 것까지 Playwright
+      스크린샷으로 확인. ⚠️ 부수 발견: Gmail 검색 연산자 `newer_than:1d`가
+      아주 최근(수십 초 이내) 도착한 메일을 즉시 인덱싱하지 않음(`in:anywhere`
+      로는 바로 보임) — 짧은 폴링 주기에서는 감안 필요
 <img width="1900" height="1014" alt="Screenshot 2026-08-26 151128_edited" src="https://github.com/user-attachments/assets/5bf57efc-0385-4623-8cec-82461d236ffd" />
 <img width="1910" height="1046" alt="Screenshot 2026-08-26 151151_edited" src="https://github.com/user-attachments/assets/4b36260b-be9d-400e-bbbb-15154a82a299" />

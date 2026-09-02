@@ -9,7 +9,7 @@ from src.infrastructure.adapters.in_memory_call_log import InMemoryCallLogReposi
 
 
 class _FakeCallAnalysisPortWithSimilarCases:
-    def analyze(self, transcript: str) -> dict:
+    def analyze(self, transcript: str, channel: str = "call") -> dict:
         return {
             "risk_score": 95,
             "risk_level": "high",
@@ -32,7 +32,7 @@ class _FakeCallAnalysisPortWithSimilarCases:
 class _FakeCallAnalysisPortWithoutSimilarCasesKey:
     """구버전 mcp-server(응답에 similar_cases 필드가 없던 시절) 호환성 확인용."""
 
-    def analyze(self, transcript: str) -> dict:
+    def analyze(self, transcript: str, channel: str = "call") -> dict:
         return {
             "risk_score": 0,
             "risk_level": "low",

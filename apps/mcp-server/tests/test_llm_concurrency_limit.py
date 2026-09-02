@@ -25,7 +25,7 @@ class _ConcurrencyTracker:
         self._current = 0
         self.max_seen = 0
 
-    def slow_execute(self, transcript: str):
+    def slow_execute(self, transcript: str, channel=None):
         with self._lock:
             self._current += 1
             self.max_seen = max(self.max_seen, self._current)

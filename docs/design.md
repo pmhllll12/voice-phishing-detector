@@ -640,6 +640,54 @@ scripts/poll_gmail_inbox.py   (반복 실행) →
   (`_parse_message`/`_find_body`)과 오케스트레이션(`EmailIngestionService`)은
   가짜 Gmail API 응답/가짜 서비스로도 회귀 테스트가 커버한다.
 
+#### F-06 대시보드 이메일 탭 (2026-09-02)
+
+email 실채널 연동이 되고 나서도 처음엔 판정 결과가 터미널에만 나오고 F-06
+대시보드에는 안 보였다 — Gmail 폴러가 mcp-server 로컬 `CallAnalysisService`를
+직접 썼기 때문에(감사증적 없이 그 자리에서 끝남). 이걸 apps/api 경유로 바꿨다:
+
+```
+scripts/poll_gmail_inbox.py
+  → ApiEmailAnalysisAdapter.analyze(text, Channel.EMAIL, occurred_at)
+      → POST /api/v1/calls/analyze  (apps/api, channel="email")
+          → AnalyzeCallService.execute(transcript, channel="email", occurred_at)
+              (기존 통화 판정과 완전히 같은 코드 경로 — 마스킹→mcp-server 판정→
+               크로스채널 상관관계→PostgresCallLogRepository.add())
+```
+
+- `call_analysis_results`에 `channel TEXT NOT NULL DEFAULT 'call'` 컬럼 추가
+  (`ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, N-03의 masked_transcript 컬럼
+  추가와 같은 패턴 — 기존 행은 전부 `'call'`로 자동 backfill되므로 nullable로
+  둘 필요가 없었다).
+- `CallAnalysisPort.analyze()`(apps/api)와 mcp-server REST `/api/v1/analyze`
+  요청 모델 양쪽에 `channel` 필드를 추가해 end-to-end로 전달되게 했다 — apps/api
+  → mcp-server 호출도 이제 channel을 명시적으로 보낸다(전에는 mcp-server가
+  항상 CALL로 auto-correlate했음).
+- `EmailIngestionService`의 두 번째 의존성을 mcp-server의 구체 클래스
+  (`CallAnalysisService`)에서 포트(`EmailAnalysisSinkPort`)로 바꿨다 —
+  `ApiEmailAnalysisAdapter`가 그 포트를 구현해 HTTP로 apps/api를 호출한다.
+  이 리팩터링 과정에서 기존 docstring이 "판정 실패 시 그 메일만 건너뛴다"고
+  주장만 하고 실제 `try/except`가 없던 걸 발견해(예외가 나면 `poll_once()`
+  전체가 죽었을 것) 같이 고쳤다.
+- **회귀 재발견**: apps/api의 `AnalyzeCallService`에도 mcp-server에서 이미
+  한 번 고쳤던 것과 같은 종류의 버그가 있었다 — `if correlation.get("matches"):`
+  만 보고 `flagged_urls`(Google Safe Browsing 단독 가산점)를 놓치는 조건.
+  같은 커밋에서 같이 고쳤다.
+- 프런트: `CallAnalysis.channel` 필드 추가, `RecentCallsTable`에 채널 컬럼,
+  `page.tsx`에 탭(전체/통화/이메일 — 클라이언트 사이드 필터링, 서버 쿼리
+  파라미터는 아직 없음).
+
+**실측 검증**: 새 테스트 이메일(`[금융감독원] 계좌 정지 안내`)을 실제 Gmail
+계정으로 보내 폴러 실행 → `POST /api/v1/calls/analyze` 호출까지 성공(위험도
+85점, call_id 발급) → `GET /api/v1/calls`로 `channel: "email"` 저장 확인 →
+Playwright로 대시보드 "이메일" 탭 클릭해 실제 표에 뜨는 것 스크린샷으로 확인.
+기존 통화 기록도 `channel: "call"`로 정상 backfill됐음을 별도 확인.
+
+**부수 발견**: Gmail 검색 연산자 `newer_than:1d`가 아주 최근(수십 초 이내)
+도착한 메일을 즉시 인덱싱하지 않는 걸 실측 중 우연히 발견했다 — `in:anywhere`
+(날짜 필터 없음)로 조회하면 바로 보였다. 폴링 주기를 짧게(예: 수십 초)
+잡는다면 이 인덱싱 지연을 감안해야 한다 — 알려진 한계로 기록.
+
 #### SMS (설계만, 미구현)
 
 실제 SMS 수신에는 SMS 게이트웨이(Twilio, 네이버 클라우드 SENS 등) 계약 +

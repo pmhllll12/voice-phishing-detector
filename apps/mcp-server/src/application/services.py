@@ -2,6 +2,7 @@
 # domain의 규칙만 사용하고 mcp 패키지 등 외부 프레임워크는 모른다 — 그래야 이
 # 서비스만 따로 단위 테스트할 수 있다 (tests/ 참고).
 
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -32,11 +33,14 @@ from domain.pattern_rules import CATEGORY_WEIGHTS, PATTERN_RULES
 from domain.ports import (
     CallAnalysisPort,
     ChannelSignalRepositoryPort,
+    EmailAnalysisSinkPort,
     EmailSourcePort,
     FraudCaseSearchPort,
     ReportRepositoryPort,
     ThreatIntelligencePort,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class PatternDetectionService:
@@ -400,23 +404,31 @@ class EmailIngestionService:
 
     합성 데이터로 검증하던 크로스채널 상관관계(우선순위 2 1차 이터레이션)에 "진짜"
     email 채널 이벤트를 공급하는 유입 경로다. F-01/F-02/F-05 판정 로직을 이메일용
-    으로 새로 만들지 않고, CallAnalysisService.execute()를 channel=Channel.EMAIL로
-    재사용한다 — "통화든 문자든 이메일이든 텍스트 판정 로직은 같다"는 게 이 설계의
-    핵심 전제(제목+본문을 합쳐 하나의 텍스트로 넘긴다).
+    으로 새로 만들지 않고, apps/api의 POST /api/v1/calls/analyze를 channel="email"
+    로 호출한다(ApiEmailAnalysisAdapter, EmailAnalysisSinkPort 구현체) — "통화든
+    문자든 이메일이든 텍스트 판정 로직은 같다"는 게 이 설계의 핵심 전제(제목+본문을
+    합쳐 하나의 텍스트로 넘긴다). apps/api를 거치므로 감사증적(postgres)/N-03
+    마스킹/F-06 대시보드에도 그대로 반영된다 — mcp-server 로컬 CallAnalysisService를
+    직접 쓰던 첫 버전(대시보드에 안 뜨고 터미널에만 결과가 나오던 버전)에서
+      apps/api 경유로 전환(2026-09-02, 대시보드 이메일 탭 요청에 따라).
     """
 
-    def __init__(self, email_source: EmailSourcePort, call_analysis_service: CallAnalysisService):
+    def __init__(self, email_source: EmailSourcePort, analysis_sink: EmailAnalysisSinkPort):
         self._email_source = email_source
-        self._call_analysis_service = call_analysis_service
+        self._analysis_sink = analysis_sink
 
-    def poll_once(self) -> list[tuple[EmailMessage, CallAnalysisResult]]:
-        """새 메일을 전부 가져와 판정하고 처리 완료 표시까지 한다. 판정 자체가
-        예외를 던지면(예: 개별 메일 파싱 실패) 그 메일은 처리 완료 표시를 안 하고
-        건너뛴다 — 다음 폴링에서 재시도된다."""
-        results: list[tuple[EmailMessage, CallAnalysisResult]] = []
+    def poll_once(self) -> list[tuple[EmailMessage, dict]]:
+        """새 메일을 전부 가져와 판정하고 처리 완료 표시까지 한다. 개별 메일 판정이
+        예외를 던지면(예: apps/api 일시 장애) 그 메일은 처리 완료 표시를 안 하고
+        건너뛴다 — 다음 폴링에서 재시도된다. 다른 메일 처리는 계속 진행한다."""
+        results: list[tuple[EmailMessage, dict]] = []
         for email in self._email_source.fetch_new_emails():
             text = f"{email.subject}\n\n{email.body}"
-            analysis = self._call_analysis_service.execute(text, channel=Channel.EMAIL, occurred_at=email.received_at)
+            try:
+                analysis = self._analysis_sink.analyze(text, Channel.EMAIL, email.received_at)
+            except Exception as e:  # noqa: BLE001 — apps/api 연결 실패 등 어떤 예외든 이 메일만 건너뛴다
+                logger.warning("메일(%s) 판정 실패 — 처리 완료 표시 없이 건너뜀: %s", email.message_id, e)
+                continue
             results.append((email, analysis))
             self._email_source.mark_processed(email.message_id)
         return results

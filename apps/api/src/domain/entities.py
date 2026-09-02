@@ -84,6 +84,12 @@ class CallAnalysisResult:
     보존을 위해 여전히 저장하지만, N-02 RBAC과 결합해 ADMIN 권한에서만 노출한다
     (api/main.py _serialize_call_result 참고) — VIEWER/HANDLER는 masked_transcript만 본다.
 
+    channel(SMS/email 실채널 연동, 2026-09-02): "call"/"email"/"sms" — 어느 채널에서
+    들어온 텍스트를 판정한 결과인지 구분한다. F-01/F-02/F-05 로직 자체는 채널 무관하게
+    동일하다("통화든 문자든 이메일이든 텍스트 판정 로직은 같다"는 설계 전제,
+    docs/design.md 7장 참고) — 이 필드는 감사증적/대시보드에서 구분해서 보여주기 위한
+    표시용 메타데이터일 뿐이다.
+
     TODO:
       - is_deepvoice: bool | None — F-03 (지금은 /api/v1/calls/deepvoice-check가 별도 엔드포인트로
         분리되어 있음, 하나의 통화 판정으로 결합할지는 F-06 대시보드 요구사항 보고 결정)
@@ -99,6 +105,7 @@ class CallAnalysisResult:
     explanation: str
     analyzed_at: datetime
     similar_cases: list[SimilarCaseSummary] = field(default_factory=list)
+    channel: str = "call"
 
 
 @dataclass

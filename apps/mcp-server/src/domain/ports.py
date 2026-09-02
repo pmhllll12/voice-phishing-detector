@@ -78,3 +78,15 @@ class EmailSourcePort(Protocol):
         """처리 완료 표시(예: Gmail의 UNREAD 라벨 제거) — 다음 폴링에서 중복 처리되지
         않게 한다."""
         ...
+
+
+class EmailAnalysisSinkPort(Protocol):
+    """우선순위 2(SMS/email 실채널 연동): 이메일 판정 결과를 어디로 보낼지 추상화한다.
+    apps/api로 HTTP 전송하는 ApiEmailAnalysisAdapter가 기본 구현체 — apps/api가
+    이미 N-01 감사증적(postgres)/N-03 마스킹/F-06 대시보드 노출을 전부 갖고 있어서,
+    mcp-server 안에서 이걸 다시 만들지 않고 재사용한다(F-04 FraudCaseSearchPort와
+    같은 선택적 의존 패턴)."""
+
+    def analyze(self, text: str, channel: Channel, occurred_at: datetime) -> dict:
+        """apps/api의 POST /api/v1/calls/analyze 응답(dict)을 그대로 반환한다."""
+        ...

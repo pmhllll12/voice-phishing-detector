@@ -31,6 +31,13 @@ CREATE TABLE IF NOT EXISTS call_analysis_results (
 -- (PostgresCallLogRepository.add 참고).
 ALTER TABLE call_analysis_results ADD COLUMN IF NOT EXISTS masked_transcript TEXT;
 
+-- SMS/email 실채널 연동(2026-09-02): F-01/F-02/F-05 판정 로직은 채널 무관하게 같은
+-- CallAnalysisService.execute(channel=...)를 재사용하므로, 감사증적도 어느 채널에서
+-- 왔는지만 컬럼 하나로 구분한다(call/email/sms — 새 테이블을 만들 정도로 구조가
+-- 다르지 않음). NOT NULL + DEFAULT라 기존 행(전부 call이었음)도 즉시 채워진다
+-- (masked_transcript처럼 nullable로 둘 필요가 없음 — 이 값은 항상 알 수 있음).
+ALTER TABLE call_analysis_results ADD COLUMN IF NOT EXISTS channel TEXT NOT NULL DEFAULT 'call';
+
 CREATE INDEX IF NOT EXISTS idx_call_analysis_results_analyzed_at
     ON call_analysis_results (analyzed_at DESC);
 

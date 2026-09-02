@@ -23,7 +23,7 @@ class _FakeCallAnalysisPort:
     def __init__(self):
         self.received_transcript: str | None = None
 
-    def analyze(self, transcript: str) -> dict:
+    def analyze(self, transcript: str, channel: str = "call") -> dict:
         self.received_transcript = transcript
         return {
             "risk_score": 80,

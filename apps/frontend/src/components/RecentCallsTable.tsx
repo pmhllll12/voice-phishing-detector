@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { ApiError, submitReport, type CallAnalysis, type ReportResult } from "@/lib/api";
+import { CHANNEL_META } from "@/lib/channels";
 import { RISK_LEVEL_META } from "@/lib/risk";
 
 type ReportButtonState =
@@ -69,7 +70,8 @@ export function RecentCallsTable({ calls }: { calls: CallAnalysis[] }) {
   if (calls.length === 0) {
     return (
       <p style={{ color: "var(--text-muted)", fontSize: "14px" }}>
-        아직 분석된 통화가 없습니다. 위 폼에서 통화 내용을 입력해 분석해보세요.
+이 채널에서 아직 분석된 건이 없습니다. 통화는 위 폼에서, 이메일은 Gmail 폴러
+        (`scripts/poll_gmail_inbox.py`)를 실행해 확인해보세요.
       </p>
     );
   }
@@ -86,6 +88,7 @@ export function RecentCallsTable({ calls }: { calls: CallAnalysis[] }) {
             }}
           >
             <th style={{ padding: "8px", fontWeight: 500 }}>시각</th>
+            <th style={{ padding: "8px", fontWeight: 500 }}>채널</th>
             <th style={{ padding: "8px", fontWeight: 500 }}>위험도</th>
             <th style={{ padding: "8px", fontWeight: 500 }}>내용</th>
             <th style={{ padding: "8px", fontWeight: 500 }}>판정 요약</th>
@@ -111,6 +114,10 @@ export function RecentCallsTable({ calls }: { calls: CallAnalysis[] }) {
                   }}
                 >
                   {new Date(call.analyzed_at).toLocaleTimeString("ko-KR")}
+                </td>
+                <td style={{ padding: "8px", whiteSpace: "nowrap", color: "var(--text-secondary)" }}>
+                  <span aria-hidden>{CHANNEL_META[call.channel]?.icon ?? "❓"}</span>{" "}
+                  {CHANNEL_META[call.channel]?.label ?? call.channel}
                 </td>
                 <td style={{ padding: "8px", whiteSpace: "nowrap" }}>
                   <span

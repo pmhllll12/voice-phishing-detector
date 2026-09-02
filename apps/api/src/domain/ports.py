@@ -14,9 +14,11 @@ class DeepvoiceDetectionPort(Protocol):
 
 class CallAnalysisPort(Protocol):
     """F-01/F-02/F-05 판정을 mcp-server(analyze_call_pattern)에 위임하는 포트.
-    반환값은 mcp-server REST 응답 그대로의 dict — application 계층에서 도메인 모델로 매핑한다."""
+    반환값은 mcp-server REST 응답 그대로의 dict — application 계층에서 도메인 모델로 매핑한다.
+    channel(SMS/email 실채널 연동): mcp-server가 channel별로 크로스채널 상관관계를
+    올바른 채널에 기록하도록 전달한다(기본값 "call"은 기존 호출부와 하위호환)."""
 
-    def analyze(self, transcript: str) -> dict: ...
+    def analyze(self, transcript: str, channel: str = "call") -> dict: ...
 
 
 class TranscriptionPort(Protocol):

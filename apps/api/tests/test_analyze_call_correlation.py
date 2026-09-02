@@ -26,7 +26,7 @@ class _FakeCallAnalysisPort:
     def __init__(self, raw: dict):
         self._raw = raw
 
-    def analyze(self, transcript: str) -> dict:
+    def analyze(self, transcript: str, channel: str = "call") -> dict:
         return self._raw
 
 

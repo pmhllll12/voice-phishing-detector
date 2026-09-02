@@ -16,6 +16,7 @@
 
 import os
 import time
+from datetime import datetime
 
 import httpx
 import psycopg
@@ -110,6 +111,7 @@ def _serialize_call_result(result: CallAnalysisResult, role: Role) -> dict:
     payload = {
         "call_id": result.call_id,
         "analyzed_at": result.analyzed_at.isoformat(),
+        "channel": result.channel,
         "masked_transcript": result.masked_transcript,
         "risk_score": result.risk_score,
         "risk_level": result.risk_level.value,
@@ -250,6 +252,11 @@ def ready() -> JSONResponse:
 
 class AnalyzeCallRequest(BaseModel):
     transcript: str
+    # SMS/email 실채널 연동(2026-09-02): 기본값 "call"은 프런트 대시보드 폼 등 기존
+    # 호출부와 완전히 하위호환. Gmail 폴러가 channel="email"과 occurred_at(수신 시각,
+    # 크로스채널 상관관계 타이밍에 씀)을 명시적으로 보낸다.
+    channel: str = "call"
+    occurred_at: datetime | None = None
 
 
 @app.post("/api/v1/calls/analyze")
@@ -258,7 +265,7 @@ async def analyze_call(req: AnalyzeCallRequest, role: Role = Depends(require_rol
     N-02: 통화를 분석하는 건 "처리" 행위이므로 HANDLER 이상 권한이 필요하다."""
     started_at = time.monotonic()
     try:
-        result = await analyze_call_service.execute(req.transcript)
+        result = await analyze_call_service.execute(req.transcript, channel=req.channel, occurred_at=req.occurred_at)
     except httpx.HTTPError as e:
         raise HTTPException(
             status_code=502,

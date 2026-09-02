@@ -22,10 +22,10 @@ class McpServerCallAnalysisAdapter:
         self._service_api_key = service_api_key
         self._timeout = timeout
 
-    def analyze(self, transcript: str) -> dict:
+    def analyze(self, transcript: str, channel: str = "call") -> dict:
         response = httpx.post(
             f"{self._base_url}/api/v1/analyze",
-            json={"transcript": transcript},
+            json={"transcript": transcript, "channel": channel},
             headers={"X-API-Key": self._service_api_key},
             timeout=self._timeout,
         )

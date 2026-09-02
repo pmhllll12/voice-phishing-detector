@@ -35,7 +35,7 @@ from src.domain.pii_masking import mask_pii
 
 _SELECT_COLUMNS = (
     "call_id, raw_transcript, masked_transcript, risk_score, risk_level, detected_patterns, "
-    "explanation_summary, explanation, similar_cases, analyzed_at"
+    "explanation_summary, explanation, similar_cases, analyzed_at, channel"
 )
 
 
@@ -71,7 +71,7 @@ class PostgresCallLogRepository:
             f"""
             INSERT INTO call_analysis_results
                 ({_SELECT_COLUMNS})
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 result.call_id,
@@ -101,6 +101,7 @@ class PostgresCallLogRepository:
                     ]
                 ),
                 result.analyzed_at,
+                result.channel,
             ),
         )
 
@@ -128,6 +129,7 @@ class PostgresCallLogRepository:
             explanation,
             similar_cases,
             analyzed_at,
+            channel,
         ) = row
         # N-03 도입(2026-08-31) 이전에 적재된 행은 masked_transcript 컬럼이 NULL이다
         # (infra/db/init.sql의 ALTER TABLE ADD COLUMN 참고 — 기존 행을 backfill하지
@@ -146,4 +148,5 @@ class PostgresCallLogRepository:
             explanation=explanation,
             analyzed_at=analyzed_at,
             similar_cases=[SimilarCaseSummary(**c) for c in similar_cases],
+            channel=channel,
         )

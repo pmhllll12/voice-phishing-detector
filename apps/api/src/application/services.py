@@ -76,11 +76,18 @@ class AnalyzeCallService:
         self._call_log_port = call_log_port
         self._correlation_port = correlation_port
 
-    async def execute(self, transcript: str) -> CallAnalysisResult:
+    async def execute(
+        self, transcript: str, channel: str = "call", occurred_at: datetime | None = None
+    ) -> CallAnalysisResult:
+        """channel/occurred_at은 SMS/email 실채널 연동(2026-09-02)을 위해 일반화했다 —
+        기본값(call/None→now)은 기존 호출부(analyze_call 엔드포인트)와 완전히
+        동일하게 동작한다. Gmail 폴러(apps/mcp-server/scripts/poll_gmail_inbox.py)가
+        channel="email"로 이 메서드를 호출해, F-01/F-02 판정 로직을 새로 만들지
+        않고 그대로 재사용하면서 감사증적/대시보드에도 이메일 판정이 남는다."""
         # N-03: mcp-server(LLM 포함)에는 마스킹된 텍스트만 보낸다 — domain/pii_masking.py
         # 상단 주석 참고("WHY 마스킹을 mcp-server 호출 전에 적용하는가").
         masked_transcript = mask_pii(transcript)
-        raw = self._call_analysis_port.analyze(masked_transcript)
+        raw = self._call_analysis_port.analyze(masked_transcript, channel)
 
         # 우선순위 2(크로스채널 상관관계 탐지): mask_pii()가 지우기 "전" 원문에서
         # 엔티티(전화번호/계좌번호/URL)를 추출한다 — mcp-server가 받는 masked_transcript
@@ -90,13 +97,17 @@ class AnalyzeCallService:
             entities = extract_entities(transcript)
             if entities:
                 correlation = self._correlation_port.correlate(
-                    channel="call",
+                    channel=channel,
                     entities=[{"entity_type": e.entity_type, "value": e.value} for e in entities],
-                    occurred_at=datetime.now(timezone.utc).isoformat(),
+                    occurred_at=(occurred_at or datetime.now(timezone.utc)).isoformat(),
                     context_excerpt=masked_transcript[:200],
                     current_risk_score=raw["risk_score"],
                 )
-                if correlation.get("matches"):
+                # 크로스채널 매치가 없어도 flagged_urls(Google Safe Browsing)만으로
+                # 가산점이 붙을 수 있다 — matches만 보면 그 경우를 놓친다(mcp-server의
+                # CallAnalysisService.execute()에서 발견한 것과 동일한 종류의 버그,
+                # 여기 apps/api의 별도 상관관계 결합 경로에도 있었다).
+                if correlation.get("matches") or correlation.get("flagged_urls"):
                     raw = _merge_correlation_into_raw(raw, correlation)
 
         result = CallAnalysisResult(
@@ -128,6 +139,7 @@ class AnalyzeCallService:
                 )
                 for c in raw.get("similar_cases", [])
             ],
+            channel=channel,
         )
         self._call_log_port.add(result)
         return result

@@ -1,34 +1,24 @@
 # 우선순위 2(SMS/email 실채널 연동, email만 실제 구현) — EmailIngestionService가
-# EmailSourcePort로 받은 메일을 CallAnalysisService(channel=EMAIL)에 올바르게 넘기고
-# 처리 완료 표시까지 하는지 확인한다. 실제 Gmail API 연동은
-# test_gmail_email_source_adapter.py, F-01/F-02/F-05 판정 로직 자체는 다른 테스트에서
+# EmailSourcePort로 받은 메일을 EmailAnalysisSinkPort(apps/api 경유, channel=EMAIL)에
+# 올바르게 넘기고 처리 완료 표시까지 하는지 확인한다. 실제 Gmail API 연동은
+# test_gmail_email_source_adapter.py, apps/api HTTP 어댑터 자체는
+# test_api_email_analysis_adapter.py, F-01/F-02/F-05 판정 로직 자체는 다른 테스트에서
 # 이미 검증했다 — 여기서는 오케스트레이션만 본다.
 
 import datetime
 
-from application.services import CallAnalysisService, EmailIngestionService
-from domain.entities import (
-    CallAnalysisResult,
-    Channel,
-    DetectedPattern,
-    EmailMessage,
-    PatternCategory,
-    PatternDetectionResult,
-    RiskAssessment,
-    RiskExplanation,
-    RiskLevel,
-)
+from application.services import EmailIngestionService
+from domain.entities import Channel, EmailMessage
 
 _RECEIVED_AT = datetime.datetime(2026, 9, 2, 9, 0, tzinfo=datetime.timezone.utc)
 
-
-def _high_risk_result() -> CallAnalysisResult:
-    detection = PatternDetectionResult(
-        transcript="", detected_patterns=[DetectedPattern(category=PatternCategory.AUTHORITY_IMPERSONATION, matched_keywords=["금융감독원"])]
-    )
-    risk = RiskAssessment(score=80, level=RiskLevel.HIGH, breakdown=[])
-    explanation = RiskExplanation(summary="고위험", reasons=["..."], narrative="고위험\n\n근거:\n- ...")
-    return CallAnalysisResult(detection=detection, risk=risk, explanation=explanation)
+_HIGH_RISK_RESPONSE = {
+    "call_id": "call-1",
+    "risk_score": 80,
+    "risk_level": "high",
+    "explanation_summary": "고위험 등급 (위험도 80점)",
+    "channel": "email",
+}
 
 
 class _FakeEmailSource:
@@ -43,24 +33,17 @@ class _FakeEmailSource:
         self.marked_processed.append(message_id)
 
 
-class _FakeCallAnalysisPort:
-    def __init__(self, result: CallAnalysisResult):
-        self._result = result
-
-    def analyze(self, transcript: str) -> CallAnalysisResult:
-        return self._result
-
-
-class _RecordingCallAnalysisService(CallAnalysisService):
-    """CallAnalysisService.execute()에 어떤 인자가 전달됐는지 기록만 하는 얇은 래퍼."""
-
-    def __init__(self, result: CallAnalysisResult):
-        super().__init__(_FakeCallAnalysisPort(result))
+class _FakeAnalysisSink:
+    def __init__(self, response: dict | None = None, raise_for: set[str] | None = None):
+        self._response = response or dict(_HIGH_RISK_RESPONSE)
+        self._raise_for = raise_for or set()
         self.received_calls: list[dict] = []
 
-    def execute(self, transcript, channel=Channel.CALL, occurred_at=None) -> CallAnalysisResult:
-        self.received_calls.append({"transcript": transcript, "channel": channel, "occurred_at": occurred_at})
-        return super().execute(transcript, channel=channel, occurred_at=occurred_at)
+    def analyze(self, text: str, channel: Channel, occurred_at: datetime.datetime) -> dict:
+        self.received_calls.append({"text": text, "channel": channel, "occurred_at": occurred_at})
+        if text in self._raise_for:
+            raise ConnectionError("apps/api 연결 실패(테스트 시뮬레이션)")
+        return self._response
 
 
 def test_poll_once_analyzes_each_email_as_email_channel_with_received_at():
@@ -71,18 +54,18 @@ def test_poll_once_analyzes_each_email_as_email_channel_with_received_at():
         received_at=_RECEIVED_AT,
     )
     email_source = _FakeEmailSource([email])
-    call_analysis_service = _RecordingCallAnalysisService(_high_risk_result())
-    service = EmailIngestionService(email_source, call_analysis_service)
+    analysis_sink = _FakeAnalysisSink()
+    service = EmailIngestionService(email_source, analysis_sink)
 
     results = service.poll_once()
 
     assert len(results) == 1
     assert results[0][0] is email
-    assert results[0][1].risk.level == RiskLevel.HIGH
-    assert call_analysis_service.received_calls[0]["channel"] == Channel.EMAIL
-    assert call_analysis_service.received_calls[0]["occurred_at"] == _RECEIVED_AT
-    assert email.subject in call_analysis_service.received_calls[0]["transcript"]
-    assert email.body in call_analysis_service.received_calls[0]["transcript"]
+    assert results[0][1]["risk_level"] == "high"
+    assert analysis_sink.received_calls[0]["channel"] == Channel.EMAIL
+    assert analysis_sink.received_calls[0]["occurred_at"] == _RECEIVED_AT
+    assert email.subject in analysis_sink.received_calls[0]["text"]
+    assert email.body in analysis_sink.received_calls[0]["text"]
 
 
 def test_poll_once_marks_each_email_as_processed():
@@ -91,7 +74,7 @@ def test_poll_once_marks_each_email_as_processed():
         EmailMessage("msg-2", "제목2", "본문2", _RECEIVED_AT),
     ]
     email_source = _FakeEmailSource(emails)
-    service = EmailIngestionService(email_source, _RecordingCallAnalysisService(_high_risk_result()))
+    service = EmailIngestionService(email_source, _FakeAnalysisSink())
 
     service.poll_once()
 
@@ -100,6 +83,22 @@ def test_poll_once_marks_each_email_as_processed():
 
 def test_poll_once_with_no_new_emails_returns_empty_list():
     email_source = _FakeEmailSource([])
-    service = EmailIngestionService(email_source, _RecordingCallAnalysisService(_high_risk_result()))
+    service = EmailIngestionService(email_source, _FakeAnalysisSink())
 
     assert service.poll_once() == []
+
+
+def test_poll_once_skips_mark_processed_when_analysis_fails_but_continues_others():
+    """회귀 가드: 판정이 실패한 메일은 처리 완료 표시를 안 해야 다음 폴링에서
+    재시도된다 — 다른 메일 처리는 계속 진행돼야 한다(기존 docstring이 주장만
+    하고 실제로는 구현이 없던 부분, 2026-09-02 apps/api 경유 전환 때 같이 고침)."""
+    broken_email = EmailMessage("broken", "제목", "본문", _RECEIVED_AT)
+    ok_email = EmailMessage("ok", "제목2", "본문2", _RECEIVED_AT)
+    email_source = _FakeEmailSource([broken_email, ok_email])
+    analysis_sink = _FakeAnalysisSink(raise_for={"제목\n\n본문"})
+    service = EmailIngestionService(email_source, analysis_sink)
+
+    results = service.poll_once()
+
+    assert [e.message_id for e, _ in results] == ["ok"]
+    assert email_source.marked_processed == ["ok"]

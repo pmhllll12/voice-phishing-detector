@@ -6,8 +6,9 @@ import { AnalyzeCallForm } from "@/components/AnalyzeCallForm";
 import { HorizontalBarList } from "@/components/HorizontalBarList";
 import { RecentCallsTable } from "@/components/RecentCallsTable";
 import { StatTile } from "@/components/StatTile";
-import { getStatsSummary, listCalls, type CallAnalysis, type StatsSummary } from "@/lib/api";
+import { getStatsSummary, listCalls, type Channel, type CallAnalysis, type StatsSummary } from "@/lib/api";
 import { colorForCategory } from "@/lib/categories";
+import { CHANNEL_TABS } from "@/lib/channels";
 import { RISK_LEVEL_META, RISK_LEVEL_ORDER } from "@/lib/risk";
 
 const sectionTitleStyle: CSSProperties = {
@@ -20,6 +21,10 @@ export default function DashboardPage() {
   const [stats, setStats] = useState<StatsSummary | null>(null);
   const [calls, setCalls] = useState<CallAnalysis[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // SMS/email 실채널 연동(2026-09-02): "최근 탐지 현황" 표를 채널별로 걸러서 본다.
+  // 목록 자체는 전 채널을 한 번에 받아오고(listCalls), 필터링은 클라이언트에서만
+  // 한다 — 채널별 서버사이드 페이지네이션이 필요할 정도의 규모가 아니라서.
+  const [channelFilter, setChannelFilter] = useState<Channel | "all">("all");
 
   const refresh = useCallback(async () => {
     try {
@@ -114,7 +119,28 @@ export default function DashboardPage() {
 
       <section>
         <h2 style={sectionTitleStyle}>최근 탐지 현황</h2>
-        <RecentCallsTable calls={calls} />
+        <div style={{ display: "flex", gap: "6px", marginBottom: "12px" }}>
+          {CHANNEL_TABS.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              onClick={() => setChannelFilter(tab.key)}
+              style={{
+                padding: "6px 14px",
+                borderRadius: "6px",
+                border: "1px solid var(--gridline)",
+                background: channelFilter === tab.key ? "var(--surface-2)" : "transparent",
+                color: channelFilter === tab.key ? "var(--text-primary)" : "var(--text-secondary)",
+                fontWeight: channelFilter === tab.key ? 600 : 400,
+                fontSize: "13px",
+                cursor: "pointer",
+              }}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        <RecentCallsTable calls={channelFilter === "all" ? calls : calls.filter((c) => c.channel === channelFilter)} />
       </section>
     </main>
   );

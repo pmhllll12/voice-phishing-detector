@@ -181,6 +181,10 @@ async def metrics() -> PlainTextResponse:
 
 class AnalyzeRequest(BaseModel):
     transcript: str
+    # SMS/email 실채널 연동(2026-09-02): 기본값 "call"은 기존 호출부(apps/api의
+    # 예전 요청 본문에 channel이 없던 시절)와 하위호환. apps/api가 이제 이메일 판정
+    # 시 "email"을 명시적으로 보낸다 — 크로스채널 상관관계가 올바른 채널에 기록되도록.
+    channel: str = "call"
 
 
 @app.post("/api/v1/analyze")
@@ -191,8 +195,15 @@ async def analyze(req: AnalyzeRequest, _role: Role = Depends(require_role(Role.H
     N-02: apps/api와 동일하게 "처리" 행위라 HANDLER 이상 권한이 필요하다.
     N-05: 동시성 제한/스레드풀 위임 이유는 위 _llm_semaphore 선언부 주석 참고.
     """
+    try:
+        channel = Channel(req.channel)
+    except ValueError:
+        return JSONResponse(
+            status_code=422, content={"error": f"알 수 없는 channel '{req.channel}' — call/sms/email 중 하나여야 합니다."}
+        )
+
     async with _llm_semaphore:
-        result = await run_in_threadpool(call_analysis_service.execute, req.transcript)
+        result = await run_in_threadpool(call_analysis_service.execute, req.transcript, channel)
     return serialize_analysis(result.detection, result.risk, result.explanation, result.similar_cases)
 
 

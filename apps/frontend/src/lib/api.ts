@@ -28,9 +28,16 @@ export interface SimilarCase {
   similarity: number;
 }
 
+// SMS/email 실채널 연동(2026-09-02): "call"이 기본값이고, Gmail 폴러가 보낸 판정은
+// "email"로 온다. F-01/F-02/F-05 판정 로직 자체는 채널 무관하게 같다 — 이 필드는
+// 대시보드에서 구분해서 보여주기 위한 표시용 메타데이터다(apps/api/src/domain/
+// entities.py CallAnalysisResult 상단 주석 참고). SMS는 아직 실연동 없음(설계만).
+export type Channel = "call" | "email" | "sms";
+
 export interface CallAnalysis {
   call_id: string;
   analyzed_at: string;
+  channel: Channel;
   // N-03: 항상 마스킹된 버전만 온다(전화번호/계좌번호/이름 등 제거). raw_transcript(원문)는
   // N-02 RBAC상 ADMIN 키로 호출했을 때만 응답에 포함되므로 optional — 이 대시보드는 기본
   // handler 키를 쓰므로(dev-handler-key) 평소엔 안 온다(apps/api/src/main.py
