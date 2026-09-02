@@ -133,6 +133,19 @@ F-01/F-02(핵심 판정)를 먼저, 비기능 요구사항을 나중에 채웠�
 | 구현 현황 | 완료 — mock 구현(`df98210`) → REST/대시보드 연결(`27a6178`) |
 | 검증 근거 | `apps/mcp-server/tests/test_rest_report_endpoint.py`, `apps/api/tests` 내 신고 관련 테스트 |
 
+### 부가기능: 크로스채널 상관관계 탐지 (2026-09-02 추가, RFP 원 범위 밖 차별화 기능)
+
+| 항목 | 내용 |
+|---|---|
+| 설명 | 동일한 전화번호/계좌번호/URL이 서로 다른 채널(통화/문자/이메일)의 탐지 기록에 시간 윈도우 안에 반복 등장하면 위험도에 가산점을 주고 판정 근거에 인용한다. RFP의 F-01~F-07에는 없는 기능이지만, 시중 보이스피싱 차단 앱이 전부 자기 채널 안에서만 판단한다는 공백을 메우는 이 프로젝트의 차별점이라 별도 항목으로 문서화한다 |
+| 입력 | `channel`(call/sms/email), 텍스트(통화 텍스트 또는 문자/이메일 본문) |
+| 처리 | mcp-server `correlate_multichannel_signals` — 전화번호/계좌번호/URL을 정규식으로 추출해 `channel_signals`(postgres)에 기록하고, 다른 채널에서 같은 값이 시간 윈도우(기본 30분) 안에 있었는지 조회. 매치 건당 위험도 +15점(상한 30점), F-02 등급 재산정, F-05 근거 문장 추가. `analyze_call_pattern`이 call 채널에 대해 자동으로 결합한다 |
+| 출력 | 매치 목록(채널/엔티티 타입/마스킹된 값/시각), `risk_boost`, 근거 문장 목록, (있으면) 재산정된 `updated_risk_score`/`updated_risk_level` |
+| 수용 기준 | ① 다른 채널에 같은 엔티티가 시간 윈도우 안에 기록돼 있으면 매치가 반환되고 위험도가 오른다. ② 채널이 같거나 시간 윈도우 밖이면 매치되지 않는다. ③ 응답에 노출되는 엔티티 값은 항상 마스킹된다(N-03과 같은 원칙 — raw 값은 저장소에만 있고 API로 나가지 않는다) |
+| 구현 현황 | 완료 — `apps/mcp-server`(domain/application/infrastructure 전 계층) + `infra/db/init.sql`의 `channel_signals` 테이블 신규 추가. 실제 REST 호출(`/api/v1/correlate` → `/api/v1/analyze`)로 65점 판정이 80점(HIGH)으로 오르는 것까지 로컬 postgres로 실측 |
+| 검증 근거 | `test_entity_extraction.py`, `test_multichannel_correlation_service.py`, `test_call_analysis_correlation.py`, `test_postgres_channel_signal_repository.py`, `test_rest_correlate_endpoint.py`, `test_multichannel_synthetic_scenarios.py`(합성 시나리오 4건) |
+| 알려진 한계 | apps/api는 mcp-server 호출 전에 통화 텍스트를 마스킹(N-03)하므로, REST 경로(apps/api 경유)에서는 전화번호/계좌번호 상관관계가 실질적으로 매칭되지 않고 URL만 자동 작동한다 — MCP stdio 직접 호출이나 `correlate_multichannel_signals` 툴로 원문을 직접 넣는 경로에서만 전화번호/계좌번호까지 매칭된다(`docs/design.md` 7장 참고). sms/email 채널의 실제 유입 경로(SMS 수신, Gmail API 등)와 Google Safe Browsing 연동은 범위 밖 |
+
 ## 3. 비기능 요구사항 (N-01~N-06)
 
 ### N-01 감사증적
@@ -187,7 +200,7 @@ F-01/F-02(핵심 판정)를 먼저, 비기능 요구사항을 나중에 채웠�
 |---|---|
 | 설명 | 신규 사기유형 추가 시 시스템 재설계 없이 확장 가능한 구조로 설계한다 |
 | 수용 기준 | ① 포트(인터페이스)를 유지한 채 어댑터(구현체)를 교체할 수 있다 — application 계층 diff 0줄. ② 새 카테고리 추가 시 `PatternCategory` enum + `PATTERN_RULES` dict 확장만으로 충분하다(코드 재설계 불필요) |
-| 구현 현황 | 완료 — **어댑터 교체 4개 축**: F-01/F-02 판정 알고리즘(규칙→LLM), F-04 검색 알고리즘(TF-IDF→임베딩→pgvector), N-01 감사증적 저장소(인메모리→postgres), F-03 딥보이스 판별기(휴리스틱→wav2vec2). **+ 신규 진입점 추가 축**(2026-09-01): mcp-server에 gRPC를 3번째 진입점으로 추가(`grpc_server.py`), N-02 RBAC도 grpc metadata로 재사용. 매번 application 계층 diff 0줄이 커밋 메시지로 실측됨 |
+| 구현 현황 | 완료 — **어댑터 교체 4개 축**: F-01/F-02 판정 알고리즘(규칙→LLM), F-04 검색 알고리즘(TF-IDF→임베딩→pgvector), N-01 감사증적 저장소(인메모리→postgres), F-03 딥보이스 판별기(휴리스틱→wav2vec2). **+ 신규 진입점 추가 축**(2026-09-01): mcp-server에 gRPC를 3번째 진입점으로 추가(`grpc_server.py`), N-02 RBAC도 grpc metadata로 재사용. 매번 application 계층 diff 0줄이 커밋 메시지로 실측됨. **+ 스키마 확장 축**(2026-09-02): 크로스채널 상관관계 탐지가 "완전히 새로운 질의 축"이 필요해 `channel_signals` 테이블을 새로 추가한 사례 — 앞의 4개 축(애플리케이션 계층만 교체)과 달리, 이 축은 스키마 변경이 정직하게 필요함을 보여준다(`docs/design.md` 7장 참고) |
 | 검증 근거 | [`docs/design.md`](design.md) N-06 확장성 설계 챕터 — 커밋 해시까지 명시된 표 |
 
 ## 4. 요구사항 추적표 (Traceability Matrix)

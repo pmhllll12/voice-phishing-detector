@@ -19,6 +19,7 @@
 import asyncio
 import logging
 import os
+from datetime import datetime, timezone
 
 import httpx
 import psycopg
@@ -28,15 +29,17 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from application.dto import serialize_analysis, serialize_report
-from application.services import CallAnalysisService, ReportSubmissionService
-from domain.entities import Role, RiskLevel
+from application.dto import serialize_analysis, serialize_correlation, serialize_report
+from application.services import CallAnalysisService, MultichannelCorrelationService, ReportSubmissionService
+from domain.entities import Channel, Role, RiskLevel
+from domain.entity_extraction import extract_entities
 from infrastructure.adapters.api_key_role_auth import require_role
 from infrastructure.adapters.debug_compare_adapter import DebugCompareAdapter
 from infrastructure.adapters.ollama_call_analysis_adapter import (
     OllamaCallAnalysisAdapter,
     _resolve_base_url,
 )
+from infrastructure.adapters.postgres_channel_signal_repository import PostgresChannelSignalRepository
 from infrastructure.adapters.postgres_report_repository import PostgresReportRepository
 from infrastructure.adapters.rag_worker_search_adapter import RagWorkerSearchAdapter
 from infrastructure.adapters.rule_based_call_analysis_adapter import RuleBasedCallAnalysisAdapter
@@ -65,7 +68,12 @@ DATABASE_URL = os.environ.get(
     "DATABASE_URL", "postgresql://vps_app:vps_dev_password@localhost:5432/vps_detector"
 )
 
-call_analysis_service = CallAnalysisService(_call_analysis_adapter, RagWorkerSearchAdapter(RAG_WORKER_URL))
+_channel_signal_repository = PostgresChannelSignalRepository(DATABASE_URL)
+correlation_service = MultichannelCorrelationService(_channel_signal_repository)
+
+call_analysis_service = CallAnalysisService(
+    _call_analysis_adapter, RagWorkerSearchAdapter(RAG_WORKER_URL), correlation_service
+)
 _report_repository = PostgresReportRepository(DATABASE_URL)
 report_submission_service = ReportSubmissionService(_report_repository)
 
@@ -193,3 +201,29 @@ async def submit_report(req: ReportRequest, _role: Role = Depends(require_role(R
     """
     record = report_submission_service.submit(req.case_summary, req.risk_level)
     return serialize_report(record)
+
+
+class CorrelateRequest(BaseModel):
+    channel: str
+    text: str
+    occurred_at: datetime | None = None
+
+
+@app.post("/api/v1/correlate")
+async def correlate(req: CorrelateRequest, _role: Role = Depends(require_role(Role.HANDLER))) -> dict:
+    """우선순위 2: correlate_multichannel_signals MCP 툴과 동일한 크로스채널 상관관계
+    결과를 REST로 제공한다 — server.py의 동명 툴 상단 주석 참고(범위/N-03 상호작용 포함).
+    """
+    try:
+        channel = Channel(req.channel)
+    except ValueError:
+        return JSONResponse(
+            status_code=422, content={"error": f"알 수 없는 channel '{req.channel}' — call/sms/email 중 하나여야 합니다."}
+        )
+
+    occurred_at = req.occurred_at or datetime.now(timezone.utc)
+    entities = extract_entities(req.text)
+    correlation = await run_in_threadpool(
+        correlation_service.correlate, channel, entities, occurred_at, req.text[:200]
+    )
+    return serialize_correlation(correlation)

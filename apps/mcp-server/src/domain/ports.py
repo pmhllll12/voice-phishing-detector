@@ -1,9 +1,10 @@
 # domain 계층의 포트(인터페이스). "어떻게 저장하는가"/"어떻게 판단하는가"의 구체 구현은
 # infrastructure에 맡기고, application은 이 인터페이스에만 의존한다.
 
+from datetime import datetime
 from typing import Protocol
 
-from .entities import CallAnalysisResult, ReportRecord, SimilarCase
+from .entities import CallAnalysisResult, Channel, ChannelSignal, CorrelationMatch, ExtractedEntity, ReportRecord, SimilarCase
 
 
 class ReportRepositoryPort(Protocol):
@@ -26,3 +27,21 @@ class FraudCaseSearchPort(Protocol):
     MCP 툴이 같은 rag-worker를 부르는 것과는 별개 경로다(server.py 참고)."""
 
     def search(self, transcript: str, top_k: int) -> list[SimilarCase]: ...
+
+
+class ChannelSignalRepositoryPort(Protocol):
+    """우선순위 2(크로스채널 상관관계 탐지): 채널 이벤트(통화/문자/이메일)에서 추출된
+    엔티티를 저장하고, 다른 채널에서 같은 엔티티가 시간 윈도우 안에 등장했는지 조회한다."""
+
+    def record(self, signal: ChannelSignal) -> None: ...
+
+    def find_matches(
+        self,
+        entities: list[ExtractedEntity],
+        exclude_channel: Channel,
+        occurred_at: datetime,
+        window_seconds: int,
+    ) -> list[CorrelationMatch]:
+        """entities 중 하나라도 exclude_channel이 아닌 다른 채널에, occurred_at 기준
+        ±window_seconds 이내에 기록된 적이 있으면 그 매치들을 반환한다."""
+        ...

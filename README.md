@@ -11,8 +11,10 @@ AI 데이터센터/AI 인프라 엔지니어 직무 취업을 위한 개인 포�
 > **현재 상태**: F-01~F-07(기능)과 N-01~N-06(비기능) 요구사항 모두 최소 1차 구현 및
 > 로컬 검증 완료(2026-08-31). `docker compose up --build`로 전체 스택(frontend/api/
 > mcp-server/rag-worker/stt-worker/postgres/prometheus/grafana) 실기동 확인, PR마다
-> pytest 154개 자동 실행하는 CI도 구축됨. RFP → 요구사항정의서 → 설계서 → 시험계획서
-> 4개 문서 전부 작성 완료. **EC2 배포만 아직 TODO**입니다. 자세한 건 아래 "진행 현황" 참고.
+> pytest 186개 자동 실행하는 CI도 구축됨. RFP → 요구사항정의서 → 설계서 → 시험계획서
+> 4개 문서 전부 작성 완료. 2026-09-02: 시중 어떤 보이스피싱 차단 앱에도 없는 **크로스채널
+> 상관관계 탐지**(통화→문자→이메일 다단계 공격 연계 탐지)를 신규 추가. **EC2 배포만
+> 아직 TODO**입니다. 자세한 건 아래 "진행 현황" 참고.
 
 ## 문서
 
@@ -537,5 +539,28 @@ stt-worker) 전부에 대한 scrape 대상이 설정돼 있고, `docker compose 
       추가했고, N-02 RBAC(`Role`/`API_KEYS`)도 grpc metadata로 재사용해
       인증/인가까지 실제 gRPC 클라이언트로 검증(`test_grpc_server.py` — 정상
       호출/미인증/권한부족 3가지). 검증 목적이라 docker-compose 등록은 안 함
+- [x] 크로스채널 상관관계 탐지 (2026-09-02) — 시중 보이스피싱 차단 앱(에이닷 전화,
+      시티즌코난, 후후 등)은 전부 자기 채널 안에서만 판단하지만, 실제 공격은 "전화로
+      신뢰 형성 → 문자로 악성 링크 → 이메일로 위장 공문" 같은 다단계 공격으로 진화하고
+      있다는 게 이 기능의 문제의식이다. 새 MCP 툴 `correlate_multichannel_signals`
+      (`apps/mcp-server`)가 전화번호/계좌번호/URL을 정규식으로 추출해 채널(통화/문자/
+      이메일)별 시각과 함께 기록하고, 다른 채널에서 같은 값이 시간 윈도우(기본 30분)
+      안에 발견되면 위험도에 가산점(건당 15점, 상한 30점)을 주고 F-05 판정 근거에
+      "N분 전 문자 채널에서 동일 계좌번호가 감지되었습니다" 식 문장을 추가한다.
+      `analyze_call_pattern`이 call 채널 신호를 자동으로 기록/조회하도록 결합했고,
+      실제 REST 호출(`/api/v1/analyze`, `/api/v1/correlate`)로 검찰 사칭 통화(65점)가
+      12분 전 문자와 같은 계좌번호를 공유해 80점(HIGH)으로 오르는 것까지 실측 확인함.
+      원래 작업지시서는 "ERD의 AUDIT_LOGS가 entity_type/entity_id로 범용 참조하게
+      설계돼 있어 새 테이블이 불필요하다"고 가정했지만, 재검증 결과 그런 파일/컬럼이
+      실제로는 없어서 전용 테이블(`channel_signals`, `infra/db/init.sql`)을 새로
+      추가했다 — 이 정정도 N-06 확장성 검증의 일부로 문서화함(`docs/design.md` 참고).
+      엔티티 값은 항상 마스킹해서 노출한다(N-03과 같은 원칙). **알려진 한계**: apps/api는
+      mcp-server 호출 전에 통화 텍스트를 마스킹하므로(N-03), REST 경로에서는 전화번호/
+      계좌번호 상관관계가 실질적으로 매칭되지 않고 URL만 자동 작동한다 — 마스킹 전
+      원문에서 엔티티만 추출해 mcp-server로 넘기는 apps/api 측 별도 경로가 필요한데,
+      범위가 커서 이번 이터레이션에는 포함하지 않았다(다음 과제). sms/email 채널 자체의
+      실채널 연동(SMS 수신, Gmail API 등)도 범위 밖 — 합성 시나리오 데이터셋
+      (`apps/mcp-server/data/synthetic_multichannel_signals.json`, 4개 시나리오)으로
+      상관관계 로직만 검증했다. Google Safe Browsing 연동(선택 항목)은 미포함.
 <img width="1900" height="1014" alt="Screenshot 2026-08-26 151128_edited" src="https://github.com/user-attachments/assets/5bf57efc-0385-4623-8cec-82461d236ffd" />
 <img width="1910" height="1046" alt="Screenshot 2026-08-26 151151_edited" src="https://github.com/user-attachments/assets/4b36260b-be9d-400e-bbbb-15154a82a299" />

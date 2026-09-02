@@ -79,3 +79,29 @@ CREATE TABLE IF NOT EXISTS fraud_cases (
 
 -- ANN 인덱스(ivfflat/hnsw)는 아직 만들지 않는다 — 코퍼스가 10건이라 순차 스캔(exact
 -- search) 비용이 무시할 만하다. 데이터셋이 수만 건 규모로 커지면 이때 추가한다.
+
+-- N-06 확장성 검증 겸 크로스채널 상관관계 탐지(우선순위 2, 2026-09-02): 통화/문자/이메일
+-- 등 서로 다른 채널의 탐지 기록에서 동일 전화번호/계좌번호/URL이 시간 윈도우 안에
+-- 반복 등장하면 위험도를 가산한다(apps/mcp-server/src/application/services.py의
+-- MultichannelCorrelationService 참고).
+--
+-- 원래 작업지시서는 "docs/erd.md의 AUDIT_LOGS가 이미 entity_type+entity_id로 범용
+-- 참조하게 설계되어 있어 새 테이블이 불필요하다"고 가정했지만, 실제로는 그런 파일/컬럼이
+-- 존재하지 않았다(레포 재검증으로 확인) — 그래서 이 목적 전용 테이블을 새로 추가한다.
+-- call_analysis_results/report_records(N-01 감사증적)와 달리 이 테이블은 "판정 원본
+-- 기록"이 아니라 "상관관계 조회용 파생 인덱스"라 append-only 트리거를 적용하지 않는다
+-- (fraud_cases와 같은 성격 — 위 주석 참고).
+CREATE TABLE IF NOT EXISTS channel_signals (
+    signal_id UUID NOT NULL,
+    channel TEXT NOT NULL,       -- call | sms | email
+    entity_type TEXT NOT NULL,   -- phone | account | url
+    entity_value TEXT NOT NULL,  -- 정규화된 원본 값(숫자만/도메인 등) — 매칭 정확도를 위해 마스킹하지 않고 저장한다.
+                                  -- 조회 결과를 바깥으로 내보낼 때는 항상 마스킹한다(masked_signal.py의
+                                  -- _mask_for_display 참고) — N-03과 같은 "저장은 원문, 노출은 마스킹" 원칙.
+    occurred_at TIMESTAMPTZ NOT NULL,
+    context_excerpt TEXT NOT NULL,
+    PRIMARY KEY (signal_id, entity_type, entity_value)
+);
+
+CREATE INDEX IF NOT EXISTS idx_channel_signals_entity_lookup
+    ON channel_signals (entity_type, entity_value, occurred_at DESC);

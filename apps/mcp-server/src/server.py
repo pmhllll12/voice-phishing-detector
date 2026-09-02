@@ -22,15 +22,18 @@
 
 import logging
 import os
+from datetime import datetime, timezone
 
 import httpx
 from mcp.server import MCPServer
 
-from application.dto import serialize_analysis, serialize_report
-from application.services import CallAnalysisService, ReportSubmissionService
-from domain.entities import RiskLevel
+from application.dto import serialize_analysis, serialize_correlation, serialize_report
+from application.services import CallAnalysisService, MultichannelCorrelationService, ReportSubmissionService
+from domain.entities import Channel, RiskLevel
+from domain.entity_extraction import extract_entities
 from infrastructure.adapters.debug_compare_adapter import DebugCompareAdapter
 from infrastructure.adapters.ollama_call_analysis_adapter import OllamaCallAnalysisAdapter
+from infrastructure.adapters.postgres_channel_signal_repository import PostgresChannelSignalRepository
 from infrastructure.adapters.postgres_report_repository import PostgresReportRepository
 from infrastructure.adapters.rag_worker_search_adapter import RagWorkerSearchAdapter
 from infrastructure.adapters.rule_based_call_analysis_adapter import RuleBasedCallAnalysisAdapter
@@ -61,7 +64,12 @@ DATABASE_URL = os.environ.get(
     "DATABASE_URL", "postgresql://vps_app:vps_dev_password@localhost:5432/vps_detector"
 )
 
-call_analysis_service = CallAnalysisService(_call_analysis_adapter, RagWorkerSearchAdapter(RAG_WORKER_URL))
+_channel_signal_repository = PostgresChannelSignalRepository(DATABASE_URL)
+correlation_service = MultichannelCorrelationService(_channel_signal_repository)
+
+call_analysis_service = CallAnalysisService(
+    _call_analysis_adapter, RagWorkerSearchAdapter(RAG_WORKER_URL), correlation_service
+)
 report_submission_service = ReportSubmissionService(PostgresReportRepository(DATABASE_URL))
 
 
@@ -137,6 +145,47 @@ def submit_report(case_summary: str, risk_level: str) -> dict:
 
     record = report_submission_service.submit(case_summary, level)
     return serialize_report(record)
+
+
+@mcp.tool()
+def correlate_multichannel_signals(
+    channel: str, text: str, occurred_at: str | None = None
+) -> dict:
+    """우선순위 2: 통화/문자/이메일 텍스트에서 전화번호/계좌번호/URL을 추출해 채널 신호로
+    기록하고, 다른 채널에 같은 엔티티가 최근(기본 30분) 등장했는지 확인한다.
+
+    시중 보이스피싱 차단 앱은 자기 채널(통화면 통화만) 안에서만 판단하지만, 실제
+    공격은 "전화로 신뢰 형성 → 문자로 악성 링크 → 이메일로 위장 공문" 같은 다단계
+    공격으로 진화하고 있다 — 이 툴은 그 연계를 잡는다.
+
+    channel은 "call"/"sms"/"email" 중 하나. analyze_call_pattern은 call 채널 신호를
+    이미 자동으로 기록/조회하므로(CallAnalysisService 참고), 이 툴은 주로 sms/email
+    합성 이벤트를 수동 주입해 상관관계를 검증하는 용도다 — 실제 SMS 수신/이메일 연동
+    (Gmail API 등)은 이번 범위 밖이다.
+
+    ⚠️ N-03과의 상호작용: apps/api를 거치는 통화(REST 경로)는 mcp-server에 도달하기
+    전에 이미 마스킹되어 있어 전화번호/계좌번호가 "[전화번호]"/"[계좌번호]" 태그로
+    치환된 상태다 — 그 경로에서는 URL 상관관계만 자동 작동한다. 이 툴로 원문을 직접
+    넣으면(테스트/시연 목적) 정상적으로 전화번호/계좌번호까지 추출된다.
+    """
+    try:
+        channel_enum = Channel(channel)
+    except ValueError:
+        return {"error": f"알 수 없는 channel '{channel}' — call/sms/email 중 하나여야 합니다."}
+
+    if occurred_at:
+        try:
+            parsed_occurred_at = datetime.fromisoformat(occurred_at)
+        except ValueError:
+            return {"error": f"occurred_at은 ISO8601 형식이어야 합니다: '{occurred_at}'"}
+    else:
+        parsed_occurred_at = datetime.now(timezone.utc)
+
+    entities = extract_entities(text)
+    correlation = correlation_service.correlate(
+        channel_enum, entities, occurred_at=parsed_occurred_at, context_excerpt=text[:200]
+    )
+    return serialize_correlation(correlation)
 
 
 if __name__ == "__main__":

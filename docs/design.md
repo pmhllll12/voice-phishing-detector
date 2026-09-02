@@ -77,9 +77,10 @@ infrastructure/  "실제로 어떻게 하는가" — 포트 구현체(어댑터)
 
 ## 2. 데이터 모델
 
-전체 스키마는 3개 테이블뿐이다(`infra/db/init.sql`) — `call_analysis_results`
+전체 스키마는 4개 테이블뿐이다(`infra/db/init.sql`) — `call_analysis_results`
 (N-01, api 소유), `report_records`(N-01, mcp-server 소유), `fraud_cases`(F-04,
-pgvector, rag-worker 소유). 상세 컬럼/제약조건/append-only 트리거 구현과, 왜
+pgvector, rag-worker 소유), `channel_signals`(우선순위 2 크로스채널 상관관계 탐지,
+2026-09-02 추가, mcp-server 소유). 상세 컬럼/제약조건/append-only 트리거 구현과, 왜
 이렇게 단순한지에 대한 설계 근거는 [`jekyll/chapters/부록D-데이터베이스ERD.markdown`](../jekyll/chapters/부록D-데이터베이스ERD.markdown)
 에 정리해뒀다(이 문서에 중복 기술하지 않는다 — 소스 오브 트루스를 하나로 유지).
 
@@ -415,3 +416,92 @@ backup_postgres.sh`(pg_dump + gzip, 보관 기간 지난 백업 자동 정리)�
 - 진짜 프로세스 크래시(OOM-kill 등) 시 `restart: unless-stopped`가 실제로
   작동하는지는 이 개발 환경의 샌드박스 제약으로 직접 재현하지 못했다(6.1 참고) —
   Docker 표준 동작에 근거한 것이지 이 프로젝트에서 실측한 것은 아니다.
+
+## 7. 크로스채널 상관관계 탐지 (우선순위 2, 2026-09-02)
+
+### 문제의식
+
+시중 보이스피싱 차단 앱(에이닷 전화, 시티즌코난, 후후 등)은 전부 자기 채널 안에서만
+판단한다 — 통화앱은 통화만, 메일 서비스는 메일만 본다. 반면 실제 보이스피싱은 "전화로
+신뢰 형성 → 문자로 악성 링크 전송 → 이메일로 위장 공문 발송" 같은 다단계·다채널
+공격으로 진화하고 있다. 이 프로젝트는 여러 채널을 한 기관이 운영하는 통합 시스템이라는
+설정이므로, 채널을 넘나드는 연계를 탐지할 수 있다는 게 이 기능의 차별점이다.
+
+### 설계
+
+```
+apps/mcp-server/src/
+  domain/
+    entity_extraction.py     # 텍스트 -> [전화번호|계좌번호|URL] 정규식 추출(정규화 포함)
+    entities.py               # Channel/EntityType/ExtractedEntity/ChannelSignal/
+                               # CorrelationMatch/CorrelationResult
+    ports.py                  # ChannelSignalRepositoryPort
+  application/services.py     # MultichannelCorrelationService
+  infrastructure/adapters/
+    postgres_channel_signal_repository.py   # channel_signals 테이블 구현체
+  server.py / rest_server.py  # MCP 툴 correlate_multichannel_signals /
+                               # REST POST /api/v1/correlate, analyze_call_pattern에 자동 결합
+```
+
+F-01/F-02/F-04와 같은 포트-어댑터 패턴을 그대로 따른다 — `MultichannelCorrelationService`는
+`ChannelSignalRepositoryPort`만 알고, 실제 저장/조회(postgres)는 모른다.
+
+**동작 순서**: `MultichannelCorrelationService.correlate(channel, entities, occurred_at, ...)`가
+① 먼저 다른 채널에서 같은 엔티티가 시간 윈도우(기본 30분, 환경변수 없이 상수로 관리 —
+이 규모에서 튜닝 여지가 크지 않다고 판단) 안에 기록된 적이 있는지 조회하고, ② 그 다음
+이번 이벤트를 채널 신호로 기록한다(순서가 중요 — 자기 자신과는 매칭되지 않아야 한다).
+매치가 있으면 건당 15점(상한 30점)을 위험도에 가산하고, F-02 등급(`risk_level_for_score`,
+`domain/entities.py`)을 다시 매겨 F-05 판정 근거에 "N분 전 문자 채널에서 동일
+계좌번호(마스킹됨)가 감지되었습니다" 식 문장을 추가한다. `CallAnalysisService.execute()`가
+F-04(유사사례 결합) 다음 단계로 이 로직을 호출하도록 결합했다 — rag-worker와 마찬가지로
+선택적 의존이라, correlation_service가 없거나 매치가 없으면 기존 판정 결과를 그대로
+반환한다(N-04 관점에서도 breakdown과 별개로 `correlation_boost` 필드를 노출해 "이 점수
+중 몇 점이 상관관계 때문인지" 계속 추적 가능하게 했다).
+
+### 저장소: 왜 새 테이블이 필요했는가 (전제 정정)
+
+이 기능의 원래 작업지시서는 "ERD의 `AUDIT_LOGS`가 이미 `entity_type`+`entity_id`로
+모든 엔티티를 범용 참조하도록 설계되어 있으므로 조회 쿼리만 추가하면 된다"고 가정했다.
+작업 착수 전 레포를 재검증한 결과 그런 파일(`docs/erd.md`)이나 범용 참조 컬럼은 실제로
+존재하지 않았다 — `call_analysis_results`는 판정 결과 전용 컬럼(risk_score,
+detected_patterns 등)만 가진 구체적인 스키마였다. 그래서 목적 전용 테이블
+`channel_signals`(channel, entity_type, entity_value, occurred_at, context_excerpt)를
+새로 추가했다 — 상세 컬럼/PK 설계는
+[`jekyll/chapters/부록D-데이터베이스ERD.markdown`](../jekyll/chapters/부록D-데이터베이스ERD.markdown)
+D.5b 참고.
+
+이 정정 자체가 5장(N-06 확장성 설계)의 논의를 한 겹 더 명확하게 만든다: 지금까지의
+확장 사례(판정 알고리즘 교체, 검색 알고리즘 교체, 감사증적 저장소 교체, gRPC 진입점
+추가)는 전부 **애플리케이션 계층만 바꾸고 스키마는 그대로 두는** 확장이었다. 반면 이
+기능은 "완전히 새로운 질의 축(엔티티 값으로 시간 윈도우 조회)"이 필요해서 **스키마
+자체를 확장**해야 했다 — N-06이 "재설계 없는 확장"을 약속하는 건 전자의 범위이고,
+후자(새로운 질의 패턴)는 정직하게 스키마 변경이 필요하다는 걸 이 사례가 보여준다.
+
+### N-03(개인정보 마스킹)과의 상호작용 — 알려진 한계
+
+`apps/api`는 mcp-server를 호출하기 **전에** 통화 텍스트를 마스킹한다(전화번호/
+계좌번호가 `[전화번호]`/`[계좌번호]` 태그로 치환됨, `apps/api/src/domain/pii_masking.py`).
+즉 REST 경로(`apps/api → apps/mcp-server`)에서는 `analyze_call_pattern`이 받는
+transcript 자체가 이미 마스킹된 뒤라, 전화번호/계좌번호 상관관계는 실질적으로 매칭되지
+않는다 — URL은 N-03의 마스킹 대상이 아니라 그대로 작동한다. MCP stdio 직접 호출(Claude
+Code)이나 `correlate_multichannel_signals` 툴/REST(`/api/v1/correlate`)로 원문을 직접
+넣는 경로에서는 정상 작동한다(아래 실측 참고).
+
+이 트레이드오프를 해소하려면 `apps/api`가 마스킹 "전" 원문에서 엔티티만 추출해(원문
+전체가 아니라 전화번호/계좌번호/URL **값만**) mcp-server로 넘기는 별도 경로가 필요하다.
+검토는 했지만 apps/api에 정규식 추출 모듈을 새로 두고 두 서비스 간 데이터 계약을
+바꿔야 해서 범위가 크다고 판단해 이번 이터레이션에는 포함하지 않았다 — 다음 과제로
+남긴다.
+
+### 실측 검증
+
+- 합성 시나리오 4건(`apps/mcp-server/data/synthetic_multichannel_signals.json`) —
+  다단계 공격 연쇄(통화→12분 뒤 동일 계좌번호 문자→35분 뒤 동일 URL 이메일), 무관한
+  채널 간 오탐 없음, 시간 윈도우(30분) 밖 배제, 윈도우 경계값(정확히 30분) 포함 여부까지
+  `test_multichannel_synthetic_scenarios.py`로 검증.
+- 실제 REST 호출로 종단 검증: `/api/v1/correlate`로 문자 채널에 계좌번호를 먼저
+  기록한 뒤, `/api/v1/analyze`로 같은 계좌번호가 포함된 검찰 사칭 통화를 분석 —
+  기본 판정 점수(기관사칭 30 + 긴급송금유도 35 = 65점)가 크로스채널 상관관계 가산점
+  15점을 더해 80점(HIGH)으로 오르고, 판정 근거에 "0분 전 문자 채널에서 동일
+  계좌번호가 감지되었습니다"가 실제로 포함되는 것까지 로컬 postgres(vps-postgres)로
+  확인함.

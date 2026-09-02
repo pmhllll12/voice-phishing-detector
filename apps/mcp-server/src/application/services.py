@@ -7,7 +7,13 @@ from datetime import datetime, timezone
 
 from domain.entities import (
     CallAnalysisResult,
+    Channel,
+    ChannelSignal,
+    CorrelationMatch,
+    CorrelationResult,
     DetectedPattern,
+    EntityType,
+    ExtractedEntity,
     PatternDetectionResult,
     ReportRecord,
     RiskAssessment,
@@ -15,11 +21,14 @@ from domain.entities import (
     RiskLevel,
     RiskScoreBreakdownItem,
     SimilarCase,
+    CHANNEL_LABELS,
+    ENTITY_TYPE_LABELS,
     RISK_LEVEL_LABELS,
-    RISK_LEVEL_THRESHOLDS,
+    risk_level_for_score,
 )
+from domain.entity_extraction import extract_entities
 from domain.pattern_rules import CATEGORY_WEIGHTS, PATTERN_RULES
-from domain.ports import CallAnalysisPort, FraudCaseSearchPort, ReportRepositoryPort
+from domain.ports import CallAnalysisPort, ChannelSignalRepositoryPort, FraudCaseSearchPort, ReportRepositoryPort
 
 
 class PatternDetectionService:
@@ -67,10 +76,7 @@ class RiskScoringService:
 
     @staticmethod
     def _level_for(score: int) -> RiskLevel:
-        for threshold, level in RISK_LEVEL_THRESHOLDS:
-            if score >= threshold:
-                return level
-        return RiskLevel.LOW
+        return risk_level_for_score(score)
 
 
 _VERDICT_SENTENCES: dict[RiskLevel, str] = {
@@ -142,6 +148,125 @@ def _merge_similar_cases_into_explanation(
     )
 
 
+# 우선순위 2(크로스채널 상관관계 탐지, 2026-09-02): 동일 전화번호/계좌번호/URL이 서로
+# 다른 채널의 탐지 기록에 시간 윈도우 안에 등장하면 위험도에 가산점을 준다. 시중 어떤
+# 보이스피싱 차단 앱도 자기 채널 밖을 못 본다는 게 이 프로젝트의 차별점(README 참고).
+_DEFAULT_CORRELATION_WINDOW_SECONDS = 30 * 60  # 30분 — 전화→문자→이메일 다단계 공격 시나리오 기준
+_CORRELATION_RISK_BOOST_PER_MATCH = 15
+_CORRELATION_RISK_BOOST_CAP = 30  # 엔티티가 여러 개 겹쳐도 무한정 커지지 않도록 상한
+
+
+def _mask_for_display(entity_type: EntityType, value: str) -> str:
+    """channel_signals에는 원본 값을 저장하지만(매칭 정확도를 위해 필수), API/툴
+    응답으로 나가는 값은 항상 마스킹한다 — N-03(개인정보 마스킹)과 같은 원칙. 이
+    기능은 raw_transcript처럼 ADMIN 전용 원문 노출 경로를 아직 두지 않았다(범위 밖,
+    필요해지면 N-02 RBAC과 결합해 추가 검토)."""
+    if entity_type == EntityType.URL:
+        return value  # host만 남긴 값이라 이미 PII가 아님(entity_extraction._normalize_url 참고)
+    if len(value) <= 4:
+        return "*" * len(value)
+    return "*" * (len(value) - 4) + value[-4:]
+
+
+def _reason_for_match(match: CorrelationMatch, occurred_at: datetime) -> str:
+    gap_minutes = round(abs((occurred_at - match.matched_at).total_seconds()) / 60)
+    order = "전" if match.matched_at <= occurred_at else "후"
+    channel_label = CHANNEL_LABELS[match.matched_channel]
+    entity_label = ENTITY_TYPE_LABELS[match.entity_type]
+    return (
+        f"{gap_minutes}분 {order} {channel_label} 채널에서 동일 {entity_label}"
+        f"({match.entity_value})이(가) 감지되었습니다 — 크로스채널 상관관계"
+    )
+
+
+class MultichannelCorrelationService:
+    """우선순위 2 진입점. ChannelSignalRepositoryPort로 저장/조회를 위임한다 —
+    CallAnalysisService가 F-01/F-02/F-05 로직을 모르고 포트만 아는 것과 같은 패턴.
+
+    correlate()는 항상 이번 이벤트를 채널 신호로 "기록"도 한다 — 그래야 이후 다른
+    채널 이벤트가 이걸 찾을 수 있다. 조회를 기록보다 먼저 해서 자기 자신과는
+    매칭되지 않게 한다.
+    """
+
+    def __init__(
+        self,
+        repository: ChannelSignalRepositoryPort,
+        window_seconds: int = _DEFAULT_CORRELATION_WINDOW_SECONDS,
+    ):
+        self._repository = repository
+        self._window_seconds = window_seconds
+
+    def correlate(
+        self,
+        channel: Channel,
+        entities: list[ExtractedEntity],
+        occurred_at: datetime,
+        context_excerpt: str,
+        current_risk_score: int | None = None,
+    ) -> CorrelationResult:
+        if not entities:
+            return CorrelationResult(
+                updated_risk_score=current_risk_score,
+                updated_risk_level=risk_level_for_score(current_risk_score) if current_risk_score is not None else None,
+            )
+
+        matches = self._repository.find_matches(entities, channel, occurred_at, self._window_seconds)
+        self._repository.record(
+            ChannelSignal(channel=channel, entities=entities, occurred_at=occurred_at, context_excerpt=context_excerpt)
+        )
+
+        if not matches:
+            return CorrelationResult(
+                updated_risk_score=current_risk_score,
+                updated_risk_level=risk_level_for_score(current_risk_score) if current_risk_score is not None else None,
+            )
+
+        masked_matches = [
+            CorrelationMatch(
+                entity_type=m.entity_type,
+                entity_value=_mask_for_display(m.entity_type, m.entity_value),
+                matched_channel=m.matched_channel,
+                matched_at=m.matched_at,
+                context_excerpt=m.context_excerpt,
+            )
+            for m in matches
+        ]
+        boost = min(len(masked_matches) * _CORRELATION_RISK_BOOST_PER_MATCH, _CORRELATION_RISK_BOOST_CAP)
+        reasons = [_reason_for_match(m, occurred_at) for m in masked_matches]
+
+        updated_score = None
+        updated_level = None
+        if current_risk_score is not None:
+            updated_score = min(100, current_risk_score + boost)
+            updated_level = risk_level_for_score(updated_score)
+
+        return CorrelationResult(
+            matches=masked_matches,
+            risk_boost=boost,
+            reasons=reasons,
+            updated_risk_score=updated_score,
+            updated_risk_level=updated_level,
+        )
+
+
+def _merge_correlation_into_explanation(explanation: RiskExplanation, correlation: CorrelationResult) -> RiskExplanation:
+    """correlation.updated_risk_score/level이 이미 반영된 새 summary 문장을 explanation에
+    합친다. narrative는 항상 summary로 시작한다는 불변식(ExplanationService.generate/
+    _merge_similar_cases_into_explanation 참고)을 이용해 앞부분만 새 summary로 교체한다."""
+    level_label = RISK_LEVEL_LABELS[correlation.updated_risk_level]
+    new_summary = (
+        f"{level_label} 등급 (위험도 {correlation.updated_risk_score}점, "
+        f"크로스채널 상관관계 +{correlation.risk_boost}점 포함) — {_VERDICT_SENTENCES[correlation.updated_risk_level]}"
+    )
+    rest = explanation.narrative[len(explanation.summary):]
+    narrative = new_summary + rest + "\n\n크로스채널 상관관계:\n" + "\n".join(f"- {r}" for r in correlation.reasons)
+    return RiskExplanation(
+        summary=new_summary,
+        reasons=explanation.reasons + correlation.reasons,
+        narrative=narrative,
+    )
+
+
 class CallAnalysisService:
     """F-01/F-02/F-05 진입점. CallAnalysisPort 구현체(규칙 기반 v1 또는 LLM 기반 v2,
     혹은 둘을 비교 로깅하는 래퍼)에 실제 판단을 위임한다 — F-04의
@@ -153,30 +278,73 @@ class CallAnalysisService:
     실패하면(RagWorkerSearchAdapter가 빈 리스트로 폴백) F-01/F-02/F-05만으로 정상
     동작한다 — rag-worker 의존은 어디까지나 "있으면 근거를 더 풍부하게" 수준이지
     필수 의존이 아니다.
+
+    correlation_service가 주어지면(우선순위 2), 이 transcript에서 엔티티(전화번호/
+    계좌번호/URL)를 추출해 call 채널 신호로 기록하고, 다른 채널에서 같은 엔티티가
+    최근 발견됐으면 위험도 점수에 가산점을 주고 판정 근거에 근거 문장을 추가한다.
+
+    ⚠️ 알려진 한계(N-03과의 상호작용): apps/api는 mcp-server를 호출하기 "전에"
+    통화 텍스트를 마스킹한다(전화번호/계좌번호가 "[전화번호]"/"[계좌번호]" 태그로
+    치환됨 — apps/api/src/domain/pii_masking.py 참고). 즉 REST 경로(apps/api →
+    이 서비스)에서는 이 서비스가 받는 transcript 자체가 이미 마스킹된 뒤라, 전화번호/
+    계좌번호 상관관계는 실질적으로 매칭되지 않는다(URL은 N-03이 마스킹 대상으로 삼지
+    않아 그대로 작동한다). MCP stdio 직접 호출(Claude Code)이나
+    correlate_multichannel_signals 툴로 원문을 직접 넣는 경로에서는 정상 작동한다.
+    이 트레이드오프를 해소하려면 apps/api가 마스킹 "전" 원문에서 엔티티만 추출해
+    (원문 전체가 아니라 엔티티 값만) mcp-server로 넘기는 별도 경로가 필요하다 —
+    범위가 커서 이번 이터레이션에는 포함하지 않았다(README/design.md에 다음 과제로 명시).
     """
 
-    def __init__(self, port: CallAnalysisPort, fraud_case_search_port: FraudCaseSearchPort | None = None):
+    def __init__(
+        self,
+        port: CallAnalysisPort,
+        fraud_case_search_port: FraudCaseSearchPort | None = None,
+        correlation_service: MultichannelCorrelationService | None = None,
+    ):
         self._port = port
         self._fraud_case_search_port = fraud_case_search_port
+        self._correlation_service = correlation_service
 
     def execute(self, transcript: str) -> CallAnalysisResult:
         result = self._port.analyze(transcript)
 
-        if self._fraud_case_search_port is None or not result.detection.has_risk_indicators:
-            return result
+        if self._fraud_case_search_port is not None and result.detection.has_risk_indicators:
+            similar_cases = self._fraud_case_search_port.search(
+                transcript, top_k=_MAX_SIMILAR_CASES_IN_EXPLANATION
+            )
+            if similar_cases:
+                result = CallAnalysisResult(
+                    detection=result.detection,
+                    risk=result.risk,
+                    explanation=_merge_similar_cases_into_explanation(result.explanation, similar_cases),
+                    similar_cases=similar_cases,
+                )
 
-        similar_cases = self._fraud_case_search_port.search(
-            transcript, top_k=_MAX_SIMILAR_CASES_IN_EXPLANATION
-        )
-        if not similar_cases:
-            return result
+        if self._correlation_service is not None:
+            entities = extract_entities(transcript)
+            if entities:
+                correlation = self._correlation_service.correlate(
+                    Channel.CALL,
+                    entities,
+                    occurred_at=datetime.now(timezone.utc),
+                    context_excerpt=transcript[:200],
+                    current_risk_score=result.risk.score,
+                )
+                if correlation.matches:
+                    new_risk = RiskAssessment(
+                        score=correlation.updated_risk_score,
+                        level=correlation.updated_risk_level,
+                        breakdown=result.risk.breakdown,
+                        correlation_boost=correlation.risk_boost,
+                    )
+                    result = CallAnalysisResult(
+                        detection=result.detection,
+                        risk=new_risk,
+                        explanation=_merge_correlation_into_explanation(result.explanation, correlation),
+                        similar_cases=result.similar_cases,
+                    )
 
-        return CallAnalysisResult(
-            detection=result.detection,
-            risk=result.risk,
-            explanation=_merge_similar_cases_into_explanation(result.explanation, similar_cases),
-            similar_cases=similar_cases,
-        )
+        return result
 
 
 class ReportSubmissionService:

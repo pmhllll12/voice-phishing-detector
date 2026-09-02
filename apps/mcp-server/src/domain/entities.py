@@ -93,6 +93,17 @@ RISK_LEVEL_THRESHOLDS: list[tuple[int, RiskLevel]] = [
 ]
 
 
+def risk_level_for_score(score: int) -> RiskLevel:
+    """점수 -> 등급 매핑을 RiskScoringService 밖에서도 재사용할 수 있게 뽑은 free
+    function. 크로스채널 상관관계 가산점(우선순위 2) 적용 후 점수가 바뀌었을 때
+    등급을 다시 매기는 데 쓴다 — 등급 경계값의 단일 소스는 여전히 RISK_LEVEL_THRESHOLDS
+    하나뿐이다(application/services.py의 RiskScoringService._level_for도 이 함수로 위임)."""
+    for threshold, level in RISK_LEVEL_THRESHOLDS:
+        if score >= threshold:
+            return level
+    return RiskLevel.LOW
+
+
 @dataclass
 class RiskScoreBreakdownItem:
     """N-04(설명가능성): 점수에 어떤 카테고리가 몇 점을 기여했는지 추적 가능하게 기록."""
@@ -106,6 +117,10 @@ class RiskAssessment:
     score: int  # 0~100
     level: RiskLevel
     breakdown: list[RiskScoreBreakdownItem] = field(default_factory=list)
+    # 우선순위 2(크로스채널 상관관계): score에 이미 반영된 가산점 중 상관관계로 인한
+    # 부분만 별도로 추적한다(N-04: breakdown이 F-01 카테고리별 가중치만 다루므로,
+    # "왜 이 점수인가"를 완전히 설명하려면 이 필드도 함께 봐야 한다).
+    correlation_boost: int = 0
 
 
 @dataclass
@@ -154,6 +169,92 @@ class CallAnalysisResult:
     risk: RiskAssessment
     explanation: RiskExplanation
     similar_cases: list[SimilarCase] = field(default_factory=list)
+
+
+class Channel(str, Enum):
+    """우선순위 2(크로스채널 상관관계 탐지): 탐지 기록이 발생한 채널.
+
+    F-06까지는 통화(call) 채널만 실제로 데이터가 들어온다 — sms/email은 신규 유입
+    경로(실제 SMS 수신, Gmail API 연동 등)가 이번 범위 밖이라, correlate_multichannel_signals
+    MCP 툴로 합성 문자/이메일 이벤트를 수동 주입해서 상관관계 로직만 검증한다
+    (docs/RFP.md 4장 데이터 제약과 같은 이유 — 실채널 연동은 범위가 크므로 별도 상의).
+    """
+
+    CALL = "call"
+    SMS = "sms"
+    EMAIL = "email"
+
+
+CHANNEL_LABELS: dict[Channel, str] = {
+    Channel.CALL: "통화",
+    Channel.SMS: "문자",
+    Channel.EMAIL: "이메일",
+}
+
+
+class EntityType(str, Enum):
+    """크로스채널 상관관계의 매칭 키가 되는 엔티티 종류. domain/entity_extraction.py가
+    텍스트에서 이 타입들을 정규식으로 추출한다."""
+
+    PHONE = "phone"
+    ACCOUNT = "account"
+    URL = "url"
+
+
+ENTITY_TYPE_LABELS: dict[EntityType, str] = {
+    EntityType.PHONE: "전화번호",
+    EntityType.ACCOUNT: "계좌번호",
+    EntityType.URL: "URL",
+}
+
+
+@dataclass(frozen=True)
+class ExtractedEntity:
+    """entity_extraction.py가 텍스트에서 뽑아낸 엔티티 1건. value는 정규화된 원본 값
+    (전화번호/계좌번호는 숫자만, URL은 소문자+뒤 구두점 제거) — 채널마다 표기 형식이
+    달라도("010-1234-5678" vs "01012345678") 같은 값이면 매칭되도록 하기 위함."""
+
+    entity_type: EntityType
+    value: str
+
+
+@dataclass
+class ChannelSignal:
+    """한 채널 이벤트(통화 1건/문자 1건/이메일 1건)에서 추출된 엔티티들을 묶은 것.
+    ChannelSignalRepositoryPort.record()로 저장되어 이후 다른 채널 이벤트의
+    상관관계 조회 대상이 된다."""
+
+    channel: Channel
+    entities: list[ExtractedEntity]
+    occurred_at: datetime
+    context_excerpt: str
+
+
+@dataclass
+class CorrelationMatch:
+    """다른 채널에서 발견된 동일 엔티티 1건. entity_value는 항상 마스킹된 표시용 값이다
+    (원본 값은 저장소에만 있고 바깥으로 안 나간다 — N-03과 같은 원칙,
+    application/services.py의 _mask_for_display 참고)."""
+
+    entity_type: EntityType
+    entity_value: str  # 마스킹된 표시값
+    matched_channel: Channel
+    matched_at: datetime
+    context_excerpt: str
+
+
+@dataclass
+class CorrelationResult:
+    """MultichannelCorrelationService.correlate()의 결과. current_risk_score가 주어졌을
+    때만(즉 CallAnalysisService가 F-02 점수와 함께 호출했을 때만) updated_risk_score/
+    updated_risk_level이 채워진다 — 단독으로 correlate_multichannel_signals 툴을
+    호출할 때는(예: 합성 문자/이메일 주입) None으로 남는다."""
+
+    matches: list[CorrelationMatch] = field(default_factory=list)
+    risk_boost: int = 0
+    reasons: list[str] = field(default_factory=list)
+    updated_risk_score: int | None = None
+    updated_risk_level: RiskLevel | None = None
 
 
 @dataclass

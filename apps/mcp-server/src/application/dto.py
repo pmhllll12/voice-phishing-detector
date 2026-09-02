@@ -5,7 +5,14 @@
 # ExplanationService)를 감싸면서 이 함수를 공유한다 — 판정 로직과 응답 형식이 두 어댑터
 # 사이에서 벌어지지 않도록.
 
-from domain.entities import PatternDetectionResult, ReportRecord, RiskAssessment, RiskExplanation, SimilarCase
+from domain.entities import (
+    CorrelationResult,
+    PatternDetectionResult,
+    ReportRecord,
+    RiskAssessment,
+    RiskExplanation,
+    SimilarCase,
+)
 
 
 def serialize_analysis(
@@ -27,6 +34,8 @@ def serialize_analysis(
         "has_risk_indicators": result.has_risk_indicators,
         "risk_score": risk.score,
         "risk_level": risk.level.value,
+        # 우선순위 2: risk.score에 이미 반영된 크로스채널 상관관계 가산점(N-04 추적가능성).
+        "correlation_boost": risk.correlation_boost,
         "explanation_summary": explanation.summary,
         "explanation_reasons": explanation.reasons,
         "explanation": explanation.narrative,
@@ -43,6 +52,27 @@ def serialize_analysis(
             }
             for c in (similar_cases or [])
         ],
+    }
+
+
+def serialize_correlation(correlation: CorrelationResult) -> dict:
+    """correlate_multichannel_signals 툴/REST 엔드포인트 응답. entity_value는 이미
+    마스킹된 표시값이다(MultichannelCorrelationService._mask_for_display 참고)."""
+    return {
+        "matches": [
+            {
+                "entity_type": m.entity_type.value,
+                "entity_value": m.entity_value,
+                "matched_channel": m.matched_channel.value,
+                "matched_at": m.matched_at.isoformat(),
+            }
+            for m in correlation.matches
+        ],
+        "match_count": len(correlation.matches),
+        "risk_boost": correlation.risk_boost,
+        "reasons": correlation.reasons,
+        "updated_risk_score": correlation.updated_risk_score,
+        "updated_risk_level": correlation.updated_risk_level.value if correlation.updated_risk_level else None,
     }
 
 
