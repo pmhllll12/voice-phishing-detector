@@ -120,8 +120,72 @@ function CorrelationReasons({
   );
 }
 
+// F-06 대시보드 UI/UX 개선(2026-09-02, item 4): "내용" 열이 이전엔 60자로 잘라 보여줘서
+// 긴 통화/이메일 내용은 판정 근거를 눈으로 대조해볼 수 없었다. 이제 셀 자체는 2줄로만
+// 잘라 보여주고(line-clamp), 클릭하면 전체 내용을 패널로 펼친다 — 새 모달 라이브러리 없이
+// 기존 스타일(surface/gridline 변수, 얕은 오버레이)만으로 구현한다.
+function ContentModal({ call, onClose }: { call: CallAnalysis; onClose: () => void }) {
+  return (
+    <div
+      role="presentation"
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0, 0, 0, 0.4)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "24px",
+        zIndex: 50,
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "var(--surface-1)",
+          border: "1px solid var(--gridline)",
+          borderRadius: "8px",
+          padding: "20px",
+          maxWidth: "560px",
+          maxHeight: "80vh",
+          overflowY: "auto",
+          fontSize: "13px",
+          color: "var(--text-primary)",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: "10px" }}>
+          <strong>
+            {CHANNEL_META[call.channel]?.icon ?? "❓"} {CHANNEL_META[call.channel]?.label ?? call.channel} 전체 내용
+          </strong>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="닫기"
+            style={{
+              background: "none",
+              border: "none",
+              color: "var(--text-muted)",
+              fontSize: "16px",
+              cursor: "pointer",
+              lineHeight: 1,
+              padding: 0,
+            }}
+          >
+            ✕
+          </button>
+        </div>
+        <p style={{ whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{call.masked_transcript}</p>
+      </div>
+    </div>
+  );
+}
+
 export function RecentCallsTable({ calls }: { calls: CallAnalysis[] }) {
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
+  const [expandedCall, setExpandedCall] = useState<CallAnalysis | null>(null);
   const knownCallIds = new Set(calls.map((c) => c.call_id));
 
   function handleJumpTo(callId: string) {
@@ -163,11 +227,6 @@ export function RecentCallsTable({ calls }: { calls: CallAnalysis[] }) {
         <tbody>
           {calls.map((call) => {
             const meta = RISK_LEVEL_META[call.risk_level];
-            const excerpt =
-              call.masked_transcript.length > 60
-                ? `${call.masked_transcript.slice(0, 60)}…`
-                : call.masked_transcript;
-
             const isHighlighted = call.call_id === highlightedId;
 
             return (
@@ -224,7 +283,28 @@ export function RecentCallsTable({ calls }: { calls: CallAnalysis[] }) {
                   )}
                 </td>
                 <td style={{ padding: "8px", maxWidth: "320px", color: "var(--text-primary)" }}>
-                  {excerpt}
+                  <button
+                    type="button"
+                    onClick={() => setExpandedCall(call)}
+                    title="클릭해서 전체 내용 보기"
+                    style={{
+                      display: "-webkit-box",
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: "vertical",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      textAlign: "left",
+                      background: "none",
+                      border: "none",
+                      padding: 0,
+                      margin: 0,
+                      color: "inherit",
+                      font: "inherit",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {call.masked_transcript}
+                  </button>
                 </td>
                 <td style={{ padding: "8px", color: "var(--text-secondary)" }}>
                   {call.explanation_summary}
@@ -251,6 +331,7 @@ export function RecentCallsTable({ calls }: { calls: CallAnalysis[] }) {
           })}
         </tbody>
       </table>
+      {expandedCall && <ContentModal call={expandedCall} onClose={() => setExpandedCall(null)} />}
     </div>
   );
 }
