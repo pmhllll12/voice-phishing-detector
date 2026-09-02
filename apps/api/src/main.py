@@ -56,6 +56,11 @@ MCP_SERVER_URL = os.environ.get("MCP_SERVER_URL", "http://localhost:8100")
 # api_key_role_auth.py DEFAULT_API_KEYS와 의도적으로 같은 값(dev-handler-key) —
 # 그쪽 모듈 상단 주석 참고. 로컬 개발 전용, 프로덕션에서는 반드시 오버라이드할 것.
 MCP_SERVICE_API_KEY = os.environ.get("MCP_SERVICE_API_KEY", "dev-handler-key")
+# mcp-server의 OLLAMA_TIMEOUT_SECONDS(CPU 전용 배포에서 LLM 추론이 오래 걸릴 때 올리는
+# 값, ollama_call_analysis_adapter.py 상단 주석 참고)보다 이 값이 더 커야 한다 — 안
+# 그러면 mcp-server가 v1으로 폴백하기도 전에 api가 먼저 포기하고 연결 실패로 응답한다
+# (EC2 실배포 검증 2026-09-02 중 실제로 겪은 문제). 기본값(30초)은 GPU 환경 기준.
+MCP_ANALYZE_TIMEOUT_SECONDS = float(os.environ.get("MCP_ANALYZE_TIMEOUT_SECONDS", "30.0"))
 # F-05: stt-worker REST 어댑터 주소. run-voice-phishing-detector 스킬 기준 로컬 기본 포트는
 # 8300 (apps/stt-worker/src/main.py 상단 주석 참고).
 STT_WORKER_URL = os.environ.get("STT_WORKER_URL", "http://localhost:8300")
@@ -81,7 +86,8 @@ app.add_middleware(
 
 call_log_repository = PostgresCallLogRepository(DATABASE_URL)
 analyze_call_service = AnalyzeCallService(
-    McpServerCallAnalysisAdapter(MCP_SERVER_URL, MCP_SERVICE_API_KEY), call_log_repository
+    McpServerCallAnalysisAdapter(MCP_SERVER_URL, MCP_SERVICE_API_KEY, timeout=MCP_ANALYZE_TIMEOUT_SECONDS),
+    call_log_repository,
 )
 transcribe_and_analyze_call_service = TranscribeAndAnalyzeCallService(
     SttWorkerTranscriptionAdapter(STT_WORKER_URL), analyze_call_service

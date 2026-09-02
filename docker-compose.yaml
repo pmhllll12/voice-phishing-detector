@@ -31,6 +31,9 @@ services:
       # N-02: mcp-server 호출용 서비스 자격증명 — mcp-server의 API_KEYS(아래)에 등록된
       # handler 키와 동일해야 한다.
       - MCP_SERVICE_API_KEY=${MCP_SERVICE_API_KEY:-dev-handler-key}
+      # CPU 전용 배포에서 mcp-server의 OLLAMA_TIMEOUT_SECONDS를 올렸다면(위 mcp-server
+      # 서비스 참고) 이 값도 그보다 크게 맞춰야 한다 — 안 그러면 api가 먼저 포기한다.
+      - MCP_ANALYZE_TIMEOUT_SECONDS=${MCP_ANALYZE_TIMEOUT_SECONDS:-30.0}
     depends_on:
       postgres:
         condition: service_healthy
