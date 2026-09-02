@@ -585,31 +585,47 @@ Cloud Pub/Sub을 거쳐 외부에서 도달 가능한 공개 엔드포인트가 
 ```
 scripts/gmail_oauth_setup.py  (최초 1회, 브라우저 동의) → gmail_token.json
 scripts/poll_gmail_inbox.py   (반복 실행) →
-  GmailEmailSourceAdapter.fetch_new_emails()  # is:unread 검색
+  GmailEmailSourceAdapter.fetch_new_emails()  # -label:VPS-Detector-Processed newer_than:1d
     → EmailIngestionService.poll_once()
         → CallAnalysisService.execute(제목+본문, channel=EMAIL, occurred_at=수신시각)
             (= server.py가 이미 쓰는 것과 완전히 같은 인스턴스, import server로 재사용)
-        → GmailEmailSourceAdapter.mark_processed()  # UNREAD 라벨 제거
+        → GmailEmailSourceAdapter.mark_processed()  # 전용 라벨을 "추가"(기존 라벨/읽음 상태 불변)
 ```
 
 - **왜 CallAnalysisService.execute()를 재사용하는가**: "통화든 문자든 이메일이든
   텍스트 판정 로직은 같다"는 게 이 설계의 핵심 전제다. `execute()`에
   `channel`/`occurred_at` 매개변수를 추가해(기본값은 기존과 동일하게 CALL/now)
   일반화했다 — F-01/F-02/F-05 로직을 이메일용으로 새로 만들지 않는다.
-- **상태 관리**: 별도 저장소 없이 Gmail의 UNREAD 라벨 자체를 처리 상태로 쓴다 —
-  처리 완료된 메일은 라벨을 지우고, 폴링 프로세스가 재시작돼도 중복 처리가
-  없다(Gmail이 진실의 원천).
-- **회귀 버그 발견/수정**: 이 작업 중 `CallAnalysisService.execute()`의 상관관계
+- **상태 관리**: 별도 저장소 없이 Gmail의 전용 라벨(`VPS-Detector-Processed`)
+  자체를 처리 상태로 쓴다 — 처리 완료된 메일에 이 라벨을 붙이고, 폴링 프로세스가
+  재시작돼도 중복 처리가 없다(Gmail이 진실의 원천).
+- **⚠️ 실제로 겪은 사고와 재설계(2026-09-02, 정직하게 기록)**: 최초 버전은 UNREAD
+  라벨을 "제거"하는 방식으로 처리 완료를 표시했다. 실제 검증 과정에서 OAuth 동의
+  화면에서 새 테스트 계정이 아니라 브라우저에 이미 로그인돼 있던 사용자의 실제
+  계정으로 잘못 연결되는 사고가 났는데, 그 상태로 폴링을 한 번 실행하자 그 계정의
+  실제 안 읽은 메일 약 100통이 전부 읽음 처리됐다. 다행히 처리된 메시지 ID를
+  로그로 전부 갖고 있어서 Gmail API로 UNREAD 라벨을 다시 추가해 즉시 원상복구했다
+  (100/100 성공). 이 사고 이후 상태 추적 방식 자체를 "제거"(파괴적 연산)에서
+  "전용 라벨 추가"(순수 추가 연산, 기존 라벨/읽음 상태에 부작용 없음)로 다시
+  설계했다 — 계정이 또 잘못 연결되더라도 최소한 "메일을 읽은 것처럼 만들어버리는"
+  부작용은 구조적으로 낼 수 없다. 검색 쿼리에도 `newer_than:1d` 기본 상한을 걸어
+  블라스트 반경을 제한했다. 이 사건은 "실배포 전 실제 시스템으로 검증한다"는 이
+  프로젝트의 원칙이 낳은 진짜 리스크와 그 리스크를 코드 레벨에서 구조적으로
+  줄이는 방법을 보여주는 사례라 숨기지 않고 기록해둔다.
+- **회귀 버그 발견/수정**: 같은 작업 중 `CallAnalysisService.execute()`의 상관관계
   결합 조건이 `if correlation.matches:`로만 돼 있어서, Google Safe Browsing이
   크로스채널 매치 없이 flagged_urls만으로 가산점을 준 경우(위 섹션)를 놓치는
   버그를 발견해 `if correlation.matches or correlation.flagged_urls:`로 고쳤다.
 - **의존성 격리**: `google-api-python-client` 등은 무거운 데다 REST/MCP stdio
   진입점 어디에서도 안 쓰여서, 메인 `requirements.txt`가 아니라 별도
   `requirements-gmail.txt`로 분리했다 — 이 스크립트를 실제로 돌릴 때만 설치한다.
-- **미검증 부분**: 실제 Gmail 계정으로 OAuth 동의를 받아 폴링을 돌려보는 것은
-  사용자의 새 테스트용 Gmail 계정 생성이 필요해 이번 세션 범위 밖이다 — 파싱
-  로직(`_parse_message`/`_find_body`, 멀티파트/HTML 폴백 포함)과 오케스트레이션
-  (`EmailIngestionService`)은 가짜 Gmail API 응답/가짜 서비스로 단위 테스트했다.
+- **검증 상태**: 위 사고가 난 실측 자체는(계정은 잘못됐지만) OAuth 동의→폴링→
+  F-01/F-02 판정까지 파이프라인 전체가 실제로 작동함을 보여줬다. 다만 그건
+  의도한 테스트 계정 기준이 아니었고, 라벨 방식으로 재설계한 뒤 원래 의도한
+  테스트용 계정으로 "깨끗하게" 재검증하는 건 아직 남아있다. 파싱 로직
+  (`_parse_message`/`_find_body`, 멀티파트/HTML 폴백 포함)과 오케스트레이션
+  (`EmailIngestionService`), 재설계된 라벨 기반 상태 추적은 가짜 Gmail API
+  응답/가짜 서비스로 회귀 테스트가 커버한다.
 
 #### SMS (설계만, 미구현)
 

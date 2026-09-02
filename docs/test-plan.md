@@ -3,7 +3,7 @@
 **기준 문서**: [`docs/requirements.md`](requirements.md), [`docs/RFP.md`](RFP.md)
 **작성일**: 2026-08-31
 
-> 이 문서는 이미 실행된 검증(pytest 226개, 실측 데이터셋, RBAC 실측, docker-compose
+> 이 문서는 이미 실행된 검증(pytest 230개, 실측 데이터셋, RBAC 실측, docker-compose
 > e2e, CI)을 사후에 정리한 것이지, 앞으로 할 계획만 나열한 것이 아니다 — "계획"과
 > "실측 결과"를 구분해서 표기한다.
 
@@ -36,10 +36,10 @@
 | 서비스 | 테스트 파일 | 테스트 수 | postgres 필요 | 비고 |
 |---|---|---|---|---|
 | `apps/api` | 14개 | 74 | 일부(skipif) | F-03 v1/v2 실측 데이터셋 검증 + N-03 이름 마스킹 정량 평가 + postgres 재연결 회귀 + 크로스채널 상관관계(우선순위 2) N-03 경유 경로 2개 파일 10건 포함 |
-| `apps/mcp-server` | 22개 | 138 | 일부(skipif) | Ollama 없이도 자동 폴백으로 전부 통과(실측 확인) + postgres 재연결/N-05 동시성 제한 회귀 + 크로스채널 상관관계(우선순위 2, Google Safe Browsing + email 실채널 연동 포함) 9개 파일 62건 포함 |
+| `apps/mcp-server` | 22개 | 142 | 일부(skipif) | Ollama 없이도 자동 폴백으로 전부 통과(실측 확인) + postgres 재연결/N-05 동시성 제한 회귀 + 크로스채널 상관관계(우선순위 2, Google Safe Browsing + email 실채널 연동 포함) 9개 파일 66건 포함 |
 | `apps/rag-worker` | 3개 | 12 | 일부(skipif) | pgvector 검색 통합 테스트 + 재연결 회귀 포함 |
 | `apps/stt-worker` | 1개 | 2 | 불필요 | 가짜 어댑터만 사용, 실제 모델 로드 없음(의도적 — 무겁고 GPU 의존적이라) |
-| **합계** | **40개** | **226** | | |
+| **합계** | **40개** | **230** | | |
 
 postgres가 필요한 테스트는 `TEST_DATABASE_URL`(또는 `DATABASE_URL`) 접속 가능
 여부를 `pytest.mark.skipif`로 확인해 접속 불가 시 건너뛴다. **로컬에서는
@@ -136,15 +136,25 @@ httpx.post monkeypatch로 검증. `test_multichannel_correlation_service.py`에 
 **SMS/email 실채널 연동 — email 구현(2026-09-02)**: Gmail 폴링 파이프라인
 (`GmailEmailSourceAdapter`/`EmailIngestionService`)을 가짜 Gmail API 응답 +
 가짜 서비스로 검증 — `test_gmail_email_source_adapter.py`(단순/멀티파트/HTML
-폴백 파싱, 목록 조회 실패 시 개별 메일 건너뛰기, UNREAD 라벨 제거),
+폴백 파싱, 목록 조회 실패 시 개별 메일 건너뛰기, 전용 라벨 추가/재사용),
 `test_email_ingestion_service.py`(메일→채널=email 판정 결합, 수신시각
 전달, 처리 완료 표시). 이 작업 중 `CallAnalysisService.execute()`의
 `if correlation.matches:` 조건이 Google Safe Browsing 단독 가산점(크로스채널
 매치 없이 flagged_urls만 있는 경우)을 놓치는 회귀를 발견해
-`test_call_analysis_correlation.py`에 가드 테스트를 추가하고 수정함. **실제
-Gmail 계정으로 끝까지 돌려보는 것(OAuth 동의→실제 메일 수신→판정)은 아직
-안 함** — 테스트용 Gmail 계정 생성이 사용자 본인 작업이라 이번 세션 범위 밖.
-SMS는 설계만 하고 구현하지 않음(`docs/design.md` 7장 참고).
+`test_call_analysis_correlation.py`에 가드 테스트를 추가하고 수정함.
+
+**⚠️ 실측 중 실제 사고 발생/해결(2026-09-02)**: 실제 Gmail 계정으로 OAuth 동의→
+폴링을 처음 돌렸을 때, 테스트용 계정이 아니라 브라우저에 로그인돼 있던 사용자의
+실제 계정으로 잘못 연결됐다. 최초 버전이 "처리 완료 = UNREAD 라벨 제거" 방식이라,
+그 계정의 실제 안 읽은 메일 약 100통이 한 번의 폴링으로 전부 읽음 처리됐다 —
+로그에 있던 message_id 전부로 UNREAD 라벨을 다시 추가해 100/100 즉시 복구했다.
+이후 처리 상태 추적을 "전용 라벨 추가"(순수 추가 연산, 기존 라벨/읽음 상태 불변)
+방식으로 재설계하고 검색 쿼리에 `newer_than:1d` 상한을 걸어, 계정이 또 잘못
+연결돼도 구조적으로 이런 부작용이 안 나게 했다(회귀 가드 4건 추가 —
+`test_mark_processed_adds_dedicated_label_without_touching_unread` 등). 이
+사고로 파이프라인 자체(OAuth→폴링→F-01/F-02 판정)가 실제로 작동함은 확인됐지만,
+의도한 테스트 계정으로 "깨끗하게" 재검증하는 건 아직 남아있다(`docs/design.md`
+7장 참고). SMS는 설계만 하고 구현하지 않음.
 
 ### N-02: 접근통제(RBAC) — mcp-server 실측 매트릭스
 
