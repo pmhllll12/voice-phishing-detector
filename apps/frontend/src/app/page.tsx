@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState, type CSSProperties } from "react";
 
 import { AnalyzeCallForm } from "@/components/AnalyzeCallForm";
+import { DeepvoiceCheckForm } from "@/components/DeepvoiceCheckForm";
 import { HorizontalBarList } from "@/components/HorizontalBarList";
 import { RecentCallsTable } from "@/components/RecentCallsTable";
 import { StatTile } from "@/components/StatTile";
@@ -106,6 +107,11 @@ export default function DashboardPage() {
       <section style={{ marginBottom: "28px" }}>
         <h2 style={sectionTitleStyle}>통화 분석해보기</h2>
         <AnalyzeCallForm onAnalyzed={refresh} />
+      </section>
+
+      <section style={{ marginBottom: "28px" }}>
+        <h2 style={sectionTitleStyle}>딥보이스 판별해보기 (F-03)</h2>
+        <DeepvoiceCheckForm />
       </section>
 
       <section

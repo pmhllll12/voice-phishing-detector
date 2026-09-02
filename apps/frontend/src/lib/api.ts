@@ -155,6 +155,41 @@ export async function getStatsSummary(): Promise<StatsSummary> {
   return res.json();
 }
 
+// F-06 대시보드 UI/UX 개선(2026-09-02, item 6): F-03(딥보이스/AI 합성음성 판별)은
+// apps/api에 이미 구현/검증되어 있었지만(wav2vec2_deepvoice_adapter.py) 대시보드에
+// 진입점이 전혀 없었다 — 기존 "🎤 음성으로 분석" 버튼은 F-05(통화 위험도 판정)였지 이게
+// 아니었다. 그 둘을 혼동하지 않도록 별도 컴포넌트/엔드포인트로 분리해서 추가한다.
+export interface DeepvoiceIndicator {
+  name: string;
+  description: string;
+  triggered: boolean;
+}
+
+export interface DeepvoiceVerdict {
+  // null: 신호 부족 등으로 판단을 보류했다는 뜻 — "합성 아님"과 다르다(domain/deepvoice.py 참고).
+  is_synthetic: boolean | null;
+  confidence: number;
+  indicators: DeepvoiceIndicator[];
+  explanation: string;
+}
+
+// v1/v2(wav2vec2) 어댑터 모두 16-bit PCM WAV만 파싱한다(deepvoice_adapter._read_wav 재사용,
+// wav2vec2_deepvoice_adapter.py 상단 주석 참고) — F-05의 analyzeCallAudio(webm/mp4/ogg,
+// stt-worker가 변환)와 달리 이쪽은 포맷 변환 단계가 없다.
+export async function checkDeepvoice(file: File): Promise<DeepvoiceVerdict> {
+  const formData = new FormData();
+  formData.append("audio", file, file.name);
+  const res = await fetch(`${API_BASE_URL}/api/v1/calls/deepvoice-check`, {
+    method: "POST",
+    headers: AUTH_HEADERS,
+    body: formData,
+  });
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+  return res.json();
+}
+
 export interface ReportResult {
   report_id: string;
   status: string;
