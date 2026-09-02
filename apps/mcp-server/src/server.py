@@ -33,6 +33,7 @@ from domain.entities import Channel, RiskLevel
 from domain.entity_extraction import extract_entities
 from infrastructure.adapters.debug_compare_adapter import DebugCompareAdapter
 from infrastructure.adapters.ollama_call_analysis_adapter import OllamaCallAnalysisAdapter
+from infrastructure.adapters.google_safe_browsing_adapter import GoogleSafeBrowsingAdapter
 from infrastructure.adapters.postgres_channel_signal_repository import PostgresChannelSignalRepository
 from infrastructure.adapters.postgres_report_repository import PostgresReportRepository
 from infrastructure.adapters.rag_worker_search_adapter import RagWorkerSearchAdapter
@@ -64,8 +65,16 @@ DATABASE_URL = os.environ.get(
     "DATABASE_URL", "postgresql://vps_app:vps_dev_password@localhost:5432/vps_detector"
 )
 
+# 우선순위 2(선택 항목): 키가 없으면 위협 인텔리전스 검사 없이 크로스채널 상관관계만
+# 동작한다(FraudCaseSearchPort와 동일한 선택적 의존 패턴, google_safe_browsing_adapter.py
+# 상단 주석 참고).
+GOOGLE_SAFE_BROWSING_API_KEY = os.environ.get("GOOGLE_SAFE_BROWSING_API_KEY", "")
+_threat_intelligence_adapter = (
+    GoogleSafeBrowsingAdapter(GOOGLE_SAFE_BROWSING_API_KEY) if GOOGLE_SAFE_BROWSING_API_KEY else None
+)
+
 _channel_signal_repository = PostgresChannelSignalRepository(DATABASE_URL)
-correlation_service = MultichannelCorrelationService(_channel_signal_repository)
+correlation_service = MultichannelCorrelationService(_channel_signal_repository, threat_intelligence_port=_threat_intelligence_adapter)
 
 call_analysis_service = CallAnalysisService(
     _call_analysis_adapter, RagWorkerSearchAdapter(RAG_WORKER_URL), correlation_service

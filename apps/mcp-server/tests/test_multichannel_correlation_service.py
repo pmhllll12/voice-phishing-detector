@@ -102,3 +102,87 @@ def test_no_entities_skips_lookup_and_record():
 
     assert result.matches == []
     assert repo.recorded == []
+
+
+# --- 우선순위 2(선택 항목): Google Safe Browsing 결합 ---
+
+_URL = ExtractedEntity(EntityType.URL, "evil.example.com")
+
+
+class _FakeThreatIntelligence:
+    def __init__(self, flagged: list[str] | None = None):
+        self._flagged = flagged or []
+        self.received: list[str] | None = None
+
+    def check_urls(self, urls: list[str]) -> list[str]:
+        self.received = urls
+        return [u for u in urls if u in self._flagged]
+
+
+def test_malicious_url_produces_risk_boost_and_reason_even_without_channel_match():
+    repo = _FakeChannelSignalRepository(matches=[])  # 크로스채널 매치 없음(첫 등장)
+    threat_intel = _FakeThreatIntelligence(flagged=["evil.example.com"])
+    service = MultichannelCorrelationService(repo, threat_intelligence_port=threat_intel)
+
+    result = service.correlate(Channel.SMS, [_URL], occurred_at=_NOW, context_excerpt="문자 발췌")
+
+    assert result.risk_boost == 40
+    assert result.flagged_urls == ["evil.example.com"]
+    assert result.matches == []  # 크로스채널 매치는 여전히 없음(근거가 분리돼 있음)
+    assert any("Google Safe Browsing" in r for r in result.reasons)
+    assert any("evil.example.com" in r for r in result.reasons)
+
+
+def test_channel_match_and_malicious_url_boosts_combine():
+    match = CorrelationMatch(EntityType.URL, "evil.example.com", Channel.CALL, _NOW, "통화 발췌")
+    repo = _FakeChannelSignalRepository(matches=[match])
+    threat_intel = _FakeThreatIntelligence(flagged=["evil.example.com"])
+    service = MultichannelCorrelationService(repo, threat_intelligence_port=threat_intel)
+
+    result = service.correlate(Channel.SMS, [_URL], occurred_at=_NOW, context_excerpt="문자 발췌")
+
+    assert result.risk_boost == 15 + 40  # 크로스채널 매치 1건 + 악성 URL 확인
+
+
+def test_only_non_flagged_url_produces_no_boost():
+    repo = _FakeChannelSignalRepository(matches=[])
+    threat_intel = _FakeThreatIntelligence(flagged=[])  # Safe Browsing이 아무것도 안 걸림
+    service = MultichannelCorrelationService(repo, threat_intelligence_port=threat_intel)
+
+    result = service.correlate(Channel.SMS, [_URL], occurred_at=_NOW, context_excerpt="문자 발췌")
+
+    assert result.risk_boost == 0
+    assert result.flagged_urls == []
+
+
+def test_threat_intelligence_receives_only_url_entities():
+    repo = _FakeChannelSignalRepository(matches=[])
+    threat_intel = _FakeThreatIntelligence()
+    service = MultichannelCorrelationService(repo, threat_intelligence_port=threat_intel)
+
+    service.correlate(Channel.SMS, [_PHONE, _URL], occurred_at=_NOW, context_excerpt="문자 발췌")
+
+    assert threat_intel.received == ["evil.example.com"]
+
+
+def test_multiple_flagged_urls_do_not_multiply_boost():
+    """확인된 악성 URL이 몇 개든 가산점은 한 번만 — services.py 상단 주석 참고."""
+    urls = [ExtractedEntity(EntityType.URL, "evil1.example.com"), ExtractedEntity(EntityType.URL, "evil2.example.com")]
+    repo = _FakeChannelSignalRepository(matches=[])
+    threat_intel = _FakeThreatIntelligence(flagged=["evil1.example.com", "evil2.example.com"])
+    service = MultichannelCorrelationService(repo, threat_intelligence_port=threat_intel)
+
+    result = service.correlate(Channel.SMS, urls, occurred_at=_NOW, context_excerpt="문자 발췌")
+
+    assert result.risk_boost == 40
+    assert set(result.flagged_urls) == {"evil1.example.com", "evil2.example.com"}
+
+
+def test_no_threat_intelligence_port_is_a_no_op():
+    repo = _FakeChannelSignalRepository(matches=[])
+    service = MultichannelCorrelationService(repo)  # threat_intelligence_port 없음
+
+    result = service.correlate(Channel.SMS, [_URL], occurred_at=_NOW, context_excerpt="문자 발췌")
+
+    assert result.risk_boost == 0
+    assert result.flagged_urls == []

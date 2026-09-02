@@ -11,7 +11,7 @@ AI 데이터센터/AI 인프라 엔지니어 직무 취업을 위한 개인 포�
 > **현재 상태**: F-01~F-07(기능)과 N-01~N-06(비기능) 요구사항 모두 최소 1차 구현 및
 > 로컬 검증 완료(2026-08-31). `docker compose up --build`로 전체 스택(frontend/api/
 > mcp-server/rag-worker/stt-worker/postgres/prometheus/grafana) 실기동 확인, PR마다
-> pytest 200개 자동 실행하는 CI도 구축됨. RFP → 요구사항정의서 → 설계서 → 시험계획서
+> pytest 211개 자동 실행하는 CI도 구축됨. RFP → 요구사항정의서 → 설계서 → 시험계획서
 > 4개 문서 전부 작성 완료. 2026-09-02: 시중 어떤 보이스피싱 차단 앱에도 없는 **크로스채널
 > 상관관계 탐지**(통화→문자→이메일 다단계 공격 연계 탐지)를 신규 추가, N-03 마스킹 경유
 > 경로까지 해소. AWS EC2로 실제 배포를 시도해 실배포로만 드러나는 버그 2건을 잡았지만
@@ -585,5 +585,19 @@ stt-worker) 전부에 대한 scrape 대상이 설정돼 있고, `docker compose 
       Cloud 계정이 아직 없어 가입부터 필요 — 배포 구조(Cloudflare Tunnel, Nginx,
       공개 범위 등)는 `docs/design.md` 4장의 기존 설계를 사업자만 바꿔 그대로
       적용할 예정
+- [x] Google Safe Browsing 연동 (2026-09-02, 선택 항목) — 크로스채널 상관관계
+      탐지에서 추출한 URL 엔티티를 Google Safe Browsing API v4로 실제 악성 URL
+      목록과 대조한다. `ThreatIntelligencePort`/`GoogleSafeBrowsingAdapter`(F-04의
+      `FraudCaseSearchPort`와 동일한 선택적 의존 패턴 — API 키 없으면 자동으로
+      이 검사만 건너뜀). 악성 확인 시 가산점 +40점을 별도 축으로 부여(크로스채널
+      매치 +15점/건, 상한 30점과는 독립) — **크로스채널 매치 여부와 무관하게
+      항상 검사**한다(다른 채널에 처음 등장한 URL이어도 이미 알려진 악성
+      사이트면 그 자체로 위험). `CorrelationResult.flagged_urls`로 근거를
+      분리해 추적 가능(N-04). ⚠️ URL을 host로만 정규화해서 대조하므로(크로스채널
+      매칭 목적상 그렇게 설계됨) 특정 경로만 악성으로 등재된 경우는 놓칠 수 있음
+      — `docs/design.md` 7장 "선택 항목" 절 참고. **실제 API 키로의 검증은
+      아직 안 함**(사용자 본인 Google 계정 필요, 다음 단계) — 이번엔 요청 구성/
+      응답 파싱/HTTP 실패 폴백을 httpx.post monkeypatch로만 검증(`test_google_
+      safe_browsing_adapter.py`)
 <img width="1900" height="1014" alt="Screenshot 2026-08-26 151128_edited" src="https://github.com/user-attachments/assets/5bf57efc-0385-4623-8cec-82461d236ffd" />
 <img width="1910" height="1046" alt="Screenshot 2026-08-26 151151_edited" src="https://github.com/user-attachments/assets/4b36260b-be9d-400e-bbbb-15154a82a299" />

@@ -80,6 +80,8 @@ services:
       # 계속 폴백되는 걸 실측으로 확인(docs/design.md 4장) — GPU 로컬 환경은 비워두면
       # 기본값(20초)을 그대로 쓴다.
       - OLLAMA_TIMEOUT_SECONDS=${OLLAMA_TIMEOUT_SECONDS:-20.0}
+      # 우선순위 2(선택 항목): 비워두면 Safe Browsing 검사만 건너뛴다.
+      - GOOGLE_SAFE_BROWSING_API_KEY=${GOOGLE_SAFE_BROWSING_API_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy

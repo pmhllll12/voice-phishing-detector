@@ -3,7 +3,7 @@
 **기준 문서**: [`docs/requirements.md`](requirements.md), [`docs/RFP.md`](RFP.md)
 **작성일**: 2026-08-31
 
-> 이 문서는 이미 실행된 검증(pytest 200개, 실측 데이터셋, RBAC 실측, docker-compose
+> 이 문서는 이미 실행된 검증(pytest 211개, 실측 데이터셋, RBAC 실측, docker-compose
 > e2e, CI)을 사후에 정리한 것이지, 앞으로 할 계획만 나열한 것이 아니다 — "계획"과
 > "실측 결과"를 구분해서 표기한다.
 
@@ -36,10 +36,10 @@
 | 서비스 | 테스트 파일 | 테스트 수 | postgres 필요 | 비고 |
 |---|---|---|---|---|
 | `apps/api` | 14개 | 74 | 일부(skipif) | F-03 v1/v2 실측 데이터셋 검증 + N-03 이름 마스킹 정량 평가 + postgres 재연결 회귀 + 크로스채널 상관관계(우선순위 2) N-03 경유 경로 2개 파일 10건 포함 |
-| `apps/mcp-server` | 19개 | 112 | 일부(skipif) | Ollama 없이도 자동 폴백으로 전부 통과(실측 확인) + postgres 재연결/N-05 동시성 제한 회귀 + 크로스채널 상관관계(우선순위 2) 6개 파일 36건 포함 |
+| `apps/mcp-server` | 20개 | 123 | 일부(skipif) | Ollama 없이도 자동 폴백으로 전부 통과(실측 확인) + postgres 재연결/N-05 동시성 제한 회귀 + 크로스채널 상관관계(우선순위 2, Google Safe Browsing 포함) 7개 파일 47건 포함 |
 | `apps/rag-worker` | 3개 | 12 | 일부(skipif) | pgvector 검색 통합 테스트 + 재연결 회귀 포함 |
 | `apps/stt-worker` | 1개 | 2 | 불필요 | 가짜 어댑터만 사용, 실제 모델 로드 없음(의도적 — 무겁고 GPU 의존적이라) |
-| **합계** | **37개** | **200** | | |
+| **합계** | **38개** | **211** | | |
 
 postgres가 필요한 테스트는 `TEST_DATABASE_URL`(또는 `DATABASE_URL`) 접속 가능
 여부를 `pytest.mark.skipif`로 확인해 접속 불가 시 건너뛴다. **로컬에서는
@@ -123,6 +123,15 @@ explanation에 "0분 전 문자 채널에서 동일 계좌번호(********9888)�
 "실측 검증" 참고). 이전에는 apps/api를 우회해 mcp-server REST에 직접 호출한
 경우에만 검증했고 N-03과의 상호작용은 "알려진 한계"로 남겨뒀었는데, 이번에
 그 공백을 실제로 메웠다.
+
+**Google Safe Browsing 연동(선택 항목, 2026-09-02)**: `test_google_safe_browsing_adapter.py`
+로 요청 구성(`http://{host}/` 재구성 포함)/응답 파싱/HTTP 실패 시 빈 리스트 폴백을
+httpx.post monkeypatch로 검증. `test_multichannel_correlation_service.py`에 6건
+추가 — 크로스채널 매치 없이도 악성 URL만으로 가산점(+40)이 붙는지, 두 근거가
+합산되는지(15+40), 여러 URL이 걸려도 가산점이 비례 증가하지 않는지, 포트가 없으면
+전부 no-op인지. **실제 Google API 키로의 검증은 아직 안 함** — 무료 발급 가능하나
+사용자 본인 Google 계정이 필요해 이번 세션 범위에서는 코드/폴백 경로까지만
+완성했다(`docs/design.md` 7장 "선택 항목: Google Safe Browsing 연동" 참고).
 
 ### N-02: 접근통제(RBAC) — mcp-server 실측 매트릭스
 

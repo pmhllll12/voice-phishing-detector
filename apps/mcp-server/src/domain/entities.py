@@ -248,9 +248,14 @@ class CorrelationResult:
     """MultichannelCorrelationService.correlate()의 결과. current_risk_score가 주어졌을
     때만(즉 CallAnalysisService가 F-02 점수와 함께 호출했을 때만) updated_risk_score/
     updated_risk_level이 채워진다 — 단독으로 correlate_multichannel_signals 툴을
-    호출할 때는(예: 합성 문자/이메일 주입) None으로 남는다."""
+    호출할 때는(예: 합성 문자/이메일 주입) None으로 남는다.
+
+    matches(크로스채널 재등장)와 flagged_urls(Google Safe Browsing 악성 URL 확인)는
+    서로 다른 근거라 risk_boost에 둘 다 반영되더라도(N-04) 필드를 분리해 "왜"를
+    구분할 수 있게 했다 — threat_intelligence_port가 없으면(선택 의존) 항상 빈 리스트."""
 
     matches: list[CorrelationMatch] = field(default_factory=list)
+    flagged_urls: list[str] = field(default_factory=list)
     risk_boost: int = 0
     reasons: list[str] = field(default_factory=list)
     updated_risk_score: int | None = None

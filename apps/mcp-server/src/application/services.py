@@ -28,7 +28,13 @@ from domain.entities import (
 )
 from domain.entity_extraction import extract_entities
 from domain.pattern_rules import CATEGORY_WEIGHTS, PATTERN_RULES
-from domain.ports import CallAnalysisPort, ChannelSignalRepositoryPort, FraudCaseSearchPort, ReportRepositoryPort
+from domain.ports import (
+    CallAnalysisPort,
+    ChannelSignalRepositoryPort,
+    FraudCaseSearchPort,
+    ReportRepositoryPort,
+    ThreatIntelligencePort,
+)
 
 
 class PatternDetectionService:
@@ -154,6 +160,12 @@ def _merge_similar_cases_into_explanation(
 _DEFAULT_CORRELATION_WINDOW_SECONDS = 30 * 60  # 30분 — 전화→문자→이메일 다단계 공격 시나리오 기준
 _CORRELATION_RISK_BOOST_PER_MATCH = 15
 _CORRELATION_RISK_BOOST_CAP = 30  # 엔티티가 여러 개 겹쳐도 무한정 커지지 않도록 상한
+# 우선순위 2(선택 항목, 2026-09-02): Google Safe Browsing에 등록된 악성 URL로 확인되면
+# 채널 재등장 여부와 무관하게 그 자체로 강한 위험 신호다(외부 기관이 이미 검증한
+# 사실이라 채널 재등장 추정보다 신뢰도가 높음) — 그래서 가중치를 더 크게 둔다. URL이
+# 몇 개든 플래그 자체는 한 번만 가산한다(여러 개 걸렸다고 위험도가 비례해 커질 필요는
+# 없음 — 이미 하나만으로도 충분히 강한 신호).
+_MALICIOUS_URL_RISK_BOOST = 40
 
 
 def _mask_for_display(entity_type: EntityType, value: str) -> str:
@@ -179,6 +191,10 @@ def _reason_for_match(match: CorrelationMatch, occurred_at: datetime) -> str:
     )
 
 
+def _reason_for_malicious_url(url: str) -> str:
+    return f"URL({url})이 Google Safe Browsing에 등록된 악성 사이트로 확인되었습니다 — 외부 위협 인텔리전스 연동"
+
+
 class MultichannelCorrelationService:
     """우선순위 2 진입점. ChannelSignalRepositoryPort로 저장/조회를 위임한다 —
     CallAnalysisService가 F-01/F-02/F-05 로직을 모르고 포트만 아는 것과 같은 패턴.
@@ -186,15 +202,21 @@ class MultichannelCorrelationService:
     correlate()는 항상 이번 이벤트를 채널 신호로 "기록"도 한다 — 그래야 이후 다른
     채널 이벤트가 이걸 찾을 수 있다. 조회를 기록보다 먼저 해서 자기 자신과는
     매칭되지 않게 한다.
+
+    threat_intelligence_port가 주어지면(선택, Google Safe Browsing), URL 엔티티를
+    외부 위협 인텔리전스와 대조한다 — 이 검사는 크로스채널 매치 여부와 무관하게
+    항상 수행된다(첫 등장이어도 이미 알려진 악성 URL이면 그 자체로 위험하다).
     """
 
     def __init__(
         self,
         repository: ChannelSignalRepositoryPort,
         window_seconds: int = _DEFAULT_CORRELATION_WINDOW_SECONDS,
+        threat_intelligence_port: ThreatIntelligencePort | None = None,
     ):
         self._repository = repository
         self._window_seconds = window_seconds
+        self._threat_intelligence_port = threat_intelligence_port
 
     def correlate(
         self,
@@ -215,7 +237,13 @@ class MultichannelCorrelationService:
             ChannelSignal(channel=channel, entities=entities, occurred_at=occurred_at, context_excerpt=context_excerpt)
         )
 
-        if not matches:
+        flagged_urls: list[str] = []
+        if self._threat_intelligence_port is not None:
+            urls = [e.value for e in entities if e.entity_type == EntityType.URL]
+            if urls:
+                flagged_urls = self._threat_intelligence_port.check_urls(urls)
+
+        if not matches and not flagged_urls:
             return CorrelationResult(
                 updated_risk_score=current_risk_score,
                 updated_risk_level=risk_level_for_score(current_risk_score) if current_risk_score is not None else None,
@@ -231,8 +259,12 @@ class MultichannelCorrelationService:
             )
             for m in matches
         ]
-        boost = min(len(masked_matches) * _CORRELATION_RISK_BOOST_PER_MATCH, _CORRELATION_RISK_BOOST_CAP)
+        channel_boost = min(len(masked_matches) * _CORRELATION_RISK_BOOST_PER_MATCH, _CORRELATION_RISK_BOOST_CAP)
+        malicious_boost = _MALICIOUS_URL_RISK_BOOST if flagged_urls else 0
+        boost = channel_boost + malicious_boost
+
         reasons = [_reason_for_match(m, occurred_at) for m in masked_matches]
+        reasons += [_reason_for_malicious_url(url) for url in flagged_urls]
 
         updated_score = None
         updated_level = None
@@ -242,6 +274,7 @@ class MultichannelCorrelationService:
 
         return CorrelationResult(
             matches=masked_matches,
+            flagged_urls=flagged_urls,
             risk_boost=boost,
             reasons=reasons,
             updated_risk_score=updated_score,

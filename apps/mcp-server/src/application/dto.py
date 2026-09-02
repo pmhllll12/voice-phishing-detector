@@ -69,6 +69,9 @@ def serialize_correlation(correlation: CorrelationResult) -> dict:
             for m in correlation.matches
         ],
         "match_count": len(correlation.matches),
+        # 우선순위 2(선택 항목): Google Safe Browsing이 악성으로 확인한 URL(host만,
+        # entity_extraction._normalize_url 참고 — 이미 PII가 아니라 마스킹하지 않음).
+        "flagged_urls": correlation.flagged_urls,
         "risk_boost": correlation.risk_boost,
         "reasons": correlation.reasons,
         "updated_risk_score": correlation.updated_risk_score,

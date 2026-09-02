@@ -535,6 +535,37 @@ apps/api용) 두 입력을 모두 받도록 확장했다(`domain/ports.py`의
 +15점 반영, 최종 100점/고위험)" 식으로 덧붙이는 방식을 택했다 — 두 계층에 같은
 등급 라벨/문장 템플릿을 중복 유지하지 않기 위함.
 
+### 선택 항목: Google Safe Browsing 연동 (2026-09-02)
+
+우선순위 2 작업지시서의 선택 항목 — 문자/이메일 속 URL을 Google Safe Browsing
+API v4(`threatMatches:find`)로 실제 악성 URL 목록과 대조한다.
+
+- `domain/ports.py`의 `ThreatIntelligencePort` + `infrastructure/adapters/
+  google_safe_browsing_adapter.py`(`GoogleSafeBrowsingAdapter`) — F-04의
+  `FraudCaseSearchPort`와 동일한 선택적 의존 패턴이다. `GOOGLE_SAFE_BROWSING_API_KEY`
+  가 없으면 어댑터 자체를 안 만들고 `threat_intelligence_port=None`으로 둔다 —
+  크로스채널 상관관계 자체는 이 연동 없이도 완전히 동작한다.
+- `MultichannelCorrelationService.correlate()`가 URL 엔티티를 이 포트로 검사한다
+  — **크로스채널 매치 여부와 무관하게 항상 검사한다**(다른 채널에 처음 등장한
+  URL이어도 이미 알려진 악성 사이트면 그 자체로 위험하기 때문). 확인되면 가산점
+  40점(크로스채널 매치 15점/건, 상한 30점과는 별도 축) + 근거 문장
+  "URL(example.com)이 Google Safe Browsing에 등록된 악성 사이트로 확인되었습니다"
+  가 추가된다. 여러 URL이 걸려도 가산점은 한 번만(비례 증가 없음) — 이미 하나만으로
+  충분히 강한 신호라는 판단.
+- `CorrelationResult`에 `flagged_urls` 필드를 별도로 둬서, "왜 위험도가 올랐는가"를
+  크로스채널 재등장(`matches`)과 외부 위협 인텔리전스 확인(`flagged_urls`)으로
+  구분해 추적할 수 있게 했다(N-04).
+- **한계(정직하게 밝힘)**: `entity_extraction.py`가 URL을 host로만 정규화하기
+  때문에(경로/쿼리스트링은 버림 — 크로스채널 매칭 목적상 그게 맞는 설계, D.5b
+  참고) 이 어댑터는 원본 URL이 아니라 `http://{host}/`로 재구성한 값을 Safe
+  Browsing에 보낸다. 특정 경로만 악성으로 등재된 경우(도메인 자체는 깨끗함)는
+  놓칠 수 있다.
+- 검증: `test_google_safe_browsing_adapter.py`(httpx.post monkeypatch로 요청
+  구성/응답 파싱/실패 폴백), `test_multichannel_correlation_service.py`(가짜
+  포트로 서비스 결합 로직). **실제 Google API 키로 검증은 아직 안 함** — 무료
+  발급 가능하지만 이 세션에서는 코드/폴백 경로만 준비해뒀고, 키 발급은 사용자
+  본인 계정이 필요해 다음 단계로 남긴다.
+
 ### 실측 검증
 
 - 합성 시나리오 4건(`apps/mcp-server/data/synthetic_multichannel_signals.json`) —

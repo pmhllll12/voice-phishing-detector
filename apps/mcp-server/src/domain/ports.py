@@ -45,3 +45,14 @@ class ChannelSignalRepositoryPort(Protocol):
         """entities 중 하나라도 exclude_channel이 아닌 다른 채널에, occurred_at 기준
         ±window_seconds 이내에 기록된 적이 있으면 그 매치들을 반환한다."""
         ...
+
+
+class ThreatIntelligencePort(Protocol):
+    """우선순위 2(선택 항목): 문자/이메일 속 URL을 외부 위협 인텔리전스(Google Safe
+    Browsing)와 대조한다. MultichannelCorrelationService가 크로스채널 상관관계 점수의
+    한 요소로 결합할 때 쓰는 포트 — FraudCaseSearchPort와 같은 패턴으로, 없어도(None)
+    상관관계 탐지 자체는 정상 동작한다(있으면 근거를 더 풍부하게 하는 선택적 의존)."""
+
+    def check_urls(self, urls: list[str]) -> list[str]:
+        """urls 중 악성으로 확인된 것만 골라 반환한다(순서 무관, 부분집합)."""
+        ...
