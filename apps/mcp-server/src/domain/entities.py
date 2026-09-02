@@ -222,25 +222,36 @@ class ExtractedEntity:
 class ChannelSignal:
     """한 채널 이벤트(통화 1건/문자 1건/이메일 1건)에서 추출된 엔티티들을 묶은 것.
     ChannelSignalRepositoryPort.record()로 저장되어 이후 다른 채널 이벤트의
-    상관관계 조회 대상이 된다."""
+    상관관계 조회 대상이 된다.
+
+    source_ref(F-06 대시보드 "근거 연결" 기능, 2026-09-02): 이 신호를 발생시킨
+    원본 판정 기록의 식별자(apps/api의 CallAnalysisResult.call_id) — 있으면
+    프런트가 "이 근거가 어느 탐지 건에서 왔는지" 클릭해서 이동할 수 있다. apps/api
+    경유 호출만 채워 넣는다(같은 요청 안에서 call_id를 이미 발급했으므로).
+    MCP stdio(server.py)의 analyze_call_pattern 자동 결합이나
+    correlate_multichannel_signals 툴(합성 데이터 주입용)은 call_id 개념이 없어
+    None으로 남는다 — 그런 신호는 근거 문장은 그대로 보여주되 클릭 이동은 안 된다."""
 
     channel: Channel
     entities: list[ExtractedEntity]
     occurred_at: datetime
     context_excerpt: str
+    source_ref: str | None = None
 
 
 @dataclass
 class CorrelationMatch:
     """다른 채널에서 발견된 동일 엔티티 1건. entity_value는 항상 마스킹된 표시용 값이다
     (원본 값은 저장소에만 있고 바깥으로 안 나간다 — N-03과 같은 원칙,
-    application/services.py의 _mask_for_display 참고)."""
+    application/services.py의 _mask_for_display 참고). source_ref는 매치된
+    ChannelSignal이 들고 있던 값을 그대로 옮겨 담는다(ChannelSignal 상단 주석 참고)."""
 
     entity_type: EntityType
     entity_value: str  # 마스킹된 표시값
     matched_channel: Channel
     matched_at: datetime
     context_excerpt: str
+    source_ref: str | None = None
 
 
 @dataclass

@@ -38,6 +38,7 @@ class McpCorrelationAdapter:
         occurred_at: str,
         context_excerpt: str,
         current_risk_score: int,
+        source_ref: str | None = None,
     ) -> dict:
         try:
             response = httpx.post(
@@ -48,6 +49,7 @@ class McpCorrelationAdapter:
                     "occurred_at": occurred_at,
                     "context_excerpt": context_excerpt,
                     "current_risk_score": current_risk_score,
+                    "source_ref": source_ref,
                 },
                 headers={"X-API-Key": self._service_api_key},
                 timeout=self._timeout,

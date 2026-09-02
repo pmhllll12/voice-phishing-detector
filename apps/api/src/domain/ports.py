@@ -57,4 +57,5 @@ class MultichannelCorrelationPort(Protocol):
         occurred_at: str,
         context_excerpt: str,
         current_risk_score: int,
+        source_ref: str | None = None,
     ) -> dict: ...

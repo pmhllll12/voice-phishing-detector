@@ -231,7 +231,12 @@ class MultichannelCorrelationService:
         occurred_at: datetime,
         context_excerpt: str,
         current_risk_score: int | None = None,
+        source_ref: str | None = None,
     ) -> CorrelationResult:
+        """source_ref(F-06 대시보드 "근거 연결", 2026-09-02): 이 이벤트를 발생시킨
+        원본 판정 기록의 식별자(apps/api의 call_id) — 기록해두면 나중에 다른 채널이
+        이 신호와 매치될 때 "어느 기록에서 왔는지" 클릭해서 이동할 수 있다.
+        ChannelSignal 상단 주석 참고."""
         if not entities:
             return CorrelationResult(
                 updated_risk_score=current_risk_score,
@@ -240,7 +245,13 @@ class MultichannelCorrelationService:
 
         matches = self._repository.find_matches(entities, channel, occurred_at, self._window_seconds)
         self._repository.record(
-            ChannelSignal(channel=channel, entities=entities, occurred_at=occurred_at, context_excerpt=context_excerpt)
+            ChannelSignal(
+                channel=channel,
+                entities=entities,
+                occurred_at=occurred_at,
+                context_excerpt=context_excerpt,
+                source_ref=source_ref,
+            )
         )
 
         flagged_urls: list[str] = []
@@ -262,6 +273,7 @@ class MultichannelCorrelationService:
                 matched_channel=m.matched_channel,
                 matched_at=m.matched_at,
                 context_excerpt=m.context_excerpt,
+                source_ref=m.source_ref,
             )
             for m in matches
         ]

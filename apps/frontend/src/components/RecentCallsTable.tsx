@@ -66,7 +66,72 @@ function ReportButton({ call }: { call: CallAnalysis }) {
   );
 }
 
+// F-06 대시보드 UI/UX 개선(2026-09-02, item 2): 근거 문장의 "다른 채널 기록"을 클릭하면
+// 그 기록의 행으로 스크롤 이동 + 잠깐 하이라이트한다. call.call_id 기준 DOM id를 부여해두고
+// (아래 `<tr id={...}>`) scrollIntoView로 이동한다 — 별도 라우팅/모달 없이 같은 표 안에서만
+// 동작하는 가벼운 구현이다. 대상이 현재 렌더링된 목록에 없으면(다른 채널 탭 필터에 걸렸거나
+// "최근 N건" 밖으로 밀려난 경우) 조용히 무시한다 — 그런 경우는 CorrelationReasons가 애초에
+// 링크를 렌더링하지 않는다(아래 참고).
+function rowDomId(callId: string) {
+  return `call-row-${callId}`;
+}
+
+function CorrelationReasons({
+  matches,
+  knownCallIds,
+  onJumpTo,
+}: {
+  matches: CallAnalysis["correlation_matches"];
+  knownCallIds: Set<string>;
+  onJumpTo: (callId: string) => void;
+}) {
+  if (matches.length === 0) return null;
+  return (
+    <ul style={{ margin: "4px 0 0", paddingLeft: "16px", fontSize: "12px", color: "var(--text-muted)" }}>
+      {matches.map((m, i) => {
+        const linkable = m.source_call_id !== null && knownCallIds.has(m.source_call_id);
+        return (
+          <li key={i}>
+            {m.reason}
+            {linkable && (
+              <>
+                {" — "}
+                <button
+                  type="button"
+                  onClick={() => onJumpTo(m.source_call_id as string)}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    padding: 0,
+                    color: "var(--status-info, #4f8dfd)",
+                    textDecoration: "underline",
+                    cursor: "pointer",
+                    font: "inherit",
+                  }}
+                >
+                  해당 기록 보기
+                </button>
+              </>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 export function RecentCallsTable({ calls }: { calls: CallAnalysis[] }) {
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
+  const knownCallIds = new Set(calls.map((c) => c.call_id));
+
+  function handleJumpTo(callId: string) {
+    const el = document.getElementById(rowDomId(callId));
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightedId(callId);
+    window.setTimeout(() => setHighlightedId((cur) => (cur === callId ? null : cur)), 2000);
+  }
+
   if (calls.length === 0) {
     return (
       <p style={{ color: "var(--text-muted)", fontSize: "14px" }}>
@@ -103,8 +168,18 @@ export function RecentCallsTable({ calls }: { calls: CallAnalysis[] }) {
                 ? `${call.masked_transcript.slice(0, 60)}…`
                 : call.masked_transcript;
 
+            const isHighlighted = call.call_id === highlightedId;
+
             return (
-              <tr key={call.call_id} style={{ borderBottom: "1px solid var(--gridline)" }}>
+              <tr
+                key={call.call_id}
+                id={rowDomId(call.call_id)}
+                style={{
+                  borderBottom: "1px solid var(--gridline)",
+                  background: isHighlighted ? "var(--surface-2)" : undefined,
+                  transition: "background 0.3s ease",
+                }}
+              >
                 <td
                   style={{
                     padding: "8px",
@@ -132,12 +207,32 @@ export function RecentCallsTable({ calls }: { calls: CallAnalysis[] }) {
                     <span aria-hidden>{meta.icon}</span>
                     {meta.label} ({call.risk_score})
                   </span>
+                  {/* F-06 대시보드 item 3: 배지(가산 후 최종점수)와 판정 근거 문단 안 점수
+                      (가산 전 원점수)가 서로 다를 때 이 둘의 관계를 배지 바로 옆에서 바로
+                      보여준다 — 두 숫자가 왜 다른지 판정 요약 문단까지 읽지 않아도 되게. */}
+                  {call.base_risk_score !== call.risk_score && (
+                    <span
+                      style={{
+                        display: "block",
+                        fontSize: "11px",
+                        color: "var(--text-muted)",
+                        marginTop: "2px",
+                      }}
+                    >
+                      {call.base_risk_score} → {call.risk_score} (크로스채널 가산)
+                    </span>
+                  )}
                 </td>
                 <td style={{ padding: "8px", maxWidth: "320px", color: "var(--text-primary)" }}>
                   {excerpt}
                 </td>
                 <td style={{ padding: "8px", color: "var(--text-secondary)" }}>
                   {call.explanation_summary}
+                  <CorrelationReasons
+                    matches={call.correlation_matches}
+                    knownCallIds={knownCallIds}
+                    onJumpTo={handleJumpTo}
+                  />
                   {call.similar_cases.length > 0 && (
                     <ul style={{ margin: "4px 0 0", paddingLeft: "16px", fontSize: "12px", color: "var(--text-muted)" }}>
                       {call.similar_cases.map((c) => (

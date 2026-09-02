@@ -125,6 +125,14 @@ def _serialize_call_result(result: CallAnalysisResult, role: Role) -> dict:
         ],
         "explanation_summary": result.explanation_summary,
         "explanation": result.explanation,
+        # F-06 대시보드(2026-09-02, item 2/3): base_risk_score는 상관관계 가산 "전" 원점수
+        # (risk_score와 같으면 가산 없음 — item 3의 "95 → 100" 배지 표시 여부 판단용).
+        # correlation_matches는 가산 근거를 UI가 개별 렌더링(source_call_id로 클릭 이동)
+        # 할 수 있게 구조화한 목록이다.
+        "base_risk_score": result.base_risk_score,
+        "correlation_matches": [
+            {"reason": m.reason, "source_call_id": m.source_call_id} for m in result.correlation_matches
+        ],
         "similar_cases": [
             {
                 "case_id": c.case_id,

@@ -38,6 +38,15 @@ ALTER TABLE call_analysis_results ADD COLUMN IF NOT EXISTS masked_transcript TEX
 -- (masked_transcript처럼 nullable로 둘 필요가 없음 — 이 값은 항상 알 수 있음).
 ALTER TABLE call_analysis_results ADD COLUMN IF NOT EXISTS channel TEXT NOT NULL DEFAULT 'call';
 
+-- F-06 대시보드 UI/UX 개선(2026-09-02, item 1/2/3): 크로스채널 상관관계 가산 "전" 원점수와
+-- 그 가산 근거를 감사증적에도 영구 보존한다 — 지금까지는 응답 dict에만 실려서 최초 판정
+-- 직후 화면에서만 보였고, 새로고침/재조회하면 사라졌다(risk_score/explanation에는 이미
+-- 병합된 값만 남아 있어서 "원래 몇 점이었는지"를 되돌릴 수 없었음). 둘 다 nullable인 이유는
+-- masked_transcript와 같다 — 이 컬럼 도입 이전 행에는 값이 없다(NULL이면 상관관계 가산이
+-- 없었던 것으로 표시).
+ALTER TABLE call_analysis_results ADD COLUMN IF NOT EXISTS base_risk_score INTEGER;
+ALTER TABLE call_analysis_results ADD COLUMN IF NOT EXISTS correlation_matches JSONB NOT NULL DEFAULT '[]'::jsonb;
+
 CREATE INDEX IF NOT EXISTS idx_call_analysis_results_analyzed_at
     ON call_analysis_results (analyzed_at DESC);
 
@@ -112,3 +121,10 @@ CREATE TABLE IF NOT EXISTS channel_signals (
 
 CREATE INDEX IF NOT EXISTS idx_channel_signals_entity_lookup
     ON channel_signals (entity_type, entity_value, occurred_at DESC);
+
+-- F-06 대시보드 "근거 연결"(2026-09-02): 이 신호를 발생시킨 원본 판정 기록의 식별자
+-- (apps/api call_analysis_results.call_id) — apps/api 경유 호출만 채운다. nullable인
+-- 이유는 apps/api를 거치지 않는 경로(MCP stdio 자동 결합, correlate_multichannel_signals
+-- 툴의 합성 데이터 주입)는 call_id 개념이 없어서다 — 그런 신호는 근거 문장만 보여주고
+-- 클릭 이동은 못 한다(domain/entities.py의 ChannelSignal.source_ref 상단 주석 참고).
+ALTER TABLE channel_signals ADD COLUMN IF NOT EXISTS source_ref TEXT;

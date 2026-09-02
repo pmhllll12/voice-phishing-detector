@@ -49,8 +49,8 @@ class PostgresChannelSignalRepository:
         for entity in signal.entities:
             self._execute(
                 "INSERT INTO channel_signals "
-                "(signal_id, channel, entity_type, entity_value, occurred_at, context_excerpt) "
-                "VALUES (%s, %s, %s, %s, %s, %s)",
+                "(signal_id, channel, entity_type, entity_value, occurred_at, context_excerpt, source_ref) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s)",
                 (
                     signal_id,
                     signal.channel.value,
@@ -58,6 +58,7 @@ class PostgresChannelSignalRepository:
                     entity.value,
                     signal.occurred_at,
                     signal.context_excerpt,
+                    signal.source_ref,
                 ),
             )
 
@@ -78,7 +79,7 @@ class PostgresChannelSignalRepository:
 
         window = timedelta(seconds=window_seconds)
         query = (
-            "SELECT channel, entity_type, entity_value, occurred_at, context_excerpt "
+            "SELECT channel, entity_type, entity_value, occurred_at, context_excerpt, source_ref "
             "FROM channel_signals "
             f"WHERE channel <> %s AND occurred_at BETWEEN %s AND %s AND ({entity_conditions}) "
             "ORDER BY occurred_at DESC"
@@ -93,6 +94,7 @@ class PostgresChannelSignalRepository:
                 matched_channel=Channel(channel),
                 matched_at=matched_at,
                 context_excerpt=context_excerpt,
+                source_ref=source_ref,
             )
-            for channel, entity_type, entity_value, matched_at, context_excerpt in rows
+            for channel, entity_type, entity_value, matched_at, context_excerpt, source_ref in rows
         ]

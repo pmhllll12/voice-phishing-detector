@@ -243,6 +243,10 @@ class CorrelateRequest(BaseModel):
     # 주어지면 매치된 만큼 가산점을 더한 updated_risk_score/updated_risk_level을 함께
     # 돌려준다(CallAnalysisService.execute()의 call 채널 자동 결합과 동일한 계산).
     current_risk_score: int | None = None
+    # F-06 대시보드 "근거 연결"(2026-09-02): apps/api가 이번 판정에 발급한 call_id를
+    # 넘기면, 이후 다른 채널이 이 신호와 매치될 때 그 근거에서 이 call_id로 클릭 이동할
+    # 수 있다(domain/entities.py의 ChannelSignal.source_ref 상단 주석 참고).
+    source_ref: str | None = None
 
 
 @app.post("/api/v1/correlate")
@@ -273,6 +277,12 @@ async def correlate(req: CorrelateRequest, _role: Role = Depends(require_role(Ro
     occurred_at = req.occurred_at or datetime.now(timezone.utc)
     context_excerpt = req.context_excerpt if req.context_excerpt is not None else (req.text[:200] if req.text else "")
     correlation = await run_in_threadpool(
-        correlation_service.correlate, channel, entities, occurred_at, context_excerpt, req.current_risk_score
+        correlation_service.correlate,
+        channel,
+        entities,
+        occurred_at,
+        context_excerpt,
+        req.current_risk_score,
+        req.source_ref,
     )
     return serialize_correlation(correlation)

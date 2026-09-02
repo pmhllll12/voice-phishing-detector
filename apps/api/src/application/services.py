@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from src.domain.deepvoice import DeepvoiceVerdict
 from src.domain.entities import (
     CallAnalysisResult,
+    CorrelationMatchSummary,
     DetectedPatternSummary,
     RiskLevel,
     SimilarCaseSummary,
@@ -32,18 +33,27 @@ def _merge_correlation_into_raw(raw: dict, correlation: dict) -> dict:
     내부의 CallAnalysisService(call 채널 자동 결합)와 달리 여기서는 응답의 summary
     문장 전체를 재생성하지 않는다 — 대신 원래 문장은 그대로 두고 상관관계로 바뀐
     점수/등급과 근거를 명시적으로 덧붙인다(N-04: 어느 쪽이 원래 판정이고 어느 쪽이
-    상관관계로 추가된 것인지 구분되게)."""
+    상관관계로 추가된 것인지 구분되게).
+
+    F-06 대시보드(2026-09-02): summary 접미사를 "내부 로직처럼 보이는" 표기
+    ("+15점 반영, 최종 100점/고위험")에서 "원점수 + 가산 → 최종점수" 형태의
+    자연어 표기로 바꿨다 — 평가자가 코드를 안 봐도 계산 과정을 읽을 수 있어야
+    한다는 게 이번 작업 지시의 취지였다. 100점 상한에 걸려 실제 가산분이 표시된
+    risk_boost보다 적게 반영된 경우 "(상한)"을 붙여 그 사실도 숨기지 않는다."""
+    base_score = raw["risk_score"]
     updated_score = correlation["updated_risk_score"]
     updated_level = correlation["updated_risk_level"]
     reasons = correlation["reasons"]
+    boost = correlation["risk_boost"]
     level_label = _RISK_LEVEL_LABELS.get(updated_level, updated_level)
+    capped = "(상한)" if base_score + boost > 100 else ""
 
     merged = dict(raw)
     merged["risk_score"] = updated_score
     merged["risk_level"] = updated_level
     merged["explanation_summary"] = (
-        raw["explanation_summary"] + f" (크로스채널 상관관계 +{correlation['risk_boost']}점 반영, "
-        f"최종 {updated_score}점/{level_label})"
+        raw["explanation_summary"] + f" ({base_score}점 + 크로스채널 근거 {boost}점 → "
+        f"{updated_score}점{capped}, {level_label})"
     )
     merged["explanation_reasons"] = raw["explanation_reasons"] + reasons
     merged["explanation"] = raw["explanation"] + "\n\n크로스채널 상관관계:\n" + "\n".join(f"- {r}" for r in reasons)
@@ -84,10 +94,21 @@ class AnalyzeCallService:
         동일하게 동작한다. Gmail 폴러(apps/mcp-server/scripts/poll_gmail_inbox.py)가
         channel="email"로 이 메서드를 호출해, F-01/F-02 판정 로직을 새로 만들지
         않고 그대로 재사용하면서 감사증적/대시보드에도 이메일 판정이 남는다."""
+        # F-06 대시보드 "근거 연결"(2026-09-02): call_id를 미리 발급해 correlate() 호출에
+        # source_ref로 실어보낸다 — 그래야 나중에 다른 채널 이벤트가 이 신호와 매치될 때
+        # "몇 분 전 이 판정 기록"으로 클릭 이동할 수 있다(mcp-server domain/entities.py의
+        # ChannelSignal.source_ref 상단 주석 참고).
+        call_id = str(uuid.uuid4())
+
         # N-03: mcp-server(LLM 포함)에는 마스킹된 텍스트만 보낸다 — domain/pii_masking.py
         # 상단 주석 참고("WHY 마스킹을 mcp-server 호출 전에 적용하는가").
         masked_transcript = mask_pii(transcript)
         raw = self._call_analysis_port.analyze(masked_transcript, channel)
+        # F-06 대시보드(2026-09-02): 상관관계 가산 "전" 원점수를 보존한다 — 대시보드가
+        # 위험도 배지(가산 후)와 판정 근거 안 점수(가산 전)를 각각 정확히 보여주려면
+        # 둘 다 필요하다(item 3, "95 → 100" 표기).
+        base_risk_score = raw["risk_score"]
+        correlation_matches: list[CorrelationMatchSummary] = []
 
         # 우선순위 2(크로스채널 상관관계 탐지): mask_pii()가 지우기 "전" 원문에서
         # 엔티티(전화번호/계좌번호/URL)를 추출한다 — mcp-server가 받는 masked_transcript
@@ -102,16 +123,30 @@ class AnalyzeCallService:
                     occurred_at=(occurred_at or datetime.now(timezone.utc)).isoformat(),
                     context_excerpt=masked_transcript[:200],
                     current_risk_score=raw["risk_score"],
+                    source_ref=call_id,
                 )
                 # 크로스채널 매치가 없어도 flagged_urls(Google Safe Browsing)만으로
                 # 가산점이 붙을 수 있다 — matches만 보면 그 경우를 놓친다(mcp-server의
                 # CallAnalysisService.execute()에서 발견한 것과 동일한 종류의 버그,
                 # 여기 apps/api의 별도 상관관계 결합 경로에도 있었다).
-                if correlation.get("matches") or correlation.get("flagged_urls"):
+                matches = correlation.get("matches", [])
+                flagged_urls = correlation.get("flagged_urls", [])
+                if matches or flagged_urls:
                     raw = _merge_correlation_into_raw(raw, correlation)
+                    # F-06 대시보드(item 2, 2026-09-02): reasons는 matches 근거가 먼저,
+                    # flagged_urls 근거가 뒤에 이어붙는 순서를 지킨다(mcp-server
+                    # MultichannelCorrelationService.correlate 참고) — 그 순서로
+                    # flagged_urls 쪽 근거 문장을 잘라낸다. flagged_urls는 "다른 채널
+                    # 기록"이 아니라 외부 위협 인텔리전스 판정이라 source_call_id가 없다.
+                    all_reasons = correlation.get("reasons", [])
+                    url_reasons = all_reasons[len(matches):]
+                    correlation_matches = [
+                        CorrelationMatchSummary(reason=m.get("reason", ""), source_call_id=m.get("source_ref"))
+                        for m in matches
+                    ] + [CorrelationMatchSummary(reason=reason, source_call_id=None) for reason in url_reasons]
 
         result = CallAnalysisResult(
-            call_id=str(uuid.uuid4()),
+            call_id=call_id,
             raw_transcript=transcript,
             masked_transcript=masked_transcript,
             risk_score=raw["risk_score"],
@@ -140,6 +175,8 @@ class AnalyzeCallService:
                 for c in raw.get("similar_cases", [])
             ],
             channel=channel,
+            base_risk_score=base_risk_score,
+            correlation_matches=correlation_matches,
         )
         self._call_log_port.add(result)
         return result

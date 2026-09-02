@@ -34,6 +34,16 @@ export interface SimilarCase {
 // entities.py CallAnalysisResult 상단 주석 참고). SMS는 아직 실연동 없음(설계만).
 export type Channel = "call" | "email" | "sms";
 
+// F-06 대시보드 UI/UX 개선(2026-09-02, item 2): 크로스채널 상관관계 가산 근거 1건.
+// source_call_id가 있으면 "다른 채널의 그 판정 기록"으로 클릭 이동할 수 있다(같은
+// /api/v1/calls 목록 안의 call_id와 매칭). null이면 링크 없이 근거 문장만 보여준다
+// (mcp-server 내부 자동 결합 경로에서 온 매치이거나, Safe Browsing 악성 URL 근거처럼
+// "다른 채널 기록"이 아예 없는 경우 — apps/api CorrelationMatchSummary 상단 주석 참고).
+export interface CorrelationMatch {
+  reason: string;
+  source_call_id: string | null;
+}
+
 export interface CallAnalysis {
   call_id: string;
   analyzed_at: string;
@@ -50,6 +60,11 @@ export interface CallAnalysis {
   explanation_summary: string;
   explanation: string;
   similar_cases: SimilarCase[];
+  // F-06 대시보드 UI/UX 개선(2026-09-02, item 3): 크로스채널 상관관계 가산 "전" 원점수.
+  // risk_score와 다르면 배지에 "base → risk_score" 형태로 같이 보여준다(RecentCallsTable
+  // 참고). 같으면 가산이 없었다는 뜻이라 배지는 risk_score만 그대로 보여준다.
+  base_risk_score: number;
+  correlation_matches: CorrelationMatch[];
 }
 
 export interface CategoryCount {

@@ -57,7 +57,14 @@ def serialize_analysis(
 
 def serialize_correlation(correlation: CorrelationResult) -> dict:
     """correlate_multichannel_signals 툴/REST 엔드포인트 응답. entity_value는 이미
-    마스킹된 표시값이다(MultichannelCorrelationService._mask_for_display 참고)."""
+    마스킹된 표시값이다(MultichannelCorrelationService._mask_for_display 참고).
+
+    F-06 대시보드(2026-09-02): 각 match에 source_ref(클릭 이동용, ChannelSignal 상단
+    주석 참고)와 reason(사람이 읽을 근거 문장)을 같이 실어보낸다 — reason은
+    correlation.reasons의 앞부분과 1:1로 대응한다(MultichannelCorrelationService.correlate가
+    match 근거를 먼저, URL 근거를 뒤에 이어붙이는 순서를 지키므로 인덱스로 짝지을 수
+    있다)."""
+    match_reasons = correlation.reasons[: len(correlation.matches)]
     return {
         "matches": [
             {
@@ -65,8 +72,10 @@ def serialize_correlation(correlation: CorrelationResult) -> dict:
                 "entity_value": m.entity_value,
                 "matched_channel": m.matched_channel.value,
                 "matched_at": m.matched_at.isoformat(),
+                "source_ref": m.source_ref,
+                "reason": reason,
             }
-            for m in correlation.matches
+            for m, reason in zip(correlation.matches, match_reasons)
         ],
         "match_count": len(correlation.matches),
         # 우선순위 2(선택 항목): Google Safe Browsing이 악성으로 확인한 URL(host만,

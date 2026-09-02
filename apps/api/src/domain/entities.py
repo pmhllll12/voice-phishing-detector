@@ -69,6 +69,20 @@ class SimilarCaseSummary:
 
 
 @dataclass
+class CorrelationMatchSummary:
+    """F-06 대시보드(2026-09-02): 크로스채널 상관관계로 위험도가 가산된 근거 1건.
+    mcp-server /api/v1/correlate 응답의 matches(entity_type/entity_value는 이미 마스킹됨)를
+    그대로 옮겨 담되, source_call_id로 대시보드에서 "그 다른 채널 기록"을 클릭 이동할 수
+    있게 한다. source_call_id가 None인 경우는 두 가지다 — (a) 매치 상대가 apps/api를
+    거치지 않은 채널 신호(mcp-server 내부 자동 상관관계 등)였거나, (b) 이 항목이 애초에
+    cross-channel match가 아니라 Google Safe Browsing 악성 URL 근거(reason만 있고 매치
+    상대가 없음)인 경우 — 이때는 UI가 링크 없이 근거 문장만 보여준다."""
+
+    reason: str
+    source_call_id: str | None = None
+
+
+@dataclass
 class CallAnalysisResult:
     """F-01~F-05의 결과를 표현하는 핵심 도메인 모델.
 
@@ -90,6 +104,17 @@ class CallAnalysisResult:
     docs/design.md 7장 참고) — 이 필드는 감사증적/대시보드에서 구분해서 보여주기 위한
     표시용 메타데이터일 뿐이다.
 
+    base_risk_score(F-06 대시보드, 2026-09-02): 크로스채널 상관관계 가산 "전" 원점수
+    (F-01/F-02/F-05만으로 나온 점수). risk_score는 상관관계가 있으면 가산 "후" 최종
+    점수 — 대시보드가 "95점 → 100점"처럼 두 점수를 구분해 보여주기 위해 둘 다 보존한다.
+    가산이 없었던 판정은 base_risk_score가 risk_score와 같다(None이 아님 — "가산 안 됨"과
+    "값을 모름"을 구분할 필요가 없어서 항상 채운다).
+
+    correlation_matches(F-06 대시보드, 2026-09-02): 상관관계 가산의 근거 목록(자연어
+    문장 + 클릭 이동용 call_id). explanation_summary/explanation에도 같은 근거가 자연어
+    문단으로 섞여 있지만, 이 필드는 UI가 근거별로 개별 렌더링(링크 포함)할 수 있게 구조화된
+    형태로 별도 보존한다.
+
     TODO:
       - is_deepvoice: bool | None — F-03 (지금은 /api/v1/calls/deepvoice-check가 별도 엔드포인트로
         분리되어 있음, 하나의 통화 판정으로 결합할지는 F-06 대시보드 요구사항 보고 결정)
@@ -106,6 +131,8 @@ class CallAnalysisResult:
     analyzed_at: datetime
     similar_cases: list[SimilarCaseSummary] = field(default_factory=list)
     channel: str = "call"
+    base_risk_score: int | None = None
+    correlation_matches: list[CorrelationMatchSummary] = field(default_factory=list)
 
 
 @dataclass

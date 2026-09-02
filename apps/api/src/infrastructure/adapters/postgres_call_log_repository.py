@@ -25,6 +25,7 @@ from psycopg.types.json import Jsonb
 
 from src.domain.entities import (
     CallAnalysisResult,
+    CorrelationMatchSummary,
     DetectedPatternSummary,
     RiskLevel,
     SimilarCaseSummary,
@@ -35,7 +36,8 @@ from src.domain.pii_masking import mask_pii
 
 _SELECT_COLUMNS = (
     "call_id, raw_transcript, masked_transcript, risk_score, risk_level, detected_patterns, "
-    "explanation_summary, explanation, similar_cases, analyzed_at, channel"
+    "explanation_summary, explanation, similar_cases, analyzed_at, channel, "
+    "base_risk_score, correlation_matches"
 )
 
 
@@ -71,7 +73,7 @@ class PostgresCallLogRepository:
             f"""
             INSERT INTO call_analysis_results
                 ({_SELECT_COLUMNS})
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 result.call_id,
@@ -102,6 +104,13 @@ class PostgresCallLogRepository:
                 ),
                 result.analyzed_at,
                 result.channel,
+                result.base_risk_score,
+                Jsonb(
+                    [
+                        {"reason": m.reason, "source_call_id": m.source_call_id}
+                        for m in result.correlation_matches
+                    ]
+                ),
             ),
         )
 
@@ -130,6 +139,8 @@ class PostgresCallLogRepository:
             similar_cases,
             analyzed_at,
             channel,
+            base_risk_score,
+            correlation_matches,
         ) = row
         # N-03 도입(2026-08-31) 이전에 적재된 행은 masked_transcript 컬럼이 NULL이다
         # (infra/db/init.sql의 ALTER TABLE ADD COLUMN 참고 — 기존 행을 backfill하지
@@ -137,6 +148,11 @@ class PostgresCallLogRepository:
         # 오래된 감사증적을 조회해도 원문이 그대로 노출되는 일이 없다.
         if masked_transcript is None:
             masked_transcript = mask_pii(raw_transcript)
+        # F-06 대시보드(2026-09-02): base_risk_score 도입 이전 행은 NULL이다 — 상관관계
+        # 가산이 없었던 것과 구분할 수 없지만(원 데이터 손실), risk_score로 대체해두면
+        # UI가 최소한 "가산 없음"으로 안전하게 표시한다(95→100 배지를 안 그림).
+        if base_risk_score is None:
+            base_risk_score = risk_score
         return CallAnalysisResult(
             call_id=str(call_id),
             raw_transcript=raw_transcript,
@@ -149,4 +165,6 @@ class PostgresCallLogRepository:
             analyzed_at=analyzed_at,
             similar_cases=[SimilarCaseSummary(**c) for c in similar_cases],
             channel=channel,
+            base_risk_score=base_risk_score,
+            correlation_matches=[CorrelationMatchSummary(**m) for m in correlation_matches],
         )
