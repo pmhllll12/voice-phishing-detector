@@ -23,6 +23,8 @@
 import psycopg
 from psycopg.types.json import Jsonb
 
+from dataclasses import dataclass
+
 from src.domain.entities import (
     CallAnalysisResult,
     CorrelationMatchSummary,
@@ -39,6 +41,15 @@ _SELECT_COLUMNS = (
     "explanation_summary, explanation, similar_cases, analyzed_at, channel, "
     "base_risk_score, correlation_matches"
 )
+
+
+@dataclass
+class _StatsRow:
+    """domain.entities.StatsSourceRecord를 만족하는 경량 레코드 — stats_summary()가
+    필요한 필드 2개만 담는다(위 클래스 상단 주석 참고)."""
+
+    risk_level: RiskLevel
+    detected_patterns: list[DetectedPatternSummary]
 
 
 class PostgresCallLogRepository:
@@ -122,8 +133,19 @@ class PostgresCallLogRepository:
         return [self._row_to_result(row) for row in rows]
 
     def stats_summary(self) -> StatsSummary:
-        rows = self._execute(f"SELECT {_SELECT_COLUMNS} FROM call_analysis_results").fetchall()
-        return compute_stats_summary([self._row_to_result(row) for row in rows])
+        # 코드 리뷰(2026-09-02) 대응: compute_stats_summary는 risk_level/detected_patterns
+        # 두 필드만 쓰는데, 예전엔 _SELECT_COLUMNS 전체(raw_transcript/explanation/
+        # similar_cases/correlation_matches 등)를 가져와 매핑한 뒤 대부분 버렸다 — 대시보드가
+        # 10초마다 폴링하므로 데이터가 커질수록 불필요한 역직렬화 비용이 누적된다. 필요한
+        # 컬럼 2개만 SELECT하고, 그 두 필드만 채운 경량 레코드를 domain의
+        # StatsSourceRecord Protocol(entities.py 참고)로 넘긴다.
+        rows = self._execute("SELECT risk_level, detected_patterns FROM call_analysis_results").fetchall()
+        return compute_stats_summary(
+            [
+                _StatsRow(RiskLevel(risk_level), [DetectedPatternSummary(**p) for p in patterns])
+                for risk_level, patterns in rows
+            ]
+        )
 
     @staticmethod
     def _row_to_result(row: tuple) -> CallAnalysisResult:

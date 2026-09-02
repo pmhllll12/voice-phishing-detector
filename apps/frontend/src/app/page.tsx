@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 
 import { AnalyzeCallForm } from "@/components/AnalyzeCallForm";
 import { DeepvoiceCheckForm } from "@/components/DeepvoiceCheckForm";
@@ -26,6 +26,23 @@ const sectionTitleStyle: CSSProperties = {
   marginBottom: "10px",
 };
 
+// 코드 리뷰(2026-09-02) 대응: 채널 탭 버튼과 위험도 필터 버튼이 거의 동일한 스타일
+// 객체를 각각 인라인으로 들고 있어 중복이었다 — 공통 필터 탭 스타일을 함수로 뽑아
+// 두 곳에서 재사용한다. activeColor를 생략하면(채널 탭처럼 강조색이 없는 경우)
+// text-primary로 폴백한다.
+function filterTabStyle(active: boolean, activeColor?: string): CSSProperties {
+  return {
+    padding: "6px 14px",
+    borderRadius: "6px",
+    border: `1px solid ${active && activeColor ? activeColor : "var(--gridline)"}`,
+    background: active ? "var(--surface-2)" : "transparent",
+    color: active ? (activeColor ?? "var(--text-primary)") : "var(--text-secondary)",
+    fontWeight: active ? 600 : 400,
+    fontSize: "13px",
+    cursor: "pointer",
+  };
+}
+
 export default function DashboardPage() {
   const [stats, setStats] = useState<StatsSummary | null>(null);
   const [calls, setCalls] = useState<CallAnalysis[]>([]);
@@ -38,19 +55,29 @@ export default function DashboardPage() {
   const [riskFilter, setRiskFilter] = useState<RiskLevel | "all">("all");
   const [limit, setLimit] = useState(PAGE_SIZE);
   const [loadingMore, setLoadingMore] = useState(false);
+  // 코드 리뷰(2026-09-02) 대응: "더 보기"(limit 증가) 클릭과 10초 자동 폴링이 겹치면 두
+  // 요청이 동시에 in-flight 상태가 될 수 있는데, 요청 순서와 응답 도착 순서가 다를 수
+  // 있다(예: limit=20 요청이 limit=40 요청보다 늦게 도착) — 그러면 더 큰 결과를 더 작은
+  // 결과가 덮어써서 화면이 일시적으로 줄어든다. 매 refresh 호출마다 증가하는 요청 ID를
+  // 발급해두고, 응답이 왔을 때 그게 여전히 "가장 최근에 보낸 요청"인 경우에만 state를
+  // 갱신한다 — 오래된 응답은 조용히 버린다.
+  const latestRequestId = useRef(0);
 
   const refresh = useCallback(async () => {
+    const requestId = ++latestRequestId.current;
     try {
       const [statsData, callsData] = await Promise.all([getStatsSummary(), listCalls(limit)]);
+      if (requestId !== latestRequestId.current) return;
       setStats(statsData);
       setCalls(callsData);
       setLoadError(null);
     } catch {
+      if (requestId !== latestRequestId.current) return;
       setLoadError(
         "apps/api에 연결할 수 없습니다. api(8000)와 mcp-server REST 어댑터(8100)가 실행 중인지 확인하세요."
       );
     } finally {
-      setLoadingMore(false);
+      if (requestId === latestRequestId.current) setLoadingMore(false);
     }
   }, [limit]);
 
@@ -150,16 +177,7 @@ export default function DashboardPage() {
               key={tab.key}
               type="button"
               onClick={() => setChannelFilter(tab.key)}
-              style={{
-                padding: "6px 14px",
-                borderRadius: "6px",
-                border: "1px solid var(--gridline)",
-                background: channelFilter === tab.key ? "var(--surface-2)" : "transparent",
-                color: channelFilter === tab.key ? "var(--text-primary)" : "var(--text-secondary)",
-                fontWeight: channelFilter === tab.key ? 600 : 400,
-                fontSize: "13px",
-                cursor: "pointer",
-              }}
+              style={filterTabStyle(channelFilter === tab.key)}
             >
               {tab.label}
             </button>
@@ -168,40 +186,17 @@ export default function DashboardPage() {
         {/* item 5: 위험도 필터 — 채널 탭과 같은 스타일을 재사용하되, 선택된 위험도는
             RISK_LEVEL_META 색으로 강조해 채널 탭과 구분되는 축임을 드러낸다. */}
         <div style={{ display: "flex", gap: "6px", marginBottom: "12px" }}>
-          <button
-            type="button"
-            onClick={() => setRiskFilter("all")}
-            style={{
-              padding: "6px 14px",
-              borderRadius: "6px",
-              border: "1px solid var(--gridline)",
-              background: riskFilter === "all" ? "var(--surface-2)" : "transparent",
-              color: riskFilter === "all" ? "var(--text-primary)" : "var(--text-secondary)",
-              fontWeight: riskFilter === "all" ? 600 : 400,
-              fontSize: "13px",
-              cursor: "pointer",
-            }}
-          >
+          <button type="button" onClick={() => setRiskFilter("all")} style={filterTabStyle(riskFilter === "all")}>
             전체 위험도
           </button>
           {RISK_LEVEL_ORDER.map((level) => {
             const meta = RISK_LEVEL_META[level];
-            const active = riskFilter === level;
             return (
               <button
                 key={level}
                 type="button"
                 onClick={() => setRiskFilter(level)}
-                style={{
-                  padding: "6px 14px",
-                  borderRadius: "6px",
-                  border: `1px solid ${active ? meta.color : "var(--gridline)"}`,
-                  background: active ? "var(--surface-2)" : "transparent",
-                  color: active ? meta.color : "var(--text-secondary)",
-                  fontWeight: active ? 600 : 400,
-                  fontSize: "13px",
-                  cursor: "pointer",
-                }}
+                style={filterTabStyle(riskFilter === level, meta.color)}
               >
                 <span aria-hidden>{meta.icon}</span> {meta.label}
               </button>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { ApiError, submitReport, type CallAnalysis, type ReportResult } from "@/lib/api";
 import { CHANNEL_META } from "@/lib/channels";
@@ -186,7 +186,9 @@ function ContentModal({ call, onClose }: { call: CallAnalysis; onClose: () => vo
 export function RecentCallsTable({ calls }: { calls: CallAnalysis[] }) {
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const [expandedCall, setExpandedCall] = useState<CallAnalysis | null>(null);
-  const knownCallIds = new Set(calls.map((c) => c.call_id));
+  // 코드 리뷰(2026-09-02) 대응: calls prop이 바뀔 때만 다시 만들면 되는데, 매 렌더마다
+  // (예: highlightedId만 바뀌는 클릭, 모달 열기/닫기) 새 Set을 만들고 있었다.
+  const knownCallIds = useMemo(() => new Set(calls.map((c) => c.call_id)), [calls]);
 
   function handleJumpTo(callId: string) {
     const el = document.getElementById(rowDomId(callId));
@@ -283,6 +285,13 @@ export function RecentCallsTable({ calls }: { calls: CallAnalysis[] }) {
                   )}
                 </td>
                 <td style={{ padding: "8px", maxWidth: "320px", color: "var(--text-primary)" }}>
+                  {/* 코드 리뷰(2026-09-02) 대응: 이 열의 폭을 <td>의 maxWidth에만 맡기면
+                      기본 table-layout(auto)에서 다른 셀의 내용에 따라 컬럼 폭 계산이
+                      그 max-width를 무시할 수 있다 — 특히 줄바꿈 지점이 없는 아주 긴
+                      토큰/URL이 들어오면 line-clamp가 걸리기 전에 컬럼 자체가 늘어난다.
+                      block 요소에 고정 width를 명시적으로 주면(내용 길이와 무관한
+                      preferred width가 되므로) 그 문제가 없다 — <td>의 maxWidth는
+                      좁은 화면에서의 보조 안전장치로 남겨둔다. */}
                   <button
                     type="button"
                     onClick={() => setExpandedCall(call)}
@@ -294,6 +303,8 @@ export function RecentCallsTable({ calls }: { calls: CallAnalysis[] }) {
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       textAlign: "left",
+                      width: "320px",
+                      maxWidth: "100%",
                       background: "none",
                       border: "none",
                       padding: 0,

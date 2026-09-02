@@ -6,6 +6,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from typing import Protocol
 
 
 class RiskLevel(str, Enum):
@@ -151,7 +152,22 @@ class StatsSummary:
     category_counts: list[CategoryCount] = field(default_factory=list)
 
 
-def compute_stats_summary(records: list[CallAnalysisResult]) -> StatsSummary:
+class StatsSourceRecord(Protocol):
+    """compute_stats_summary가 실제로 쓰는 필드 2개만 뽑은 구조적 타입(duck typing).
+
+    코드 리뷰(2026-09-02)에서 지적된 성능 이슈 대응: PostgresCallLogRepository.stats_summary()가
+    raw_transcript/explanation/similar_cases/correlation_matches 등 집계에 안 쓰는 컬럼까지
+    포함해 전체 CallAnalysisResult로 매핑한 뒤 버렸다 — 데이터가 커질수록 매 폴링(10초)마다
+    불필요한 역직렬화 비용이 쌓인다. 이 Protocol 덕분에 postgres 어댑터는 risk_level/
+    detected_patterns 두 컬럼만 SELECT한 경량 레코드를 넘길 수 있고, InMemoryCallLogRepository는
+    이미 메모리에 있는 완전한 CallAnalysisResult를 그대로 넘겨도(구조적으로 호환되므로) 계속
+    동작한다 — 두 구현체 모두 이 함수의 시그니처를 바꿀 필요가 없다."""
+
+    risk_level: RiskLevel
+    detected_patterns: list[DetectedPatternSummary]
+
+
+def compute_stats_summary(records: list[StatsSourceRecord]) -> StatsSummary:
     """CallLogPort 구현체(InMemoryCallLogRepository/PostgresCallLogRepository)가 공유하는
     순수 집계 로직 — SQL로 집계하지 않고, 조회된 레코드를 파이썬에서 계산한다(지금 규모에서는
     이쪽이 더 단순하고 두 구현체의 결과가 항상 일치함을 보장하기 쉽다)."""
