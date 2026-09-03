@@ -22,16 +22,21 @@
 
 import logging
 import os
+from datetime import datetime, timezone
 
 import httpx
 from mcp.server import MCPServer
 
-from application.dto import serialize_analysis
-from application.services import CallAnalysisService, ReportSubmissionService
-from domain.entities import RiskLevel
+from application.dto import serialize_analysis, serialize_correlation, serialize_report
+from application.services import CallAnalysisService, MultichannelCorrelationService, ReportSubmissionService
+from domain.entities import Channel, RiskLevel
+from domain.entity_extraction import extract_entities
 from infrastructure.adapters.debug_compare_adapter import DebugCompareAdapter
-from infrastructure.adapters.in_memory_report_repository import InMemoryReportRepository
 from infrastructure.adapters.ollama_call_analysis_adapter import OllamaCallAnalysisAdapter
+from infrastructure.adapters.google_safe_browsing_adapter import GoogleSafeBrowsingAdapter
+from infrastructure.adapters.postgres_channel_signal_repository import PostgresChannelSignalRepository
+from infrastructure.adapters.postgres_report_repository import PostgresReportRepository
+from infrastructure.adapters.rag_worker_search_adapter import RagWorkerSearchAdapter
 from infrastructure.adapters.rule_based_call_analysis_adapter import RuleBasedCallAnalysisAdapter
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -51,12 +56,30 @@ elif os.environ.get("LLM_DEBUG_COMPARE", "").lower() in ("1", "true", "yes"):
 else:
     _call_analysis_adapter = _ollama_adapter
 
-call_analysis_service = CallAnalysisService(_call_analysis_adapter)
-report_submission_service = ReportSubmissionService(InMemoryReportRepository())
-
 # F-04: rag-worker HTTP 서비스 주소. docker-compose로 묶이면 컨테이너 네트워크 주소
 # (예: http://rag-worker:8200)로 오버라이드하면 되도록 환경변수로 뺐다.
 RAG_WORKER_URL = os.environ.get("RAG_WORKER_URL", "http://localhost:8200")
+# N-01: 감사증적(report_records) postgres 주소 — apps/api/src/main.py와 동일한 기본값
+# (로컬 개발 전용, infra/db/init.sql 참고).
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL", "postgresql://vps_app:vps_dev_password@localhost:5432/vps_detector"
+)
+
+# 우선순위 2(선택 항목): 키가 없으면 위협 인텔리전스 검사 없이 크로스채널 상관관계만
+# 동작한다(FraudCaseSearchPort와 동일한 선택적 의존 패턴, google_safe_browsing_adapter.py
+# 상단 주석 참고).
+GOOGLE_SAFE_BROWSING_API_KEY = os.environ.get("GOOGLE_SAFE_BROWSING_API_KEY", "")
+_threat_intelligence_adapter = (
+    GoogleSafeBrowsingAdapter(GOOGLE_SAFE_BROWSING_API_KEY) if GOOGLE_SAFE_BROWSING_API_KEY else None
+)
+
+_channel_signal_repository = PostgresChannelSignalRepository(DATABASE_URL)
+correlation_service = MultichannelCorrelationService(_channel_signal_repository, threat_intelligence_port=_threat_intelligence_adapter)
+
+call_analysis_service = CallAnalysisService(
+    _call_analysis_adapter, RagWorkerSearchAdapter(RAG_WORKER_URL), correlation_service
+)
+report_submission_service = ReportSubmissionService(PostgresReportRepository(DATABASE_URL))
 
 
 @mcp.tool()
@@ -69,9 +92,13 @@ def analyze_call_pattern(transcript: str) -> dict:
     기본은 로컬 Ollama LLM(문맥 이해 기반 판단)이고, 호출 실패 시 키워드 규칙 기반(v1)으로
     자동 폴백한다 (infrastructure/adapters/ollama_call_analysis_adapter.py,
     rule_based_call_analysis_adapter.py 참고).
+
+    F-04: 위험 정황이 감지되면 rag-worker에서 유사 사기 사례를 검색해 판정 근거에
+    함께 인용한다(응답의 similar_cases, explanation 참고). rag-worker가 꺼져 있어도
+    이 툴 자체는 계속 정상 동작한다 — CallAnalysisService 상단 주석 참고.
     """
     result = call_analysis_service.execute(transcript)
-    return serialize_analysis(result.detection, result.risk, result.explanation)
+    return serialize_analysis(result.detection, result.risk, result.explanation, result.similar_cases)
 
 
 @mcp.tool()
@@ -82,8 +109,9 @@ def lookup_fraud_pattern_db(transcript: str, top_k: int = 3) -> dict:
     실행 중이어야 한다:
         cd apps/rag-worker && source .venv/bin/activate && uvicorn src.main:app --port 8200
 
-    TODO: analyze_call_pattern의 F-05 설명(현재는 F-01/F-02만 근거로 사용)에
-          이 결과(사례 요약 + 유사도)도 함께 인용하도록 결합하는 것을 검토
+    이 툴은 Claude Code가 직접 조회할 때 쓰는 별도 경로다 — analyze_call_pattern은
+    이미 자체적으로 rag-worker를 호출해 판정 근거에 유사 사례를 결합한다
+    (RagWorkerSearchAdapter, application/services.py의 CallAnalysisService 참고).
     """
     try:
         response = httpx.post(
@@ -125,13 +153,48 @@ def submit_report(case_summary: str, risk_level: str) -> dict:
         }
 
     record = report_submission_service.submit(case_summary, level)
-    return {
-        "report_id": record.report_id,
-        "status": record.status,
-        "channel": record.channel,
-        "submitted_at": record.submitted_at.isoformat(),
-        "note": "MOCK: 실제 112/경찰청 신고 API 연동 없음 (RFP 데이터 제약, docs/RFP.md 4장 참고)",
-    }
+    return serialize_report(record)
+
+
+@mcp.tool()
+def correlate_multichannel_signals(
+    channel: str, text: str, occurred_at: str | None = None
+) -> dict:
+    """우선순위 2: 통화/문자/이메일 텍스트에서 전화번호/계좌번호/URL을 추출해 채널 신호로
+    기록하고, 다른 채널에 같은 엔티티가 최근(기본 30분) 등장했는지 확인한다.
+
+    시중 보이스피싱 차단 앱은 자기 채널(통화면 통화만) 안에서만 판단하지만, 실제
+    공격은 "전화로 신뢰 형성 → 문자로 악성 링크 → 이메일로 위장 공문" 같은 다단계
+    공격으로 진화하고 있다 — 이 툴은 그 연계를 잡는다.
+
+    channel은 "call"/"sms"/"email" 중 하나. analyze_call_pattern은 call 채널 신호를
+    이미 자동으로 기록/조회하므로(CallAnalysisService 참고), 이 툴은 주로 sms/email
+    합성 이벤트를 수동 주입해 상관관계를 검증하는 용도다 — 실제 SMS 수신/이메일 연동
+    (Gmail API 등)은 이번 범위 밖이다.
+
+    ⚠️ N-03과의 상호작용: apps/api를 거치는 통화(REST 경로)는 mcp-server에 도달하기
+    전에 이미 마스킹되어 있어 전화번호/계좌번호가 "[전화번호]"/"[계좌번호]" 태그로
+    치환된 상태다 — 그 경로에서는 URL 상관관계만 자동 작동한다. 이 툴로 원문을 직접
+    넣으면(테스트/시연 목적) 정상적으로 전화번호/계좌번호까지 추출된다.
+    """
+    try:
+        channel_enum = Channel(channel)
+    except ValueError:
+        return {"error": f"알 수 없는 channel '{channel}' — call/sms/email 중 하나여야 합니다."}
+
+    if occurred_at:
+        try:
+            parsed_occurred_at = datetime.fromisoformat(occurred_at)
+        except ValueError:
+            return {"error": f"occurred_at은 ISO8601 형식이어야 합니다: '{occurred_at}'"}
+    else:
+        parsed_occurred_at = datetime.now(timezone.utc)
+
+    entities = extract_entities(text)
+    correlation = correlation_service.correlate(
+        channel_enum, entities, occurred_at=parsed_occurred_at, context_excerpt=text[:200]
+    )
+    return serialize_correlation(correlation)
 
 
 if __name__ == "__main__":

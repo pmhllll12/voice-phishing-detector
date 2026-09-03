@@ -25,6 +25,12 @@ numpy
 
 # 이전 TF-IDF v1(infrastructure/adapters/tfidf_similarity_adapter.py)은 디버그 비교
 # 모드(RAG_DEBUG_COMPARE=1)에서 계속 쓰이므로 별도 의존성 추가 없이 유지.
-# TODO: pgvector 연동 (asyncpg 또는 sqlalchemy + pgvector 확장) — 임베딩을 pgvector에
-#       저장하면 지금처럼 매 요청마다 전체 코퍼스와 코사인 유사도를 계산하지 않고
-#       인덱스 기반 근사 검색(ANN)으로 바꿀 수 있음 (코퍼스가 지금처럼 10건이면 불필요).
+
+# F-04 pgvector 이전: 코퍼스 임베딩을 postgres(pgvector 확장)에 저장/검색한다
+# (infrastructure/adapters/pgvector_similarity_adapter.py, scripts/seed_fraud_cases.py).
+# apps/api의 psycopg[binary] 선택과 동일한 이유로 binary 배포판을 쓴다(로컬 빌드 도구
+# 없이 바로 설치). pgvector 패키지는 psycopg에 vector 타입 어댑터를 등록해준다
+# (pgvector.psycopg.register_vector) — SQL을 직접 문자열로 만들지 않고 numpy 배열을
+# 쿼리 파라미터로 그대로 바인딩할 수 있게 해준다.
+psycopg[binary]
+pgvector

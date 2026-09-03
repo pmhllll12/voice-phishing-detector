@@ -1,0 +1,78 @@
+---
+layout: page
+title: 개발 구현 계획
+permalink: /07-개발구현계획/
+---
+
+## 1) 개발 환경 및 기술 스택
+
+| 계층/서비스 | 기술 |
+|---|---|
+| `apps/api` (오케스트레이션) | FastAPI, psycopg[binary], prometheus-client, httpx |
+| `apps/mcp-server` (도구 분리) | mcp[cli], FastAPI(REST 어댑터), Ollama(EXAONE 3.5 2.4B, JSON Schema 강제 출력) |
+| `apps/rag-worker` (유사사례 검색) | sentence-transformers(jhgan/ko-sroberta-multitask), pgvector, psycopg |
+| `apps/stt-worker` (모바일 STT) | faster-whisper(CTranslate2), nvidia-ml-py(GPU 메모리 관측) |
+| `apps/frontend` (관제 대시보드) | Next.js 14, React 18, TypeScript |
+| 저장소 | PostgreSQL 16 + pgvector 확장 (`pgvector/pgvector:pg16`) |
+| 관측성 | Prometheus + Grafana, 커스텀 메트릭은 `vps_` 접두사로 통일 |
+| 로컬 GPU | RTX 3050 (WSL2, CUDA 12.6) — GPU 미가용 시 전 서비스가 CPU로 자동 폴백 |
+| 인프라(계획) | Docker Compose, AWS EC2, Nginx, Cloudflare Tunnel — 이전 프로젝트
+[gpu-fleet-ops](https://github.com/pmhllll12/gpu-fleet-ops)에서 검증한 패턴 재사용 |
+
+## 2) 주요 기능 구현 방안 — 포트-어댑터 교체 이력
+
+헥사고날 아키텍처(6장 2절)의 실효성을 "이론상 가능하다"가 아니라 **실제로 교체해본
+결과**로 증명하기 위해, 개발 과정에서 아래 3개 축을 각각 최소 1회 이상 실제로
+교체했다(`docs/design.md` 발췌).
+
+| # | 교체 지점 | Port | v1 | v2 | v3 | application 계층 diff |
+|---|---|---|---|---|---|---|
+| 1 | F-01/F-02 판정 알고리즘 | `CallAnalysisPort` | `RuleBasedCallAnalysisAdapter`(폴백용 유지) | `OllamaCallAnalysisAdapter`(기본값, `360ffde`) | — | 0줄 |
+| 2 | F-04 유사사례 검색 | `FraudCaseSearchPort` | `TfidfSimilarityAdapter`(디버그 비교용) | `EmbeddingSimilarityAdapter`(`2d60b87`) | `PgvectorSimilarityAdapter`(기본값, `960e96e`) | 0줄 |
+| 3 | N-01 감사증적 저장소 | `CallLogPort`/`ReportRepositoryPort` | `InMemory*`(테스트 전용) | `Postgres*`(운영, `bd68902`) | — | 0줄 |
+| 4 | F-03 딥보이스 판별기 | `DeepvoiceDetectionPort` | `HeuristicDeepvoiceAdapter`(폴백 겸 N-04 보조 지표용 유지) | `Wav2Vec2DeepvoiceAdapter`(기본값, 2026-08-31) | — | 0줄 |
+
+"application 계층 diff 0줄"은 실제 커밋 메시지에 명시돼 있다. 예를 들어 F-04 v1→v2
+교체 커밋(`2d60b87`)은 "인터페이스를 그대로 유지해 application/services.py와 기존
+어댑터·테스트는 손대지 않았다"라고 적혀 있다. 두 번째 교체(F-01/F-02)부터는 첫 번째
+경험을 그대로 재사용했다.
+
+같은 원리로 **N-02(RBAC)도 apps/api에서 mcp-server로 그대로 복제 확장했다**
+(`c9799af`) — 서비스 대 서비스 자격증명(`MCP_SERVICE_API_KEY`)으로 apps/api가
+mcp-server를 통과하도록, 두 서비스가 동일한 `Role`/`role_satisfies` 계층 구조를
+공유한다.
+
+새 사기유형(카테고리) 추가 절차도 실제로 검증됐다 — `personal_info_request`
+(개인정보요구)가 4번째 카테고리로 "확장 예시"로 추가됐고, F-01/F-02 합성 데이터셋
+검증(`767eac1`)에서 나머지 3개 카테고리와 동일하게 정밀도/재현율이 검증됐다
+(`docs/design.md` "확장 절차" 참고).
+
+## 3) 조직 구성 및 역할 분담
+
+팀 프로젝트가 아니라 **1인 개발**이다 — 박민호가 기획, 요구사항정의(가상 RFP 작성),
+백엔드(4개 Python 서비스) 구현, 프론트엔드(대시보드) 구현, 인프라/관측성 설계, 문서화
+(RFP/설계서)를 전 과정 엔드투엔드로 수행한다. 별도 QA/PM 역할 분리 없이, 매 기능
+구현 직후 pytest 기반 자동 테스트와 실제 서비스 기동 후 curl/실제 API 호출로 직접
+검증하는 방식으로 진행한다(8장 참고).
+
+## 4) 개발 일정 — 실제 커밋 로그 기반
+
+정해진 스프린트 계획을 먼저 세우고 따라가기보다, RFP의 요구사항(F-01~F-07, N-01~N-06)
+순서대로 "구현 → 로컬 실측 검증 → 커밋"을 반복하는 방식으로 진행했다. 아래는
+`git log`로 재구성한 실제 작업 일지다(2026-08-24 ~ 2026-08-31, 진행 중).
+
+| 날짜 | 주요 작업 |
+|---|---|
+| 2026-08-24 | 초기 스캐폴딩과 F-01~F-06 최소 구현(`8c539e9`), F-07 신고연동 mock(`df98210`) |
+| 2026-08-25 | F-04 검색을 TF-IDF→로컬 임베딩으로 교체(`2d60b87`), F-01/F-02 판정을 키워드 규칙→로컬 LLM(Ollama)로 교체(`360ffde`) — N-06 확장성의 첫 실증 사례 |
+| 2026-08-26 | 모바일 실시간 감지용 stt-worker 뼈대 추가(`706e49f`), 4개 백엔드에 `/ready` 헬스체크 고도화(`d17ba24`), 로컬 전체 스택 실행/검증 스킬 추가 |
+| 2026-08-28 | api↔stt-worker 오디오 경로 연동(`8d174c1`), F-07 REST/대시보드 연결(`27a6178`), F-04 유사사례를 F-05 판정근거에 결합(`73ecdb1`), F-01/F-02 합성 데이터셋 가중치/임계값 검증(`767eac1`), N-01 감사증적 postgres 전환(`bd68902`) |
+| 2026-08-31 | F-04 postgres+pgvector 전환(`960e96e`), N-02 RBAC 도입(`a9480fd`) 및 mcp-server까지 확장(`c9799af`), F-03 딥보이스 임계값 실측 보정(`4b3b0b5`), N-03 PII 마스킹(`0f6440f`), N-06 확장성 설계 문서화(`e3d7d54`), N-05 판정/딥보이스 메트릭 연결(`1414f30`) |
+
+`2026-08-31` 하루에 6개 요구사항(F-03, N-02×2, N-03, N-05, N-06)이 몰린 것은 우연이
+아니다 — F-01/F-02/F-04/F-06/F-07이라는 "핵심 판정·검색 파이프라인"이 먼저 안정화된
+뒤에야, 그 위에 얹는 비기능 요구사항(접근통제/비식별화/관측성/확장성 문서화)을
+한꺼번에 채워 넣을 수 있었다. 이 시점 기준 RFP의 F-01~F-07/N-01~N-06 전 항목이 최소
+1차 구현을 마쳤다(9장 1절 참고).
+
+[← 목차로]({{ "/toc/" | relative_url }})

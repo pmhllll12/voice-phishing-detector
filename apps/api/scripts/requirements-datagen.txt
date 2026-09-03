@@ -1,0 +1,18 @@
+# F-03 딥보이스 데이터셋(data/deepvoice_samples/, data/deepvoice_generalization_samples/)을
+# 재생성할 때만 필요한 도구 의존성. apps/api의 런타임/테스트는 이 파일과 무관하다 — 생성된
+# WAV 파일과 manifest.json만 커밋해두고 커밋된 것을 그대로 쓰기 때문에, 앱을 실행하거나
+# 테스트를 돌릴 때 gTTS 등을 설치할 필요가 없다. apps/api/.venv를 오염시키지 않도록 반드시
+# 별도 venv에 설치할 것:
+#
+#   python3 -m venv /tmp/deepvoice-datagen-venv
+#   /tmp/deepvoice-datagen-venv/bin/pip install -r scripts/requirements-datagen.txt
+#   /tmp/deepvoice-datagen-venv/bin/python scripts/generate_deepvoice_dataset.py
+#   /tmp/deepvoice-datagen-venv/bin/python scripts/generate_deepvoice_generalization_dataset.py
+#
+# (ffmpeg 시스템 바이너리도 필요 — mp3/flac -> 16-bit PCM WAV 변환용)
+gTTS
+edge-tts   # generate_deepvoice_generalization_dataset.py 전용 — gTTS와 다른 TTS 엔진(일반화 검증용)
+huggingface_hub
+pyarrow
+soundfile
+numpy

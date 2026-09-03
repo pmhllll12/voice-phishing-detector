@@ -1,0 +1,58 @@
+// N-06 확장성 검증(2026-09-01, 3번째 진입점) — server.py(MCP stdio)/rest_server.py(REST)와
+// 완전히 같은 application 서비스(CallAnalysisService)를 세 번째 프로토콜(gRPC)로 감싸본다.
+// 응답 필드는 application/dto.py의 serialize_analysis()가 만드는 dict와 1:1로 맞췄다 —
+// 세 어댑터가 같은 판정 로직을 감싸기만 한다는 걸 스키마 수준에서도 보여주기 위함.
+//
+// 생성된 스텁(src/infrastructure/grpc_generated/*_pb2*.py)은 이 .proto가 바뀔 때마다
+// 아래 명령으로 재생성해서 커밋한다(protoc를 매번 로컬에 요구하지 않도록 — 다른
+// 언어 바인딩이 필요해질 때만 재생성 파이프라인을 따로 구성하면 된다):
+//   apps/mcp-server/.venv/bin/python -m grpc_tools.protoc -I protos \
+//     --python_out=src/infrastructure/grpc_generated \
+//     --grpc_python_out=src/infrastructure/grpc_generated \
+//     --pyi_out=src/infrastructure/grpc_generated \
+//     protos/voice_phishing.proto
+// ⚠️ protoc가 voice_phishing_pb2_grpc.py에 `import voice_phishing_pb2`(절대경로)를
+// 생성하는데, 이 패키지 구조(infrastructure.grpc_generated.*)에서는 안 먹는다 —
+// 재생성할 때마다 `from . import voice_phishing_pb2 as voice__phishing__pb2`로
+// 수동으로 고쳐야 한다(잊기 쉬운 부분이라 명시).
+
+syntax = "proto3";
+
+package voice_phishing;
+
+service VoicePhishingAnalysis {
+  // F-01/F-02/F-05: analyze_call_pattern(MCP 툴)/POST /api/v1/analyze(REST)와 동일한
+  // 판정을 gRPC로 제공한다.
+  rpc Analyze(AnalyzeRequest) returns (AnalyzeResponse);
+}
+
+message AnalyzeRequest {
+  string transcript = 1;
+}
+
+message DetectedPattern {
+  string category = 1;
+  string category_label = 2;
+  repeated string matched_keywords = 3;
+}
+
+message SimilarCase {
+  string case_id = 1;
+  string title = 2;
+  string category = 3;
+  string summary = 4;
+  string source_note = 5;
+  double similarity = 6;
+}
+
+message AnalyzeResponse {
+  repeated DetectedPattern detected_patterns = 1;
+  int32 pattern_count = 2;
+  bool has_risk_indicators = 3;
+  int32 risk_score = 4;
+  string risk_level = 5;
+  string explanation_summary = 6;
+  repeated string explanation_reasons = 7;
+  string explanation = 8;
+  repeated SimilarCase similar_cases = 9;
+}

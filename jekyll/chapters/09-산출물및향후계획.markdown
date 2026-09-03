@@ -1,0 +1,87 @@
+---
+layout: page
+title: 산출물 및 향후 계획
+permalink: /09-산출물및향후계획/
+---
+
+## 1) 산출물 계획
+
+| 구분 | 산출물 | 상태 |
+|---|---|---|
+| 문서 | `docs/RFP.md` (제안요청서) | 완료 |
+| 문서 | `docs/design.md` (설계서) | N-06(확장성) 챕터만 완료, 나머지 챕터는 TODO |
+| 문서 | `docs/requirements.md` (요구사항정의서) | TODO |
+| 문서 | `docs/test-plan.md` (시험계획서) | TODO |
+| 코드 | `apps/api` — 탐지 오케스트레이션 | F-01/F-02/F-05, N-01~N-05 반영 완료 |
+| 코드 | `apps/mcp-server` — 도구 분리(MCP+REST) | F-01, F-04, F-07, N-02 반영 완료 |
+| 코드 | `apps/rag-worker` — 유사사례 검색 | F-04 완료(pgvector 전환까지) |
+| 코드 | `apps/stt-worker` — 모바일 오디오 STT | F-05 오디오 경로 연동 완료 |
+| 코드 | `apps/frontend` — 관제 대시보드 | F-06 완료 |
+| 인프라 | `docker-compose.yaml`, `infra/db/init.sql`, `prometheus/prometheus.yml` | 스키마/스킬 완료, compose 실기동·EC2 배포는 TODO |
+| 도구 | `.mcp.json` (Claude Code MCP 등록), `run-voice-phishing-detector` 스킬 | 완료 |
+| 이 문서 | Jekyll 제안서 사이트(`jekyll/`) — 지금 보고 있는 이 문서 | 완료(2026-08-31 기준 F-01~F-07/N-01~N-06 반영) |
+
+## 2) 기대효과 및 활용방안
+
+- **포트폴리오로서의 활용** — AI 데이터센터/AI 인프라 엔지니어 직무 지원 시, "AI
+  판정 파이프라인을 만든다"에 그치지 않고 관측성(Prometheus 커스텀 메트릭), 접근통제
+  (RBAC), 감사증적(append-only), 헥사고날 아키텍처를 통한 확장성까지 인프라 엔지니어
+  관점의 요구사항을 함께 다뤘다는 근거로 제시할 수 있다.
+- **재현 가능한 실증 자료** — "포트-어댑터로 재설계 없이 확장 가능하다"는 주장을
+  실제 커밋(3개 축 교체, application 계층 diff 0줄)으로 증명한 것처럼, 이 저장소의
+  커밋 히스토리 자체가 "설계 원칙을 실제로 지켰는가"를 검증할 수 있는 자료가 된다.
+- **다음 프로젝트로의 재사용** — 이번에 검증한 인프라 스킬(Docker Compose, Prometheus/
+  Grafana, 헥사고날 아키텍처, EC2/Cloudflare 배포)은 이미 이전 프로젝트
+  (gpu-fleet-ops)에서 왔고, 이번 프로젝트에서 다시 검증됐으므로 다음 포트폴리오
+  프로젝트에도 동일하게 이식 가능하다.
+
+## 3) 향후 개선 과제
+
+우선순위가 높은 순서대로 정리한다(8장 3절 위험요소와 겹치는 항목은 대응 방향을
+그대로 가져왔다).
+
+1. ~~F-03 딥보이스 v2 교체 + 일반화 검증~~ 완료(2026-08-31, 일반화 검증 2026-09-01) —
+   `DeepvoiceDetectionPort` 인터페이스를 그대로 유지한 채(N-06, 0줄 변경) wav2vec2
+   기반 스푸핑 탐지 모델로 교체했다. 이후 보정 데이터셋(16건, gTTS 전용/자연발화는
+   전부 영어)과 별도인 홀드아웃 48건(TTS 엔진 2종 gTTS/edge-tts × 자연 발화 언어
+   2종 영어/한국어)으로 일반화를 검증 — 전체 47/48(97.9%), 처음 보는 엔진과
+   한국어 실제 발화 양쪽 다 12/12 완벽 분리(`docs/test-plan.md` "F-03 v2 일반화
+   검증" 절 참고).
+2. ~~`docker-compose.yaml` 실기동 검증~~ 완료(2026-08-31) — 전체 스택
+   `docker compose up --build`로 8개 서비스 정상 기동 확인. **EC2 배포는
+   아직 TODO** — 설계(`docs/design.md` 4장)는 계획 수준으로 완료, 실제
+   인스턴스 생성은 남아있다.
+3. ~~`docs/requirements.md`/`docs/test-plan.md` 작성~~ 완료(2026-08-31).
+4. ~~N-05 SLA 실트래픽 관측 + 동시성 해결 시도~~ 완료(2026-09-01) — 순차
+   요청은 평균 2.11초로 SLA(5초) 충족, 동시 요청 4건에서는 평균 8.75초로
+   94.9% 위반. 원인 진단(mcp-server/rag-worker가 동기 블로킹 호출로 이벤트
+   루프를 막아 우발적으로 직렬화됨) 후 `run_in_threadpool`+`asyncio.
+   Semaphore`로 수정 — 꼬리 지연시간(p95/p99/최대)은 30~40% 개선했지만
+   평균 지연/SLA 위반 비율은 거의 그대로였다. 진짜 병목이 소프트웨어가
+   아니라 GPU 1장의 처리 용량임을 확정(`docs/test-plan.md` N-05 절 참고).
+   GPU 증설/수요측 속도제한은 다음 과제로 남음. Grafana에 p95/p99 패널 추가.
+5. ~~postgres 단일 장애점 완화~~ 완료(2026-09-01) — docker-compose 전 서비스에
+   `restart: unless-stopped` 적용(의도된 `docker stop`/`kill`은 예외라는 걸
+   실측 확인). 더 중요한 발견은 postgres가 재기동돼도 api/mcp-server/
+   rag-worker의 커넥션 객체가 끊긴 채로 남는다는 것 — 3곳에 재연결 로직을
+   추가하고 api 재시작 없이 postgres만 재기동해 자동 복구되는 것까지 라이브로
+   검증했다. `infra/db/backup_postgres.sh`로 백업/복구 왕복도 실측. 복제/자동
+   페일오버는 비용 대비 실익이 적어 미도입(`docs/design.md` 6장 참고).
+6. ~~PII 마스킹(N-03) 정량 평가~~ 완료(2026-09-01) — 라벨 28건으로 측정한
+   보정 전 정밀도 0.615/재현율 0.727을, "고객님/이용자님" 같은 흔한 단어
+   오탐 10건을 블록리스트로 걸러 정밀도 1.0으로 개선(재현율은 그대로).
+   성씨 목록 밖/호칭 분리/반말 3가지는 여전히 놓치는 한계로 남음
+   (`docs/test-plan.md` N-03 절 참고).
+7. ~~mcp-server 신규 진입점 확장 검증~~ 완료(2026-09-01) — REST/MCP stdio 외
+   세 번째 진입점으로 gRPC를 실제로 추가했다(`grpc_server.py`). 같은
+   `CallAnalysisService`를 재사용해 application/domain 계층 diff 0줄로
+   확장했고, N-02 RBAC(`Role`/`API_KEYS`)도 grpc metadata로 재사용해 진짜
+   gRPC 클라이언트로 정상 호출/미인증/권한부족 3가지를 검증했다
+   (`test_grpc_server.py`, `docs/test-plan.md` N-06 절 참고). 검증 목적이라
+   docker-compose 등록·F-07(submit_report) gRPC 노출은 하지 않았다.
+
+이 7개 항목으로 향후 개선 과제 목록을 전부 처리했다(2026-09-01 기준). 다음
+포트폴리오 이터레이션의 우선순위는 EC2 실배포와 N-05 GPU 용량 확충/수요측
+속도제한이다.
+
+[← 목차로]({{ "/toc/" | relative_url }})

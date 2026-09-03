@@ -16,11 +16,12 @@
 import logging
 
 from fastapi import FastAPI, HTTPException, UploadFile
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from src.application.services import TranscribeAudioService
 from src.infrastructure.adapters.faster_whisper_adapter import FasterWhisperAdapter
+from src.infrastructure.readiness import check_transcription_ready, make_silence_wav_bytes
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
@@ -38,6 +39,21 @@ async def health() -> dict:
         "device": _stt_adapter.device,
         "compute_type": _stt_adapter.compute_type,
     }
+
+
+# 모듈 로드 시 1회만 생성 — /ready가 호출될 때마다 새로 만들 필요 없는 고정 입력.
+_READY_CHECK_AUDIO = make_silence_wav_bytes()
+
+
+@app.get("/ready")
+def ready() -> JSONResponse:
+    device_info = f"{_stt_adapter.device}/{_stt_adapter.compute_type}"
+    check = check_transcription_ready(transcribe_audio_service, _READY_CHECK_AUDIO, device_info)
+    status_code = 200 if check["status"] == "ok" else 503
+    return JSONResponse(
+        content={"status": "ok" if check["status"] == "ok" else "error", "checks": {"transcription": check}},
+        status_code=status_code,
+    )
 
 
 @app.get("/metrics")

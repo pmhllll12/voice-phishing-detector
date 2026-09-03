@@ -5,9 +5,20 @@
 # 공개적으로 설명하는 보이스피싱 수법(기관사칭, 공포조성, 긴급송금유도 등)을 참고해
 # 직접 정리한 예시 목록이다 (실제 사건 녹취록이 아님).
 #
-# TODO: docs/RFP.md 4장의 합성 데이터셋을 실제로 만든 뒤, 이 키워드 리스트의
-#       재현율/정밀도를 검증하고 보강할 것. 이후 규칙 기반 → LLM 기반 분류로
-#       고도화 예정 (application/services.py의 PatternDetectionService 참고).
+# 2026-08-28: data/synthetic_call_transcripts.json(합성 데이터셋, docs/RFP.md 4장)로
+# 정밀도/재현율을 검증했다 (tests/test_synthetic_dataset_calibration.py 참고).
+#   - 정밀도: 정상 통화 대조군 6건 전부 0점 — 오탐 없음.
+#   - 재현율: 키워드와 정확히 겹치는 "교과서적" 문구는 15건 전부 정확히 탐지.
+#     다만 같은 수법을 자연스러운 구어체로 표현하면(가족사칭/지인사칭/대출빙자/환급빙자
+#     등, G-01~G-05) 이 키워드 목록은 전부 놓친다 — 기관명/금융 전문용어가 없는 문장은
+#     애초에 이 리스트가 다루는 어휘 범위 밖이기 때문. 이게 규칙 기반 → LLM 기반(v2,
+#     ollama_call_analysis_adapter.py) 전환이 필요했던 실제 근거였고, 실측 결과 v2는
+#     이 사각지대 5건 중 4건(G-01/G-03/G-04/G-05)을 고위험으로 정확히 잡아낸다
+#     (나머지 1건 G-02는 URL 스미싱이라 v1/v2 모두 놓침 — 공격 벡터 자체가 다름).
+# TODO: 위 사각지대 중 재사용 가능한 어휘(예: "합의금", "핸드폰이 고장나서")를
+#       키워드로 추가할지는 별도 검토 — 지금 이 리스트는 "기관사칭형" 어휘 중심이라
+#       가족/지인 사칭형 자연어를 섣불리 추가하면 오탐이 늘 수 있다(정상적인 가족 간
+#       급전 요청과 구분이 어려움). LLM 백엔드가 기본값인 지금은 우선순위가 낮다.
 #
 # N-06(확장성): 새 카테고리를 추가하려면
 #   1) domain/entities.py의 PatternCategory에 항목 추가
@@ -78,7 +89,11 @@ PATTERN_RULES: dict[PatternCategory, list[str]] = {
 # 경우가 전형적이므로, 카테고리가 여러 개 겹칠수록 합산 점수가 빠르게 高등급으로
 # 올라가도록 가중치를 잡았다 (단일 카테고리만 매칭되면 저위험, 3개 겹치면 고위험).
 #
-# TODO: 합성 데이터셋으로 점수 분포를 검증한 뒤 가중치를 보정할 것.
+# 2026-08-28: data/synthetic_call_transcripts.json으로 점수 분포를 검증한 결과, 이
+# 가중치 조합은 위 설계 의도(1개 카테고리→저위험, 2개→중위험, 3개 이상→고위험)를
+# 정확히 만족한다 — 2개 카테고리 조합 6가지 전부 40~69점(중위험) 구간에, 3개 이상
+# 조합 5가지 전부 70점 이상(고위험)에 들어간다. 가중치/임계값(entities.py의
+# RISK_LEVEL_THRESHOLDS) 변경 불필요.
 CATEGORY_WEIGHTS: dict[PatternCategory, int] = {
     PatternCategory.AUTHORITY_IMPERSONATION: 30,
     PatternCategory.FEAR_INDUCEMENT: 30,
