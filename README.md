@@ -454,9 +454,8 @@ stt-worker) 전부에 대한 scrape 대상이 설정돼 있고, `docker compose 
       상단 주석 참고)
 - [x] F-06 관제 대시보드 (`apps/frontend`, 탐지 현황 테이블 + 위험도 분포 + 카테고리별 통계 + 통화 분석 폼. `apps/mcp-server/rest_server.py`를 새로 추가해 api가 판정 로직을 HTTP로 호출하도록 연결, api에 인메모리 감사증적 저장소 + 통계 집계 엔드포인트 추가)
 - [x] F-07 신고 연동 (`apps/mcp-server`의 `submit_report` 툴 — mock. risk_level이 high면 auto, 그 외엔 manual 채널로 분류해 인메모리에 기록. **실제 112/경찰청 API 호출 없음** — RFP 데이터 제약, `ReportSubmissionService` 상단 주석 참고. 알림 발송은 아직 미구현)
-- [ ] `docs/requirements.md`, `docs/test-plan.md` 작성, `docs/design.md` 나머지 챕터
-      (지금은 N-06만 완성 — [Jekyll 제안서 사이트](jekyll/)가 RFP/구현 이력을 9챕터+
-      부록 4개로 정리해뒀지만, 정식 요구사항정의서/시험계획서는 별도로 아직 없음)
+- [x] `docs/requirements.md`, `docs/test-plan.md`, `docs/design.md` 작성 완료
+      (2026-09-02 갱신 기준 크로스채널 상관관계 탐지, F-06 이메일 탭까지 반영됨)
 - [x] 모바일 실시간 감지 파이프라인용 STT (`apps/stt-worker`, faster-whisper 기반
       오디오→텍스트 변환) — 헥사고날 구조/Prometheus 메트릭(`vps_stt_*`) 완성,
       `apps/api` 연동 완료, `docker-compose.yaml`에도 등록 완료(아래 참고)
