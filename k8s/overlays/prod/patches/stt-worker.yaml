@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stt-worker
+spec:
+  # GPU 1장을 mcp-server(Ollama)/rag-worker(임베딩)와 나눠 쓰는 구조라(N-05 동시성
+  # 실측에서 확인된 경합) replica를 늘려도 처리량이 늘지 않는다 — 1 유지.
+  template:
+    spec:
+      containers:
+        - name: stt-worker
+          # base(Dockerfile CMD)의 --reload를 뺀다 — api와 동일한 이유.
+          command:
+            ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8300"]
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 2Gi

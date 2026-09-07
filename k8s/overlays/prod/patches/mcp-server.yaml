@@ -1,0 +1,18 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-server
+spec:
+  # hostNetwork: true라 replica를 늘리면 같은 호스트 포트(8100)를 두고 파드끼리
+  # 충돌한다 — 1 유지 (k8s/overlays/prod/kustomization.yaml 상단 주석 참고).
+  template:
+    spec:
+      containers:
+        - name: mcp-server
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi

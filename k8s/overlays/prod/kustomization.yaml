@@ -1,0 +1,112 @@
+# =============================================================================
+# k8s/overlays/prod/kustomization.yaml
+#
+# 프로덕션(실배포) 차이를 base(루트 kustomization.yaml)가 쓰는 것과 동일한 리소스
+# 위에 patch로 얹는 오버레이. base는 로컬 k3s 데모용(단일 노드, replicas=1, 컨테이너
+# 리소스 limit 없음, api/stt-worker/frontend는 Dockerfile CMD 그대로인 dev 서버)
+# 이고, 이 오버레이는 그 위에 3가지만 patch한다:
+#
+#   1) 컨테이너 리소스 requests/limits — base는 로컬 데모라 무제한. 실서버는 노드
+#      스펙이 유한하니 과다할당(overcommit)을 막기 위해 필요. 값은 실측(N-05 SLA
+#      부하테스트, docs/design.md 참고) 기반이 아니라 러프한 추정치이므로, 실제
+#      Oracle Cloud 인스턴스에 배포한 뒤 실측치로 다시 조정할 것(infra/README.md
+#      TODO에도 남겨둠).
+#   2) dev 서버 → 프로덕션 실행 방식 전환 — api/stt-worker Dockerfile CMD에는
+#      --reload가 박혀 있고(파일 변경 감시 오버헤드, 이미지가 고정된 프로덕션에는
+#      불필요), frontend는 `next dev`를 쓴다. 이미지를 다시 빌드하지 않고 파드
+#      command만 오버라이드해 우회한다 — 진짜 해법인 frontend 멀티스테이지 빌드는
+#      apps/frontend/Dockerfile 상단 TODO로 이미 남아있고, 이 오버레이는 "같은
+#      이미지, 다른 실행 방식"이라는 Kustomize 패턴을 시연하는 용도.
+#   3) replicas — stateless한 api/frontend만 2로 올린다. mcp-server는
+#      hostNetwork: true라 다중 replica면 같은 호스트 포트(8100)를 두고 서로
+#      충돌한다(2026-09-07에 stray 프로세스와 실제로 겪은 것과 같은 종류의 문제
+#      — mcp-server.yaml 상단 주석 참고), postgres는 StatefulSet 단일 프라이머리,
+#      rag-worker는 기동 시 seed_fraud_cases 1회성 적재라 다중 replica 시 중복
+#      적재 여지가 있음, stt-worker는 GPU 1장을 공유하는 구조라(N-05 동시성 실측
+#      기록 참고) replica를 늘려도 GPU 경합만 커진다 — 그래서 이 셋은 1을 유지.
+#
+# 왜 루트 kustomization.yaml을 base로 참조하지 않는가(중요, 실제로 겪은 문제):
+# 처음에는 `resources: [../../..]`로 루트 kustomization.yaml을 base로 참조하려
+# 했으나 kustomize가 다음처럼 거부한다:
+#
+#   error: accumulating resources: ... cycle detected: candidate root
+#   '<repo root>' contains visited root '<repo root>/k8s/overlays/prod'
+#
+# 이건 LoadRestrictionsRootOnly(파일 접근 제한)와는 별개의, 우회 불가능한 구조적
+# 제약이다 — kustomize는 "오버레이 디렉터리가 base 디렉터리의 하위 경로"인 걸
+# 잠재적 순환 참조로 보고 거부한다(--load-restrictor 플래그로도 안 풀림, 직접
+# 테스트 확인함). 루트 kustomization.yaml이 (.env/infra/db/init.sql/prometheus/
+# prometheus.yml/grafana/provisioning 접근 때문에) 저장소 루트에 있어야 하는 이상,
+# 저장소 안 어떤 하위 디렉터리도 그걸 base로 삼을 수 없다.
+#
+# 그래서 이 오버레이는 루트 kustomization.yaml을 참조하는 대신 **같은 원본
+# 리소스 파일과 같은 generator 선언을 이 파일에 그대로 복제**해서 자기 완결적인
+# 별도 root로 만든다(진짜 "상속" 대신 "동일 구성 재선언 + patch"). 트레이드오프:
+# 루트 kustomization.yaml에 리소스/설정을 추가하면 이 파일도 같이 고쳐야 한다
+# (DRY 위반, 자동으로 안 맞음 — 위 사유로 인한 kustomize 자체의 한계).
+#
+# 사용법 (저장소 루트에서, base를 먼저 한 번 적용해 vps-env/vps-detector 등
+# 선행 리소스를 만든 뒤 — 이미 로컬 k3s에 떠 있다면 생략 가능):
+#   kubectl apply -k .
+#
+# 그 다음 이 오버레이 적용. secretGenerator/configMapGenerator가 저장소 루트
+# 파일(.env 등)을 읽으므로 --load-restrictor 플래그가 필요하다(kubectl apply -k는
+# 이 플래그를 못 받아 kubectl kustomize로 렌더한 뒤 파이프한다):
+#   kubectl kustomize --load-restrictor LoadRestrictionsNone k8s/overlays/prod \
+#     | kubectl apply -f -
+#
+# 검증 상태: 위 명령으로 렌더까지만 확인했고(`kubectl kustomize --load-restrictor
+# LoadRestrictionsNone k8s/overlays/prod`) 실제 apply는 안 함 — 이 로컬 k3s는
+# 단일 노드 데모용 리소스라 replicas=2 + 리소스 limit을 얹으면 스케줄링이 실패할
+# 수 있다(이 오버레이는 실배포 대상이지 로컬 데모 대상이 아님). Oracle Cloud로
+# 실배포할 때(infra/README.md 참고, 현재 계정 미가입으로 보류 중) 위 명령으로
+# 적용할 것.
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: vps-detector
+
+resources:
+  - ../../namespace.yaml
+  - ../../postgres.yaml
+  - ../../mcp-server.yaml
+  - ../../api.yaml
+  - ../../rag-worker.yaml
+  - ../../stt-worker.yaml
+  - ../../frontend.yaml
+  - ../../prometheus.yaml
+  - ../../grafana.yaml
+
+# 루트 kustomization.yaml과 동일 — 위 "왜 base를 참조하지 않는가" 참고.
+generatorOptions:
+  disableNameSuffixHash: true
+
+secretGenerator:
+  - name: vps-env
+    envs:
+      - ../../../.env
+
+configMapGenerator:
+  - name: postgres-initdb
+    files:
+      - ../../../infra/db/init.sql
+  - name: prometheus-config
+    files:
+      - ../../../prometheus/prometheus.yml
+  - name: grafana-datasources
+    files:
+      - ../../../grafana/provisioning/datasources/datasource.yml
+  - name: grafana-dashboards-provisioning
+    files:
+      - ../../../grafana/provisioning/dashboards/dashboard.yml
+
+patches:
+  - path: patches/api.yaml
+  - path: patches/mcp-server.yaml
+  - path: patches/rag-worker.yaml
+  - path: patches/stt-worker.yaml
+  - path: patches/frontend.yaml
+  - path: patches/postgres.yaml
+  - path: patches/prometheus.yaml
+  - path: patches/grafana.yaml

@@ -1,0 +1,18 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-worker
+spec:
+  # 기동 시 seed_fraud_cases.py로 F-04 코퍼스를 1회성 적재한다 — 다중 replica면
+  # 동시 적재가 겹칠 수 있어 1 유지(k8s/overlays/prod/kustomization.yaml 참고).
+  template:
+    spec:
+      containers:
+        - name: rag-worker
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi

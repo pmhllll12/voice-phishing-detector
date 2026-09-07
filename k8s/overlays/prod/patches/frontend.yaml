@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+spec:
+  replicas: 2
+  template:
+    spec:
+      containers:
+        - name: frontend
+          # base(Dockerfile CMD)의 `npm run dev`(hot-reload dev 서버) 대신 실제
+          # 프로덕션 빌드로 기동한다. 이미지 자체는 dev 소스 그대로라 컨테이너
+          # 시작 시 빌드한다 — 진짜 해법(멀티스테이지 빌드로 이미지 빌드 시점에
+          # 미리 build)은 apps/frontend/Dockerfile 상단 TODO로 남아있다.
+          command: ["sh", "-c", "npm run build && npm run start"]
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi

@@ -13,6 +13,11 @@
 #   3) ./k8s/build-and-import.sh   # 5개 앱 이미지를 빌드해 k3s containerd로 임포트
 #   4) kubectl apply -k .
 #
+# 프로덕션 차이(replicas/리소스 limit/dev 서버→프로덕션 실행 전환)는 이 파일을
+# 상속하지 않는 별도 오버레이 k8s/overlays/prod/kustomization.yaml에 있다 —
+# 왜 base가 아니라 재선언 방식인지는 그 파일 상단 주석 참고(kustomize의
+# 오버레이-하위경로 제약 때문, --load-restrictor로도 안 풀림).
+#
 # 이 파일이 저장소 루트에 있는 이유: kustomize의 기본 load restriction
 # (LoadRestrictionsRootOnly)이 kustomization 파일 기준 상위 디렉터리(../) 참조를
 # 막는다 — .env/infra/db/init.sql/prometheus/prometheus.yml/grafana/provisioning
