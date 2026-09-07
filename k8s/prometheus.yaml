@@ -1,0 +1,54 @@
+# =============================================================================
+# prometheus.yaml
+#
+# 애플리케이션 메트릭 수집(api/mcp-server/rag-worker/stt-worker의 vps_* 커스텀
+# 메트릭 — prometheus/prometheus.yml 참고, kustomization.yaml의 configMapGenerator가
+# 그 파일을 그대로 읽어 ConfigMap(prometheus-config)으로 만든다). scrape target이
+# `api:8000`처럼 서비스명 그대로라 k8s Service DNS로도 변경 없이 그대로 동작한다.
+#
+# nodePort가 기본 9090이 아니라 9091인 이유: 이 호스트의 gpu-fleet-ops가 이미
+# 0.0.0.0:9090에 자체 prometheus를 바인딩하고 있어 .env의 PROMETHEUS_PORT=9091과
+# 맞췄다(frontend.yaml의 nodePort 3010과 같은 이유 — 다른 호스트에 옮길 땐 이 값을
+# 직접 고칠 것).
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+spec:
+  type: NodePort
+  selector:
+    app: prometheus
+  ports:
+    - port: 9090
+      targetPort: 9090
+      nodePort: 9091
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      containers:
+        - name: prometheus
+          image: prom/prometheus:latest
+          ports:
+            - containerPort: 9090
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus/prometheus.yml
+              subPath: prometheus.yml
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config

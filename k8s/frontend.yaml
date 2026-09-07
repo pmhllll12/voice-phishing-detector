@@ -1,0 +1,68 @@
+# =============================================================================
+# frontend.yaml
+#
+# 관제 대시보드(F-06) — Grafana와는 별개로 "제품 기능"으로서의 대시보드.
+# 브라우저(호스트)에서 접속하므로 NEXT_PUBLIC_API_BASE_URL은 컨테이너 내부 이름이
+# 아니라 호스트에서 api가 노출된 NodePort(8000)를 가리켜야 한다(docker-compose 때와
+# 동일한 이유) — NEXT_PUBLIC_*는 빌드/런타임에 브라우저 번들에 그대로 노출된다.
+#
+# nodePort가 기본 3000이 아니라 3010인 이유: 이 호스트에 이미 떠 있는 다른
+# 프로젝트(gpu-fleet-ops)가 grafana를 0.0.0.0:3000에 바인딩하고 있어 충돌을
+# 피하려고 .env의 FRONTEND_PORT=3010과 동일하게 맞췄다(raw k8s 매니페스트는
+# 환경변수로 nodePort를 넣을 수 없어 여기에 직접 값을 박아둠 — 다른 호스트에
+# 옮길 땐 이 값을 직접 고칠 것).
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+spec:
+  type: NodePort
+  selector:
+    app: frontend
+  ports:
+    - port: 3000
+      targetPort: 3000
+      nodePort: 3010
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: vps-detector/frontend:local
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 3000
+          env:
+            - name: NEXT_PUBLIC_API_BASE_URL
+              value: "http://localhost:8000"
+            # N-02: 대시보드는 조회(목록/통계)와 처리(분석 실행/신고 접수)를 모두
+            # 수행하므로 handler 키가 필요하다. 진짜 비밀키가 아니라 로그인 시스템이
+            # 없는 지금 단계의 데모용 타협이다(apps/frontend/src/lib/api.ts 상단 주석 참고).
+            - name: NEXT_PUBLIC_API_KEY
+              valueFrom:
+                secretKeyRef: { name: vps-env, key: API_HANDLER_KEY }
+          readinessProbe:
+            httpGet: { path: /, port: 3000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          livenessProbe:
+            httpGet: { path: /, port: 3000 }
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5

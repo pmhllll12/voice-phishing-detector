@@ -7,8 +7,10 @@ Full(strict) SSL 구성 경험을 이 프로젝트에도 재사용할 예정입�
 ## TODO 목록
 
 - [ ] EC2 인스턴스 사양 결정 (postgres+pgvector, 여러 컨테이너를 감안한 스펙)
-- [ ] `docker-compose.prod.yaml` 분리 (개발용 docker-compose.yaml과 프로덕션 설정 차이:
-      restart policy, 로그 드라이버, 리소스 제한 등)
+- [ ] 프로덕션용 Kustomize overlay 분리 (2026-09-07 로컬 오케스트레이션이
+      docker-compose에서 k3s(`k8s/` + 루트 `kustomization.yaml`)로 전환됨 —
+      `docker-compose.prod.yaml` 대신 `k8s/overlays/prod/`에서 replicas/리소스
+      limit/로그 설정 등 프로덕션 차이만 patch로 얹는 방식을 검토할 것)
 - [ ] Nginx 리버스 프록시 설정 (`infra/nginx/` 폴더에 conf 작성 — gpu-fleet-ops 설정 참고)
 - [ ] Cloudflare Tunnel 설정 (`cloudflared` config.yml, DNS 라우팅)
 - [ ] Full(strict) SSL 모드 확인 (Cloudflare ↔ origin 서버 간 인증서)

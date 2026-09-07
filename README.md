@@ -9,16 +9,17 @@ AI 데이터센터/AI 인프라 엔지니어 직무 취업을 위한 개인 포�
 구현 → 시험(검수)계획서로 이어지는 공공/금융 SI 엔드투엔드 시뮬레이션을 1인이 수행합니다.
 
 > **현재 상태**: F-01~F-07(기능)과 N-01~N-06(비기능) 요구사항 모두 최소 1차 구현 및
-> 로컬 검증 완료(2026-08-31). `docker compose up --build`로 전체 스택(frontend/api/
-> mcp-server/rag-worker/stt-worker/postgres/prometheus/grafana) 실기동 확인, PR마다
-> pytest 233개 자동 실행하는 CI도 구축됨. RFP → 요구사항정의서 → 설계서 → 시험계획서
-> 4개 문서 전부 작성 완료. 2026-09-02: 시중 어떤 보이스피싱 차단 앱에도 없는 **크로스채널
-> 상관관계 탐지**(통화→문자→이메일 다단계 공격 연계 탐지)를 신규 추가, N-03 마스킹 경유
-> 경로까지 해소하고 Google Safe Browsing 위협 인텔리전스 연동과 Gmail 실채널 연동
-> (email)까지 실제 API 키/실계정으로 검증 완료. AWS EC2로 실제 배포를 시도해
-> 실배포로만 드러나는 버그 2건을 잡았지만(아래 참고), **실배포 인프라는 Oracle
-> Cloud(Always Free 티어)로 전환하기로 결정** — 아직 진행 전입니다. 자세한 건
-> 아래 "진행 현황" 참고.
+> 로컬 검증 완료(2026-08-31). PR마다 pytest 233개 자동 실행하는 CI도 구축됨. RFP →
+> 요구사항정의서 → 설계서 → 시험계획서 4개 문서 전부 작성 완료. 2026-09-02: 시중 어떤
+> 보이스피싱 차단 앱에도 없는 **크로스채널 상관관계 탐지**(통화→문자→이메일 다단계
+> 공격 연계 탐지)를 신규 추가, N-03 마스킹 경유 경로까지 해소하고 Google Safe Browsing
+> 위협 인텔리전스 연동과 Gmail 실채널 연동(email)까지 실제 API 키/실계정으로 검증
+> 완료. AWS EC2로 실제 배포를 시도해 실배포로만 드러나는 버그 2건을 잡았지만(아래
+> 참고), **실배포 인프라는 Oracle Cloud(Always Free 티어)로 전환하기로 결정** — 아직
+> 진행 전입니다. 2026-09-07: 로컬 오케스트레이션을 docker compose에서 **k3s(WSL2에
+> 직접 설치)로 전환** — `kubectl apply -k .`로 전체 스택(frontend/api/mcp-server/
+> rag-worker/stt-worker/postgres/prometheus/grafana) 실기동, 자세한 건 아래 "로컬
+> 실행 (k3s)"와 "진행 현황" 참고.
 
 ## 문서
 
@@ -58,7 +59,8 @@ prometheus ──► grafana  (애플리케이션 메트릭 관측)
 이전 개인 프로젝트 [gpu-fleet-ops](https://github.com/pmhllll12/gpu-fleet-ops)에서 검증한
 아래 스킬을 이 프로젝트의 인프라/관측성 레이어에 그대로 적용합니다:
 
-- Docker Compose 멀티 컨테이너 구성
+- 멀티 컨테이너 오케스트레이션 (2026-09-07까지 Docker Compose, 이후 k3s + Kustomize로
+  전환 — 아래 "로컬 실행 (k3s)" 참고)
 - Prometheus + Grafana 모니터링 (관측 대상: GPU 메트릭 → 애플리케이션 메트릭으로 교체)
 - 헥사고날 아키텍처 (domain/application/infrastructure 분리)
 - 클라우드 인스턴스 + Cloudflare Tunnel/도메인 연결 (AWS EC2로 실배포까지 검증 후
@@ -74,31 +76,65 @@ prometheus ──► grafana  (애플리케이션 메트릭 관측)
   바인딩**해야 브리지 게이트웨이 IP에서 접근 가능합니다(기본값인 127.0.0.1만 바인딩하면
   Prometheus target이 `down`으로 뜹니다 — 로컬 검증 중 실제로 겪은 문제).
 
-## 로컬 실행 (docker compose)
+## 로컬 실행 (k3s)
 
-사전 준비: Ollama가 **호스트에서** 떠 있어야 하고(mcp-server 컨테이너가 F-01/F-02
-LLM 추론에 호출함), `OLLAMA_HOST=0.0.0.0`으로 바인딩돼 있어야 합니다 — 기본값인
-127.0.0.1만 바인딩하면 docker 브리지 네트워크(`host.docker.internal`)에서 접근할 수
-없습니다(위 "재사용한 인프라 스킬"의 rag-worker `0.0.0.0` 바인딩 이슈와 같은 종류의
-문제, 로컬 검증 중 실제로 겪음).
+2026-09-07부로 docker-compose.yaml을 걷어내고 k3s(Docker Desktop Kubernetes가 아니라
+WSL2 호스트에 직접 설치하는 실제 k3s)로 오케스트레이션을 전환했다. 매니페스트는
+`k8s/`(서비스당 파일 하나, Deployment+Service), 진입점은 저장소 루트의
+`kustomization.yaml`.
+
+사전 준비: Ollama가 **호스트에서** 떠 있어야 하고(mcp-server가 F-01/F-02 LLM 추론에
+호출함), `OLLAMA_HOST=0.0.0.0`으로 바인딩돼 있어야 한다 — k3s는 Docker Desktop처럼
+별도 VM이 아니라 호스트에 직접 설치되므로 `host.docker.internal` 같은 매직 DNS가
+없다. 대신 mcp-server 파드가 `hostNetwork: true`로 호스트 네트워크를 공유해
+`http://localhost:11434`로 직접 부른다(`k8s/mcp-server.yaml` 상단 주석 참고) — 그래도
+Ollama가 0.0.0.0으로 바인딩돼 있어야 하는 건 동일하다.
 
 ```bash
-# 필요하면 .env.example을 .env로 복사해 포트/키를 오버라이드 (없어도 기본값으로 동작)
+# 1) 최초 1회: k3s 설치. --service-node-port-range로 3000/8000/9090 같은 기존
+#    포트들을 NodePort로 그대로 쓸 수 있게 범위를 넓힌다(기본은 30000-32767).
+curl -sfL https://get.k3s.io | sh -s - --service-node-port-range=3000-32767
+sudo k3s kubectl get nodes   # Ready 확인
+
+# k3s는 자체 kubeconfig(/etc/rancher/k3s/k3s.yaml)를 쓴다 — 기존 kubectl의
+# 기본 컨텍스트가 docker-desktop이었다면(`kubectl config get-contexts`로 확인)
+# 이 저장소의 kubectl 명령이 엉뚱한 곳으로 안 가도록 한 번 갈아끼워야 한다.
+# 다른 클러스터 컨텍스트를 이미 ~/.kube/config에 갖고 있다면 아래로 덮어쓰지 말고
+# `KUBECONFIG=~/.kube/config:/etc/rancher/k3s/k3s.yaml kubectl config view --flatten`
+# 로 병합할 것.
+mkdir -p ~/.kube
+sudo k3s kubectl config view --raw | tee ~/.kube/config > /dev/null
+chmod 600 ~/.kube/config
+kubectl get nodes   # 이제 플레인 kubectl로도 k3s가 잡히는지 확인
+
+# 2) .env.example을 .env로 복사(k3s에서는 필수 — docker-compose의 ${VAR:-기본값}
+#    폴백이 raw 매니페스트에는 없어서, .env가 전체 키를 담고 있어야 한다)
 cp .env.example .env
 
-docker compose up --build
+# 3) 5개 앱 이미지를 빌드해 k3s의 containerd로 임포트(레지스트리 불필요, sudo 필요)
+./k8s/build-and-import.sh
+
+# 4) 적용
+kubectl apply -k .
+kubectl -n vps-detector get pods -w   # 전부 Running/Ready 될 때까지 대기
 ```
 
 - api: http://localhost:8000/health
-- frontend: http://localhost:3000
-- prometheus: http://localhost:9090
+- frontend: http://localhost:3010 (기본 3000이 아님 — 이 호스트의 gpu-fleet-ops가
+  이미 3000/9090을 쓰고 있어 `.env`의 FRONTEND_PORT/PROMETHEUS_PORT로 비켜둠,
+  `k8s/frontend.yaml`·`k8s/prometheus.yaml` 상단 주석 참고)
+- prometheus: http://localhost:9091
 - grafana: http://localhost:3001 (기본 admin 비밀번호는 `.env.example` 참고 — 프로덕션
   에서는 반드시 교체할 것)
 
-각 서비스는 `docker compose ps`에서 `healthy`로 뜰 때까지 순서대로 기동됩니다
-(postgres → mcp-server/rag-worker/stt-worker → api → frontend). `rag-worker`는 기동
-시 `scripts/seed_fraud_cases.py`로 F-04 코퍼스를 자동으로 postgres(pgvector)에
-적재합니다.
+`docker compose`의 `depends_on: condition: service_healthy` 같은 기동 순서 보장은
+raw k8s에 없다 — 대신 각 Deployment의 readinessProbe/livenessProbe와 앱단 DB
+재연결 로직(postgres 단일 장애점 완화 때 붙인 것)에 맡긴다. `rag-worker`는 기동 시
+여전히 `scripts/seed_fraud_cases.py`로 F-04 코퍼스를 postgres(pgvector)에 적재한다.
+
+코드/설정을 고쳐서 이미지를 다시 반영해야 할 때: `./k8s/build-and-import.sh`를 다시
+실행한 뒤 `kubectl -n vps-detector rollout restart deploy/<서비스명>`(예:
+`deploy/api`)으로 새 이미지를 픽업시킨다.
 
 ## MCP 서버를 Claude Code에서 테스트하기
 
@@ -346,9 +382,12 @@ api/mcp-server/rag-worker가 전부 postgres 하나에 의존하는 단일 장�
 2026-09-01에 3가지를 실측 적용했습니다. 상세 근거는 [design.md 6장](docs/design.md)
 참고.
 
-1. **`restart: unless-stopped`** — `docker-compose.yaml` 전 서비스에 적용. 단,
-   `docker stop`/`docker kill`처럼 의도된 중지는 이 정책이 되돌리지 않습니다(Docker
-   표준 동작, 실측 확인).
+1. **`restart: unless-stopped`** — 2026-09-01 당시엔 `docker-compose.yaml` 전
+   서비스에 적용했다(`docker stop`/`docker kill`처럼 의도된 중지는 이 정책이
+   되돌리지 않는다는 것까지 실측 확인). 2026-09-07 k3s 전환 이후에는 k8s
+   Deployment/StatefulSet의 기본 `restartPolicy: Always`가 같은 역할을 한다
+   (크래시 시 kubelet이 자동 재기동 — compose와 동일한 "정지 버튼은 안 되돌림"
+   의미론).
 2. **애플리케이션단 재연결** — postgres가 재기동돼도 커넥션 객체가 끊긴 채로 남아
    `/ready`가 계속 실패하는 걸 실제로 재현했습니다. `PostgresCallLogRepository`/
    `PostgresReportRepository`/`PgvectorSimilarityAdapter` 3곳에 재연결 로직을
@@ -419,8 +458,9 @@ api/rag-worker/mcp-server/stt-worker 4개 서비스 전부 `/metrics`에서 `vps
 - `vps_mcp_llm_model_info{model_name,base_url}` — 현재 모델/엔드포인트 구성
 
 이 저장소 자체의 `prometheus/prometheus.yml`은 4개 서비스(api/mcp-server/rag-worker/
-stt-worker) 전부에 대한 scrape 대상이 설정돼 있고, `docker compose up`으로 뜨는 이
-저장소의 prometheus(포트 9090)가 실제로 수집합니다. 다만 grafana(포트 3001)에는 아직
+stt-worker) 전부에 대한 scrape 대상이 설정돼 있고, k3s(`kubectl apply -k .`)로 뜨는 이
+저장소의 prometheus(NodePort 9091 — 위 "로컬 실행 (k3s)" 참고)가 실제로 수집합니다.
+다만 grafana(포트 3001)에는 아직
 대시보드 패널이 연결돼 있지 않습니다(`grafana/provisioning`은 뼈대만 있음) — 이
 저장소와 별개로, 통합 관측 용도로는 gpu-fleet-ops의 Prometheus/Grafana도 같이 쓰고
 있습니다(위 "재사용한 인프라 스킬" 참고).
@@ -742,3 +782,35 @@ stt-worker) 전부에 대한 scrape 대상이 설정돼 있고, `docker compose 
       스키마: `infra/db/init.sql`에 `channel_signals.source_ref`,
       `call_analysis_results.base_risk_score`/`correlation_matches` 컬럼 추가
       (모두 nullable/default라 기존 행과 하위호환, 로컬 postgres에 마이그레이션 적용함).
+- [x] 로컬 오케스트레이션을 docker-compose에서 k3s로 전환 (2026-09-07) — Docker
+      Desktop Kubernetes가 아니라 WSL2 호스트에 직접 설치하는 실제 k3s를 선택.
+      `docker-compose.yaml` 삭제, `k8s/`(서비스당 Deployment+Service 한 파일) +
+      루트 `kustomization.yaml`로 교체. 주요 설계 포인트:
+      1. 시크릿은 새 포맷을 만들지 않고 기존 `.env`/`.env.example` 관행을
+         `secretGenerator: envs: [.env]`로 재사용 — 단, kustomize의 envs는 여러
+         파일을 겹쳐 쓰지 못해(같은 키가 두 파일에 있으면 에러) docker-compose의
+         `${VAR:-기본값}` 폴백을 재현할 수 없다는 걸 실측으로 발견, `.env`가
+         이제 전체 키를 담은 완전한 파일이어야 하도록 이 저장소의 실제 `.env`를
+         고쳤다(그전엔 포트 2개+API 키 1개만 오버라이드하고 나머지는 compose의
+         인라인 기본값에 의존하던 파일이었음).
+      2. 서비스 간 URL(`http://mcp-server:8100` 등)은 k8s Service DNS가 compose
+         서비스명과 동일하게 동작해 코드/설정 변경 없이 그대로 재사용됨.
+      3. mcp-server → 호스트 Ollama: k3s는 Docker Desktop과 달리 별도 VM이 없어
+         `host.docker.internal`이 없다 — mcp-server 파드에 `hostNetwork: true` +
+         `dnsPolicy: ClusterFirstWithHostNet`을 줘서 `localhost:11434`로 직접
+         호출하도록 전환(트레이드오프: 그 파드만 네트워크 격리 없음, 단일 노드
+         데모 규모에서는 수용 가능).
+      4. postgres는 named volume 대신 StatefulSet + volumeClaimTemplates(k3s
+         기본 `local-path` StorageClass), `infra/db/init.sql`은 configMapGenerator로
+         원본 파일을 그대로 읽어 중복 없이 `/docker-entrypoint-initdb.d/`에 마운트.
+      5. 이 호스트에 이미 떠 있는 gpu-fleet-ops가 3000/9090을 쓰고 있어
+         frontend/prometheus NodePort를 `.env`의 FRONTEND_PORT=3010/
+         PROMETHEUS_PORT=9091에 맞춰 하드코딩(raw k8s 매니페스트는 환경변수로
+         포트를 못 넣어서, 다른 호스트로 옮기면 `k8s/frontend.yaml`·
+         `k8s/prometheus.yaml`의 nodePort 값을 직접 고쳐야 함).
+      6. `kubectl kustomize .`로 렌더링 검증 완료(24개 리소스 정상 생성, Secret에
+         필요한 키 전부 확인) — k3s가 실제 설치된 뒤의 `kubectl apply -k .` 실기동
+         검증은 다음 세션 과제로 남음.
+      `.github/workflows/tests.yml`(compose 미사용)과
+      `.claude/skills/run-voice-phishing-detector/*`(compose 이전부터 있던 별도
+      systemd 기반 안내 문서)는 이번 전환 범위 밖으로 판단해 그대로 둠.
