@@ -18,6 +18,9 @@ class PatternCategory(str, Enum):
     FEAR_INDUCEMENT = "fear_inducement"  # 공포조성
     URGENT_TRANSFER = "urgent_transfer"  # 긴급송금유도
     PERSONAL_INFO_REQUEST = "personal_info_request"  # 개인정보요구 (확장 예시로 추가)
+    # 2026-09-18: 신종수법(원격제어 앱/가짜 검찰·경찰 앱 설치 유도) 대응으로 추가.
+    # 두 수법을 하나로 묶은 이유는 pattern_rules.py의 PATTERN_RULES 주석 참고.
+    REMOTE_CONTROL_APP = "remote_control_app"  # 원격제어·사칭 앱 설치유도
 
 
 CATEGORY_LABELS: dict[PatternCategory, str] = {
@@ -25,6 +28,7 @@ CATEGORY_LABELS: dict[PatternCategory, str] = {
     PatternCategory.FEAR_INDUCEMENT: "공포조성",
     PatternCategory.URGENT_TRANSFER: "긴급송금유도",
     PatternCategory.PERSONAL_INFO_REQUEST: "개인정보요구",
+    PatternCategory.REMOTE_CONTROL_APP: "원격제어앱 설치유도",
 }
 
 

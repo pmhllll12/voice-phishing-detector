@@ -135,6 +135,33 @@
     "source_basis": "4개 패턴이 모두 등장하는 최악 시나리오, FC-001 계열 종합판 (실제 사건 아님)"
   },
   {
+    "id": "T-16",
+    "label": "textbook",
+    "text": "고객님 문제 해결을 위해 원격제어 앱을 설치해주셔야 확인이 가능합니다.",
+    "expected_categories": ["remote_control_app"],
+    "expected_risk_level": "low",
+    "rule_based_recall_expected": true,
+    "source_basis": "2026-09 신종수법 '원격제어 앱 설치 유도' 도입부 — 경찰청이 경고하는 원격제어 프로그램(팀뷰어/AnyDesk류) 설치 유도 패턴 (실제 사건 아님)"
+  },
+  {
+    "id": "T-17",
+    "label": "textbook",
+    "text": "경찰청입니다. 안전 인증 앱을 설치하셔야 신원 확인이 가능합니다.",
+    "expected_categories": ["authority_impersonation", "remote_control_app"],
+    "expected_risk_level": "medium",
+    "rule_based_recall_expected": true,
+    "source_basis": "2026-09 신종수법 '가짜 경찰 앱 설치' — 경찰청 사칭 + 신분확인용 위장 앱 설치 유도 결합 패턴 (실제 사건 아님)"
+  },
+  {
+    "id": "T-18",
+    "label": "textbook",
+    "text": "검찰청 수사관입니다. 사건에 연루되어 구속될 수 있습니다. 지금 안내해드리는 출석통지서 앱을 설치하셔야 조사가 진행됩니다.",
+    "expected_categories": ["authority_impersonation", "fear_inducement", "remote_control_app"],
+    "expected_risk_level": "high",
+    "rule_based_recall_expected": true,
+    "source_basis": "2026-09 신종수법 '가짜 검찰 앱 설치' — FC-013과 동일 계열, 검찰 사칭+공포조성+출석통지서 위장 앱 설치를 결합한 전형적 결합 (실제 사건 아님)"
+  },
+  {
     "id": "G-01",
     "label": "natural_language_gap",
     "text": "엄마 나 사고 났어... 핸드폰이 고장나서 다른 번호로 연락하는 거야. 지금 합의금이 급하게 필요한데 이 계좌로 보내줄 수 있어?",
@@ -178,6 +205,15 @@
     "expected_risk_level": "high",
     "rule_based_recall_expected": false,
     "source_basis": "FC-004(메신저피싱, SNS 프로필 도용)와 동일 계열 — 지인 사칭은 기관명/금융 전문용어가 전혀 없어 v1 키워드 규칙의 사각지대인 사례 (실제 사건 아님)"
+  },
+  {
+    "id": "G-06",
+    "label": "natural_language_gap",
+    "text": "아빠, 나 지금 급하게 계좌 이체할 일이 있는데 폰이 안 터져서 이걸로 연락했어. 500만원만 이 계좌로 넣어줄 수 있어? 나중에 바로 갚을게.",
+    "expected_categories": [],
+    "expected_risk_level": "high",
+    "rule_based_recall_expected": false,
+    "source_basis": "2026-09 신종수법 '가족 사칭 딥보이스콜' — AI 음성복제로 자녀 목소리를 흉내내 부모에게 급전을 요청하는 통화의 STT 결과 텍스트. G-01과 마찬가지로 기관명/금융 전문용어가 없어 v1 키워드 규칙은 놓치지만(실측: score 0), 음성 자체의 AI 합성 여부는 F-03(딥보이스 판별)의 책임 범위이고 텍스트 문맥 판단은 v2(LLM)가 이어받는다 (실제 사건 아님)"
   },
   {
     "id": "B-01",
@@ -232,5 +268,14 @@
     "expected_risk_level": "low",
     "rule_based_recall_expected": true,
     "source_basis": "정상 은행 상품 안내 대조군 — '은행'이라는 단어만으로는 AUTHORITY_IMPERSONATION이 오탐되지 않아야 함을 확인하는 정밀도(precision) 테스트"
+  },
+  {
+    "id": "B-07",
+    "label": "benign",
+    "text": "이번에 출시한 저희 은행 공식 모바일 앱을 설치하시면 환전 수수료 우대 혜택을 드립니다.",
+    "expected_categories": [],
+    "expected_risk_level": "low",
+    "rule_based_recall_expected": true,
+    "source_basis": "정상 공식 앱 설치 안내 대조군 — REMOTE_CONTROL_APP 키워드 목록에서 '앱을 설치'처럼 일반형 문구를 일부러 뺀 이유를 실측으로 확인하는 정밀도(precision) 테스트 (pattern_rules.py 주석 참고)"
   }
 ]

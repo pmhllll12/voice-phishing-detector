@@ -814,3 +814,34 @@ stt-worker) 전부에 대한 scrape 대상이 설정돼 있고, k3s(`kubectl app
       `.github/workflows/tests.yml`(compose 미사용)과
       `.claude/skills/run-voice-phishing-detector/*`(compose 이전부터 있던 별도
       systemd 기반 안내 문서)는 이번 전환 범위 밖으로 판단해 그대로 둠.
+- [x] F-01 신종수법 3건 대응 (2026-09-18) — "가족 사칭 딥보이스콜"/"원격제어 앱
+      설치 유도"/"가짜 검찰·경찰 앱 설치"를 반영했다.
+      1. `PatternCategory`에 `REMOTE_CONTROL_APP`(원격제어앱 설치유도) 신규 추가 —
+         원격제어 앱 설치 유도와 가짜 검찰·경찰 앱 설치는 "링크로 원격제어·인증
+         앱을 설치시켜 기기를 조작/정보 탈취"라는 동일한 공격 기법이라 카테고리
+         하나로 묶었다(`apps/mcp-server/src/domain/pattern_rules.py`). 기존
+         URGENT_TRANSFER에 있던 "앱을 설치"는 은행 공식 앱 안내 같은 정상 문구와도
+         겹쳐 오탐 위험이 커서 빼고, "원격제어 앱"/"화면공유 앱"/"팀뷰어"/
+         "애니데스크"/"출석통지서 앱"/"안전 인증 앱" 등 더 구체적인 표현만 남겼다
+         (B-07 정밀도 테스트로 실측 확인). N-06(확장성) 설계대로 enum + 키워드셋 +
+         가중치 추가만으로 끝났고 application 계층은 diff 0줄 — LLM(v2) 프롬프트의
+         카테고리 목록도 `PatternCategory`에서 자동 파생되므로 별도 수정 불필요.
+      2. "가족 사칭 딥보이스콜"은 기존 결정(가족/지인 사칭 자연어는 오탐 위험이 커
+         키워드로 추가하지 않는다, pattern_rules.py 주석 참고)을 그대로 따랐다 —
+         대신 합성 데이터셋(`G-06`)과 F-04 유사사례 코퍼스(`FC-011`)에만 반영해
+         v2(LLM)와 유사사례 검색이 이 수법을 커버하게 했다. 음성 자체의 AI 합성
+         여부 판별은 F-03(딥보이스 판별)의 책임 범위.
+      3. `data/synthetic_call_transcripts.json`에 textbook 3건(T-16~T-18, 신규
+         카테고리 단독·기관사칭 결합·기관사칭+공포조성 결합 3단계) + gap 1건(G-06,
+         가족 딥보이스콜) + benign 1건(B-07, 정밀도 가드) 추가, 총 32건으로 확장.
+         `apps/rag-worker/data/fraud_cases.json`에 FC-011(가족 사칭 딥보이스콜형)/
+         FC-012(원격제어 앱 설치 유도형)/FC-013(가짜 검찰·경찰 앱 설치형) 추가, 총
+         13건으로 확장 후 `seed_fraud_cases.py`로 postgres 재시딩.
+      4. mcp-server 테스트 150개/rag-worker 테스트 12개 전부 통과 확인, mcp-server
+         REST(`/api/v1/analyze`, 8100) 직접 호출로 3개 시나리오 전부 라이브 검증 —
+         "안전 인증 앱을 설치하셔야..." → `remote_control_app` 탐지·위험도 85점
+         (high)·F-04 유사사례 1위로 FC-013(유사도 62%) 정확히 인용, "원격제어 앱을
+         설치해주시면..." → FC-012 1위 인용, 딥보이스콜 문구 → FC-004/FC-009 인용
+         까지 실측 확인. api(8000)는 이 세션의 로컬 k3s NodePort 라우팅과 겹쳐
+         테스트를 mcp-server 직접 호출로 대체함(코드 변경과 무관한 환경 이슈).
+         mcp-server/api systemd 서비스는 재시작 완료.

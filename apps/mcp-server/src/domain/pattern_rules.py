@@ -20,6 +20,21 @@
 #       가족/지인 사칭형 자연어를 섣불리 추가하면 오탐이 늘 수 있다(정상적인 가족 간
 #       급전 요청과 구분이 어려움). LLM 백엔드가 기본값인 지금은 우선순위가 낮다.
 #
+# 2026-09-18: 신종수법 대응 — "가족 사칭 딥보이스콜"/"원격제어 앱 설치 유도"/
+# "가짜 검찰·경찰 앱 설치" 3건을 검토했다.
+#   - 가족 사칭 딥보이스콜: 텍스트만으로는 위 TODO와 같은 이유(정상 가족 요청과 구분
+#     불가)로 키워드를 추가하지 않았다. 대신 (1) synthetic_call_transcripts.json에
+#     G-06(자연어 사각지대, AI 음성복제 명시)을 추가해 v1의 한계와 v2(LLM)가 이를
+#     커버함을 실측 문서화하고, (2) F-04 유사사례 코퍼스(fraud_cases.json)에 FC-011을
+#     추가해 유사사례 검색/판정근거 결합(F-04→F-05)이 이 수법도 인용할 수 있게 했다.
+#     음성 자체의 AI 합성 여부 판별은 F-03(딥보이스 판별, apps/api)의 몫이라 텍스트
+#     패턴 규칙의 책임 범위 밖이기도 하다.
+#   - 원격제어 앱 설치 유도 / 가짜 검찰·경찰 앱 설치: 공격 기법이 사실상 동일하다
+#     ("링크로 원격제어·인증 앱을 설치시켜 기기를 직접 조작하거나 정보를 탈취") —
+#     아래 REMOTE_CONTROL_APP 카테고리 하나로 묶었다. 기존 URGENT_TRANSFER에 있던
+#     "앱을 설치"/"원격조종 프로그램"은 더 구체적인 이 카테고리로 옮겼다(어느
+#     calibration 케이스도 이 두 문구를 안 써서 기존 테스트에는 영향 없음).
+#
 # N-06(확장성): 새 카테고리를 추가하려면
 #   1) domain/entities.py의 PatternCategory에 항목 추가
 #   2) 아래 PATTERN_RULES에 키워드셋 추가
@@ -67,8 +82,6 @@ PATTERN_RULES: dict[PatternCategory, list[str]] = {
         "현금을 인출",
         "대포통장",
         "직접 만나서 전달",
-        "원격조종 프로그램",
-        "앱을 설치",
         "인증번호를 알려주",
     ],
     PatternCategory.PERSONAL_INFO_REQUEST: [
@@ -77,6 +90,24 @@ PATTERN_RULES: dict[PatternCategory, list[str]] = {
         "보안카드 번호",
         "OTP 번호",
         "공인인증서 비밀번호",
+    ],
+    # "앱을 설치"/"링크를 눌러 설치" 같은 일반형 문구는 일부러 뺐다 — 은행 공식 앱
+    # 설치 안내 같은 정상 문자에도 흔히 등장해 오탐 위험이 크다(B-07 정밀도 테스트
+    # 참고). 대신 "원격제어/화면공유/가짜 신분증(출석통지서·안전 인증) 앱"처럼
+    # 정상 안내에서는 잘 안 쓰는 구체적인 표현만 남겼다.
+    PatternCategory.REMOTE_CONTROL_APP: [
+        "원격조종 프로그램",
+        "원격제어 앱",
+        "원격제어 프로그램",
+        "원격 지원 프로그램",
+        "화면공유 앱",
+        "화면 공유 프로그램",
+        "팀뷰어",
+        "애니데스크",
+        "apk 파일을 다운로드",
+        "출석통지서 앱",
+        "안전 인증 앱",
+        "보안 앱을 설치",
     ],
 }
 
@@ -94,9 +125,16 @@ PATTERN_RULES: dict[PatternCategory, list[str]] = {
 # 정확히 만족한다 — 2개 카테고리 조합 6가지 전부 40~69점(중위험) 구간에, 3개 이상
 # 조합 5가지 전부 70점 이상(고위험)에 들어간다. 가중치/임계값(entities.py의
 # RISK_LEVEL_THRESHOLDS) 변경 불필요.
+# 2026-09-18: REMOTE_CONTROL_APP 가중치는 URGENT_TRANSFER(35)와 동급으로 잡았다 —
+# 원격제어 앱 설치는 "이체를 유도"하는 수준을 넘어 공격자가 기기를 직접 조작할 수
+# 있게 내주는 것이라 실질적 피해 가능성이 최소 그만큼은 크다고 판단했다. 기존
+# textbook 조합(T-01~T-15)은 이 카테고리를 쓰지 않아 점수가 그대로 유지되므로
+# RISK_LEVEL_THRESHOLDS 재검증은 새로 추가한 조합(T-16~T-18, synthetic_call_
+# transcripts.json)에서만 했다 — 결과는 그 파일 주석 참고.
 CATEGORY_WEIGHTS: dict[PatternCategory, int] = {
     PatternCategory.AUTHORITY_IMPERSONATION: 30,
     PatternCategory.FEAR_INDUCEMENT: 30,
     PatternCategory.URGENT_TRANSFER: 35,
     PatternCategory.PERSONAL_INFO_REQUEST: 25,
+    PatternCategory.REMOTE_CONTROL_APP: 35,
 }
