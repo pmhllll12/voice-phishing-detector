@@ -72,3 +72,31 @@ body {
   color: var(--text-primary);
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
 }
+
+/* 포트폴리오 랜딩(/) 전용 — 개발자 포트폴리오는 시스템 라이트/다크 설정과 무관하게
+   항상 다크로 보여주는 게 관례라, 대시보드(:root의 prefers-color-scheme 분기)와는
+   별도로 이 스코프 안에서만 다크 팔레트 값을 고정 재정의한다. */
+.portfolio-dark {
+  --surface-1: #1a1a19;
+  --page-plane: #0d0d0d;
+  --text-primary: #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted: #898781;
+  --gridline: #2c2c2a;
+  --baseline: #383835;
+  --border: rgba(255, 255, 255, 0.1);
+  --track: #242422;
+
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-critical: #d03b3b;
+
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+
+  background: var(--page-plane);
+  color: var(--text-primary);
+  min-height: 100vh;
+}
