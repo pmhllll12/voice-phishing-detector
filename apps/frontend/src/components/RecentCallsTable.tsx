@@ -262,7 +262,11 @@ export function RecentCallsTable({ calls }: { calls: CallAnalysis[] }) {
                       alignItems: "center",
                       gap: "6px",
                       color: meta.color,
+                      background: meta.bg,
                       fontWeight: 600,
+                      fontSize: "12px",
+                      padding: "3px 10px",
+                      borderRadius: "20px",
                     }}
                   >
                     <span aria-hidden>{meta.icon}</span>

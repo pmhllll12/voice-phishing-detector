@@ -18,6 +18,9 @@
   --status-good: #0ca30c;
   --status-warning: #fab219;
   --status-critical: #d03b3b;
+  --status-good-bg: #e7f6e7;
+  --status-warning-bg: #fef3e0;
+  --status-critical-bg: #fbe9e9;
 
   /* 카테고리 팔레트 (패턴 종류) — 고정 순서, 순환 금지 */
   --series-1: #2a78d6; /* 기관사칭 */
@@ -43,6 +46,9 @@
     --status-good: #0ca30c;
     --status-warning: #fab219;
     --status-critical: #d03b3b;
+    --status-good-bg: #16241a;
+    --status-warning-bg: #2b2317;
+    --status-critical-bg: #2b1a1a;
 
     --series-1: #3987e5;
     --series-2: #d95926;

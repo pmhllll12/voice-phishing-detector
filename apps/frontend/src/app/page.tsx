@@ -150,9 +150,9 @@ export default function DashboardPage() {
         }}
       >
         <StatTile label="총 분석 건수" value={stats?.total_analyzed ?? "–"} />
-        <StatTile label="고위험 건수" value={stats?.risk_level_counts.high ?? "–"} />
-        <StatTile label="중위험 건수" value={stats?.risk_level_counts.medium ?? "–"} />
-        <StatTile label="저위험 건수" value={stats?.risk_level_counts.low ?? "–"} />
+        <StatTile label="고위험 건수" value={stats?.risk_level_counts.high ?? "–"} tone="high" />
+        <StatTile label="중위험 건수" value={stats?.risk_level_counts.medium ?? "–"} tone="medium" />
+        <StatTile label="저위험 건수" value={stats?.risk_level_counts.low ?? "–"} tone="low" />
       </section>
 
       <section style={{ marginBottom: "28px" }}>
