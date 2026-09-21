@@ -1,6 +1,15 @@
-// apps/api 호출용 클라이언트. F-06 대시보드가 쓰는 3개 엔드포인트를 감싼다.
+// apps/api 호출용 클라이언트. F-06 대시보드가 쓰는 엔드포인트를 감싼다.
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+
+// N-02: api의 조회/처리 엔드포인트는 X-API-Key를 요구한다(apps/api/src/infrastructure/
+// adapters/api_key_role_auth.py 참고). 대시보드는 조회(목록/통계)와 처리(분석 실행/신고
+// 접수)를 모두 하므로 handler 키가 필요하다. NEXT_PUBLIC_*는 브라우저 번들에 그대로
+// 노출되므로 이건 "진짜" 비밀키가 아니라 로그인 시스템이 없는 지금 단계의 데모용
+// 타협이다 — 실제 서비스라면 사용자별 세션을 Next.js 서버(BFF)가 들고 api를 대신
+// 호출해야 한다(TODO, 아직 미착수).
+const API_KEY = process.env.NEXT_PUBLIC_API_KEY ?? "dev-handler-key";
+const AUTH_HEADERS = { "X-API-Key": API_KEY };
 
 export type RiskLevel = "low" | "medium" | "high";
 
@@ -10,15 +19,52 @@ export interface DetectedPattern {
   matched_keywords: string[];
 }
 
+export interface SimilarCase {
+  case_id: string;
+  title: string;
+  category: string;
+  summary: string;
+  source_note: string;
+  similarity: number;
+}
+
+// SMS/email 실채널 연동(2026-09-02): "call"이 기본값이고, Gmail 폴러가 보낸 판정은
+// "email"로 온다. F-01/F-02/F-05 판정 로직 자체는 채널 무관하게 같다 — 이 필드는
+// 대시보드에서 구분해서 보여주기 위한 표시용 메타데이터다(apps/api/src/domain/
+// entities.py CallAnalysisResult 상단 주석 참고). SMS는 아직 실연동 없음(설계만).
+export type Channel = "call" | "email" | "sms";
+
+// F-06 대시보드 UI/UX 개선(2026-09-02, item 2): 크로스채널 상관관계 가산 근거 1건.
+// source_call_id가 있으면 "다른 채널의 그 판정 기록"으로 클릭 이동할 수 있다(같은
+// /api/v1/calls 목록 안의 call_id와 매칭). null이면 링크 없이 근거 문장만 보여준다
+// (mcp-server 내부 자동 결합 경로에서 온 매치이거나, Safe Browsing 악성 URL 근거처럼
+// "다른 채널 기록"이 아예 없는 경우 — apps/api CorrelationMatchSummary 상단 주석 참고).
+export interface CorrelationMatch {
+  reason: string;
+  source_call_id: string | null;
+}
+
 export interface CallAnalysis {
   call_id: string;
   analyzed_at: string;
-  raw_transcript: string;
+  channel: Channel;
+  // N-03: 항상 마스킹된 버전만 온다(전화번호/계좌번호/이름 등 제거). raw_transcript(원문)는
+  // N-02 RBAC상 ADMIN 키로 호출했을 때만 응답에 포함되므로 optional — 이 대시보드는 기본
+  // handler 키를 쓰므로(dev-handler-key) 평소엔 안 온다(apps/api/src/main.py
+  // _serialize_call_result 참고).
+  masked_transcript: string;
+  raw_transcript?: string;
   risk_score: number;
   risk_level: RiskLevel;
   detected_patterns: DetectedPattern[];
   explanation_summary: string;
   explanation: string;
+  similar_cases: SimilarCase[];
+  // F-06 대시보드 UI/UX 개선(2026-09-02, item 3): 크로스채널 상관관계 가산 "전" 원점수.
+  // risk_score와 다르면 배지에 "base → risk_score" 형태로 같이 보여준다(RecentCallsTable
+  // 참고). 같으면 가산이 없었다는 뜻이라 배지는 risk_score만 그대로 보여준다.
+  base_risk_score: number;
+  correlation_matches: CorrelationMatch[];
 }
 
 export interface CategoryCount {
@@ -65,7 +111,7 @@ export async function checkApiHealth(): Promise<boolean> {
 export async function analyzeCall(transcript: string): Promise<CallAnalysis> {
   const res = await fetch(`${API_BASE_URL}/api/v1/calls/analyze`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...AUTH_HEADERS },
     body: JSON.stringify({ transcript }),
   });
   if (!res.ok) {
@@ -74,8 +120,26 @@ export async function analyzeCall(transcript: string): Promise<CallAnalysis> {
   return res.json();
 }
 
+// F-05: 오디오 파일을 업로드해 stt-worker(faster-whisper)로 변환한 뒤 analyzeCall과
+// 동일한 판정 경로를 태운다(apps/api/src/main.py analyze_call_audio). Content-Type을
+// 직접 지정하지 않는다 — FormData를 fetch에 넘기면 브라우저가 multipart 경계(boundary)를
+// 포함한 헤더를 자동으로 붙이는데, 수동으로 지정하면 그 경계가 빠져 서버가 파싱하지 못한다.
+export async function analyzeCallAudio(audioBlob: Blob): Promise<CallAnalysis> {
+  const formData = new FormData();
+  formData.append("audio", audioBlob, "recording.webm");
+  const res = await fetch(`${API_BASE_URL}/api/v1/calls/analyze-audio`, {
+    method: "POST",
+    headers: AUTH_HEADERS,
+    body: formData,
+  });
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+  return res.json();
+}
+
 export async function listCalls(limit = 20): Promise<CallAnalysis[]> {
-  const res = await fetch(`${API_BASE_URL}/api/v1/calls?limit=${limit}`);
+  const res = await fetch(`${API_BASE_URL}/api/v1/calls?limit=${limit}`, { headers: AUTH_HEADERS });
   if (!res.ok) {
     throw new ApiError(await parseErrorDetail(res), res.status);
   }
@@ -84,7 +148,63 @@ export async function listCalls(limit = 20): Promise<CallAnalysis[]> {
 }
 
 export async function getStatsSummary(): Promise<StatsSummary> {
-  const res = await fetch(`${API_BASE_URL}/api/v1/stats/summary`);
+  const res = await fetch(`${API_BASE_URL}/api/v1/stats/summary`, { headers: AUTH_HEADERS });
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+  return res.json();
+}
+
+// F-06 대시보드 UI/UX 개선(2026-09-02, item 6): F-03(딥보이스/AI 합성음성 판별)은
+// apps/api에 이미 구현/검증되어 있었지만(wav2vec2_deepvoice_adapter.py) 대시보드에
+// 진입점이 전혀 없었다 — 기존 "🎤 음성으로 분석" 버튼은 F-05(통화 위험도 판정)였지 이게
+// 아니었다. 그 둘을 혼동하지 않도록 별도 컴포넌트/엔드포인트로 분리해서 추가한다.
+export interface DeepvoiceIndicator {
+  name: string;
+  description: string;
+  triggered: boolean;
+}
+
+export interface DeepvoiceVerdict {
+  // null: 신호 부족 등으로 판단을 보류했다는 뜻 — "합성 아님"과 다르다(domain/deepvoice.py 참고).
+  is_synthetic: boolean | null;
+  confidence: number;
+  indicators: DeepvoiceIndicator[];
+  explanation: string;
+}
+
+// v1/v2(wav2vec2) 어댑터 모두 16-bit PCM WAV만 파싱한다(deepvoice_adapter._read_wav 재사용,
+// wav2vec2_deepvoice_adapter.py 상단 주석 참고) — F-05의 analyzeCallAudio(webm/mp4/ogg,
+// stt-worker가 변환)와 달리 이쪽은 포맷 변환 단계가 없다.
+export async function checkDeepvoice(file: File): Promise<DeepvoiceVerdict> {
+  const formData = new FormData();
+  formData.append("audio", file, file.name);
+  const res = await fetch(`${API_BASE_URL}/api/v1/calls/deepvoice-check`, {
+    method: "POST",
+    headers: AUTH_HEADERS,
+    body: formData,
+  });
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+  return res.json();
+}
+
+export interface ReportResult {
+  report_id: string;
+  status: string;
+  channel: "auto" | "manual";
+  submitted_at: string;
+  note: string;
+}
+
+// F-07: 신고 접수(mock) — 실제 112/경찰청 신고 API는 호출하지 않는다 (docs/RFP.md 4장).
+export async function submitReport(caseSummary: string, riskLevel: RiskLevel): Promise<ReportResult> {
+  const res = await fetch(`${API_BASE_URL}/api/v1/reports`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...AUTH_HEADERS },
+    body: JSON.stringify({ case_summary: caseSummary, risk_level: riskLevel }),
+  });
   if (!res.ok) {
     throw new ApiError(await parseErrorDetail(res), res.status);
   }

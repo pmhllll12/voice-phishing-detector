@@ -1,0 +1,36 @@
+# Welcome to Jekyll!
+#
+# This config file is meant for settings that affect your whole blog, values
+# which you are expected to set up once and rarely edit after that. If you find
+# yourself editing this file very often, consider using Jekyll's data files
+# feature for the data you need to update frequently.
+#
+# For technical reasons, this file is *NOT* reloaded automatically when you use
+# 'bundle exec jekyll serve'. If you change this file, please restart the server process.
+
+title: AI 기반 보이스피싱 실시간 탐지 및 대응 시스템
+email: pmhllll12@gmail.com
+description: >- # this means to ignore newlines until "baseurl:"
+  통화/문자 내용을 실시간으로 분석해 보이스피싱 패턴과 딥보이스(AI 합성 음성)를 탐지하고,
+  RAG 기반 유사사례로 판정 근거를 제시하는(블랙박스 판정 금지) 시스템 개발 제안서입니다.
+baseurl: "/voice-phishing-detector" # the subpath of your site, e.g. /blog
+url: "https://pmhllll12.github.io" # the base hostname & protocol for your site, e.g. http://example.com
+github_username: pmhllll12
+
+# Build settings
+theme: minima
+plugins:
+  - jekyll-feed
+
+# Navigation
+header_pages:
+  - pages/toc.markdown
+
+# 이 jekyll/ 폴더 자체가 사이트 소스 루트다 — voice-phishing-detector 저장소는
+# apps/(FastAPI 4개 서비스 + Next.js 프론트엔드)와 docs/(RFP·설계서)를 함께 담은
+# 애플리케이션 저장소라, Jekyll 전용 파일(Gemfile/_config.yml/_layouts 등)을 저장소
+# 루트에 두면 두 성격이 섞인다. 그래서 `cd jekyll && bundle exec jekyll serve`처럼
+# 이 폴더를 소스로 지정해 실행하는 걸 전제로 한다.
+exclude:
+  - vendor/
+  - .jekyll-cache/

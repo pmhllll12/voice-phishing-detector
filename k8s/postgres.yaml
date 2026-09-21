@@ -1,0 +1,106 @@
+# =============================================================================
+# postgres.yaml
+#
+# 판정 로그(N-01 감사증적, api/mcp-server) + pgvector(F-04 RAG) 겸용. 예전
+# docker-compose.yaml의 named volume(postgres_data) 대신 StatefulSet의
+# volumeClaimTemplates로 퍼시스턴스를 갖는다 — k3s가 기본으로 설치하는
+# local-path StorageClass를 그대로 쓰므로 storageClassName은 비워둔다(클러스터
+# 기본값 사용).
+#
+# 초기 스키마(infra/db/init.sql)는 ConfigMap(kustomization.yaml의
+# configMapGenerator, name: postgres-initdb)으로 만들어 postgres 공식 이미지의
+# /docker-entrypoint-initdb.d/ 관례에 맞춰 마운트한다 — 컨테이너 최초 기동 시
+# (빈 PGDATA일 때만) 1회 자동 실행되는 동작은 docker-compose 때와 동일하다.
+#
+# StatefulSet + 헤드리스 Service를 쓰면 다른 파드에서 예전과 똑같이
+# `postgres:5432`로 접근 가능하다(compose의 서비스명 DNS와 동일하게 동작).
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  clusterIP: None
+  selector:
+    app: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+---
+# 호스트에서 `psql -h localhost`로 직접 붙을 수 있도록 NodePort도 하나 더 연다
+# (docker-compose 때 `"${POSTGRES_PORT:-5432}:5432"`로 호스트에 노출하던 것과 동일한 용도).
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-nodeport
+spec:
+  type: NodePort
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+      nodePort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: pgvector/pgvector:pg16
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef: { name: vps-env, key: POSTGRES_USER }
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: vps-env, key: POSTGRES_PASSWORD }
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef: { name: vps-env, key: POSTGRES_DB }
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+            - name: initdb
+              mountPath: /docker-entrypoint-initdb.d/init.sql
+              subPath: init.sql
+              readOnly: true
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 10
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+      volumes:
+        - name: initdb
+          configMap:
+            name: postgres-initdb
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi

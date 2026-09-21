@@ -1,0 +1,73 @@
+# =============================================================================
+# kustomization.yaml
+#
+# k3s로 전체 스택(api/mcp-server/rag-worker/stt-worker/frontend/postgres/
+# prometheus/grafana)을 기동하는 진입점. 예전 docker-compose.yaml 한 장짜리
+# 구성을 대체한다.
+#
+# 사용법 (저장소 루트에서):
+#   1) 최초 1회: k3s 설치 — README "로컬 실행 (k3s)" 절 참고
+#   2) cp .env.example .env   # docker-compose 때와 동일한 습관, 이제는 필수
+#      (여기서 만든 .env를 아래 secretGenerator가 그대로 읽는다 — .env는 이미
+#      .gitignore에 있으므로 실제 값으로 바꿔도 커밋되지 않는다)
+#   3) ./k8s/build-and-import.sh   # 5개 앱 이미지를 빌드해 k3s containerd로 임포트
+#   4) kubectl apply -k .
+#
+# 프로덕션 차이(replicas/리소스 limit/dev 서버→프로덕션 실행 전환)는 이 파일을
+# 상속하지 않는 별도 오버레이 k8s/overlays/prod/kustomization.yaml에 있다 —
+# 왜 base가 아니라 재선언 방식인지는 그 파일 상단 주석 참고(kustomize의
+# 오버레이-하위경로 제약 때문, --load-restrictor로도 안 풀림).
+#
+# 이 파일이 저장소 루트에 있는 이유: kustomize의 기본 load restriction
+# (LoadRestrictionsRootOnly)이 kustomization 파일 기준 상위 디렉터리(../) 참조를
+# 막는다 — .env/infra/db/init.sql/prometheus/prometheus.yml/grafana/provisioning
+# 전부 k8s/ 밖에 있으므로, kustomization.yaml 자체를 그 파일들과 같은 루트에 둬서
+# 이 제약을 피한다.
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: vps-detector
+
+resources:
+  - k8s/namespace.yaml
+  - k8s/postgres.yaml
+  - k8s/mcp-server.yaml
+  - k8s/api.yaml
+  - k8s/rag-worker.yaml
+  - k8s/stt-worker.yaml
+  - k8s/frontend.yaml
+  - k8s/prometheus.yaml
+  - k8s/grafana.yaml
+
+# ConfigMap/Secret 이름에 콘텐츠 해시 접미사를 붙이지 않는다 — 이름이
+# vps-env/postgres-initdb처럼 매니페스트에 적은 그대로 유지돼야 읽기 쉽고,
+# .env 값이 바뀌었을 때 롤아웃을 강제하는 프로덕션급 이점보다 지금 단계에서는
+# 단순함이 낫다고 판단(N-06 설계 문서의 "왜 안 했는가" 서술과 같은 성격).
+generatorOptions:
+  disableNameSuffixHash: true
+
+secretGenerator:
+  # 주의: docker-compose.yaml의 `${VAR:-기본값}` 같은 폴백이 raw k8s 매니페스트에는
+  # 없다 — kustomize의 envs는 여러 파일을 겹쳐 쓸 수 없고(같은 키가 두 파일에
+  # 있으면 에러) 병합해주지 않는다. 그래서 .env는 이제 .env.example의 부분집합이
+  # 아니라 전체 키를 담은 완전한 파일이어야 한다(cp .env.example .env 후 필요한
+  # 값만 고쳐 쓰면 자동으로 전체 키를 갖추게 됨 — README "로컬 실행 (k3s)" 참고).
+  - name: vps-env
+    envs:
+      - .env
+
+configMapGenerator:
+  # postgres 초기 스키마 — 원본 파일을 그대로 소스로 읽는다(복제 없음).
+  - name: postgres-initdb
+    files:
+      - infra/db/init.sql
+  - name: prometheus-config
+    files:
+      - prometheus/prometheus.yml
+  - name: grafana-datasources
+    files:
+      - grafana/provisioning/datasources/datasource.yml
+  - name: grafana-dashboards-provisioning
+    files:
+      - grafana/provisioning/dashboards/dashboard.yml

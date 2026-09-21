@@ -1,0 +1,57 @@
+# =============================================================================
+# rag-worker.yaml
+#
+# 유사 사기사례 매칭(F-04, F-05, N-04) — postgres(pgvector)에 사기사례 임베딩을
+# 저장/검색한다. 기동 시 scripts/seed_fraud_cases.py로 fraud_cases.json을 upsert한 뒤
+# API를 띄운다(case_id가 PK라 재기동해도 안전 — ON CONFLICT DO UPDATE).
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: rag-worker
+spec:
+  type: NodePort
+  selector:
+    app: rag-worker
+  ports:
+    - port: 8200
+      targetPort: 8200
+      nodePort: 8200
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rag-worker
+  template:
+    metadata:
+      labels:
+        app: rag-worker
+    spec:
+      containers:
+        - name: rag-worker
+          image: vps-detector/rag-worker:local
+          imagePullPolicy: Never
+          command: ["sh", "-c", "python -m scripts.seed_fraud_cases && uvicorn src.main:app --host 0.0.0.0 --port 8200"]
+          ports:
+            - containerPort: 8200
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: vps-env, key: DATABASE_URL }
+          readinessProbe:
+            httpGet: { path: /health, port: 8200 }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: { path: /health, port: 8200 }
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5

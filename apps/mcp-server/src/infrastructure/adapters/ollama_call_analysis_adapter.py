@@ -96,18 +96,27 @@ def _resolve_base_url() -> str:
     return os.environ.get("OLLAMA_BASE_URL", DEFAULT_BASE_URL)
 
 
+# GPU(로컬 RTX 3050)에서는 20초면 충분하다고 실측됐지만(N-05 관련 테스트 참고), CPU
+# 전용 인스턴스(예: EC2 t3.large, docs/design.md 4장 "1안")에서는 EXAONE 3.5 2.4B
+# 추론이 20초를 넘겨 규칙 기반(v1)으로 계속 폴백되는 걸 실제 배포로 확인했다(2026-09-02).
+# 환경변수로 오버라이드 가능하게 해서, 느린 CPU 환경에서는 값을 올려 v2(LLM) 판정이
+# 실제로 완료되게 할 수 있다 — 기본값은 GPU 기준 그대로 20초 유지.
+def _resolve_timeout_seconds() -> float:
+    return float(os.environ.get("OLLAMA_TIMEOUT_SECONDS", "20.0"))
+
+
 class OllamaCallAnalysisAdapter:
     def __init__(
         self,
         fallback: CallAnalysisPort,
         base_url: str | None = None,
         model: str | None = None,
-        timeout_seconds: float = 20.0,
+        timeout_seconds: float | None = None,
     ):
         self._fallback = fallback
         self._base_url = base_url or _resolve_base_url()
         self._model = model or _resolve_model()
-        self._timeout = timeout_seconds
+        self._timeout = timeout_seconds if timeout_seconds is not None else _resolve_timeout_seconds()
         metrics.llm_model_info.info({"model_name": self._model, "base_url": self._base_url})
 
     def analyze(self, transcript: str) -> CallAnalysisResult:

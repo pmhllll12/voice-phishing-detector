@@ -1,0 +1,84 @@
+# =============================================================================
+# mcp-server.yaml
+#
+# 도구 분리 계층(F-01, F-04, F-07) — rest_server.py(REST 어댑터)를 띄운다. server.py
+# (MCP stdio 어댑터)는 Claude Code가 로컬에서 직접 붙는 용도라 컨테이너에는 포함하지
+# 않는다(Dockerfile 상단 주석과 동일한 이유).
+#
+# hostNetwork: true인 이유 — Docker Desktop의 Kubernetes와 달리 k3s는 별도 VM 없이
+# WSL2 호스트에 직접 설치되므로 host.docker.internal 같은 매직 DNS가 없다. 이 파드만
+# 호스트 네트워크 네임스페이스를 공유해 호스트에서 뜬 Ollama(0.0.0.0:11434 바인딩
+# 필요, README 참고)를 localhost로 그대로 부른다. 트레이드오프: 이 파드는 네트워크
+# 격리가 없고 호스트 8100 포트를 직접 점유한다 — 단일 노드 로컬 데모 규모에서는
+# 수용 가능한 선택으로 판단(자세한 이유는 k8s/README 대신 이 주석 및 프로젝트
+# README "로컬 실행 (k3s)" 절 참고).
+#
+# hostNetwork 파드는 기본 dnsPolicy로는 클러스터 DNS(postgres/rag-worker 같은 서비스명)
+# 를 못 찾으므로 dnsPolicy: ClusterFirstWithHostNet을 명시해야 한다(k8s 공식 문서 권고).
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-server
+spec:
+  selector:
+    app: mcp-server
+  ports:
+    - port: 8100
+      targetPort: 8100
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-server
+  template:
+    metadata:
+      labels:
+        app: mcp-server
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: mcp-server
+          image: vps-detector/mcp-server:local
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8100
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: vps-env, key: DATABASE_URL }
+            - name: API_KEYS
+              valueFrom:
+                secretKeyRef: { name: vps-env, key: API_KEYS }
+            # hostNetwork라 host.docker.internal 대신 localhost로 바로 호스트 Ollama에 닿는다.
+            - name: OLLAMA_BASE_URL
+              value: "http://localhost:11434"
+            - name: OLLAMA_TIMEOUT_SECONDS
+              valueFrom:
+                secretKeyRef: { name: vps-env, key: OLLAMA_TIMEOUT_SECONDS }
+            # F-04: rag-worker 어댑터 기본값(localhost:8200)은 mcp-server 자기 자신을
+            # 가리키므로 클러스터 Service DNS로 명시 오버라이드해야 한다(compose 때와
+            # 동일한 이유, RagWorkerSearchAdapter 상단 주석 참고).
+            - name: RAG_WORKER_URL
+              value: "http://rag-worker:8200"
+            - name: GOOGLE_SAFE_BROWSING_API_KEY
+              valueFrom:
+                secretKeyRef: { name: vps-env, key: GOOGLE_SAFE_BROWSING_API_KEY }
+          readinessProbe:
+            httpGet: { path: /health, port: 8100 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          livenessProbe:
+            httpGet: { path: /health, port: 8100 }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
