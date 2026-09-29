@@ -94,6 +94,9 @@ configMapGenerator:
   - name: prometheus-config
     files:
       - ../../../prometheus/prometheus.yml
+  - name: prometheus-rules
+    files:
+      - ../../../prometheus/alerting/vps-rules.yml
   - name: grafana-datasources
     files:
       - ../../../grafana/provisioning/datasources/datasource.yml

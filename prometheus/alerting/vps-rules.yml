@@ -1,0 +1,137 @@
+# =============================================================================
+# prometheus/alerting/vps-rules.yml
+#
+# vps_* 커스텀 메트릭 기반 alerting rule. prometheus.yml의 rule_files가 이 파일을
+# 읽고, k8s에서는 kustomization.yaml의 configMapGenerator(prometheus-rules)가
+# /etc/prometheus/alerting/ 아래로 마운트한다.
+#
+# Alertmanager는 아직 붙이지 않았다 — 알림은 Prometheus UI(/alerts)와
+# ALERTS 시계열로만 확인한다(수신 채널 연결은 배포 이후 과제).
+#
+# 임계값 근거:
+#   - N-05 SLA: "판정 5초 이내". 순차 부하는 SLA를 지켰지만 동시성 4에서 94.9%가
+#     위반됐다(GPU 1장 경합). 그래서 "p95 > 5초"와 "5초 이내 비율 < 90%" 두 가지로 본다.
+#   - 표본이 거의 없을 때(데모 환경은 유휴 시간이 길다) 비율 계산이 튀지 않도록
+#     요청 수 하한 조건(> 0 또는 > N)을 함께 건다.
+# =============================================================================
+
+groups:
+  # ---------------------------------------------------------------------------
+  # N-05: 응답시간 SLA
+  # ---------------------------------------------------------------------------
+  - name: vps-sla
+    rules:
+      - alert: VpsAnalysisLatencyP95High
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(vps_analysis_duration_seconds_bucket[5m]))
+          ) > 5
+          and sum(rate(vps_analysis_duration_seconds_count[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+          requirement: N-05
+        annotations:
+          summary: "판정 p95 응답시간이 N-05 SLA(5초)를 초과"
+          description: "최근 5분 p95 = {{ $value | humanizeDuration }}. GPU 경합(동시 요청) 또는 LLM 콜드스타트 여부를 확인할 것."
+
+      - alert: VpsAnalysisSlaComplianceLow
+        expr: |
+          (
+            sum(rate(vps_analysis_duration_seconds_bucket{le="5.0"}[15m]))
+            / sum(rate(vps_analysis_duration_seconds_count[15m]))
+          ) < 0.9
+          and sum(increase(vps_analysis_duration_seconds_count[15m])) > 10
+        for: 10m
+        labels:
+          severity: critical
+          requirement: N-05
+        annotations:
+          summary: "5초 이내 판정 비율이 90% 미만"
+          description: "최근 15분 SLA 준수율 = {{ $value | humanizePercentage }}."
+
+  # ---------------------------------------------------------------------------
+  # F-01/F-02: 탐지 이상 징후
+  # ---------------------------------------------------------------------------
+  - name: vps-detection
+    rules:
+      - alert: VpsHighRiskDetectionSurge
+        # 최근 10분 高위험 판정 비율이 직전 1시간 평균의 3배 이상 + 절대 건수 5건 이상.
+        # 절대 건수 조건이 없으면 평소 0건일 때 1건만 들어와도 발화한다.
+        expr: |
+          sum(increase(vps_calls_analyzed_total{risk_level="high"}[10m])) >= 5
+          and
+          sum(rate(vps_calls_analyzed_total{risk_level="high"}[10m]))
+            > 3 * sum(rate(vps_calls_analyzed_total{risk_level="high"}[1h] offset 10m))
+        for: 5m
+        labels:
+          severity: warning
+          requirement: F-02
+        annotations:
+          summary: "위험도 高 판정 급증"
+          description: "최근 10분 高위험 {{ $value }}건. 신종 수법 확산 또는 오탐(가중치 회귀) 여부를 확인할 것."
+
+      - alert: VpsLlmFallbackRateHigh
+        # mcp-server가 Ollama 호출에 실패해 v1 규칙 기반으로 폴백한 비율.
+        expr: |
+          (
+            sum(rate(vps_mcp_llm_analysis_requests_total{result="fallback"}[10m]))
+            / sum(rate(vps_mcp_llm_analysis_requests_total[10m]))
+          ) > 0.2
+          and sum(increase(vps_mcp_llm_analysis_requests_total[10m])) > 5
+        for: 10m
+        labels:
+          severity: warning
+          requirement: F-01
+        annotations:
+          summary: "LLM 분석 폴백 비율 20% 초과"
+          description: "폴백 비율 = {{ $value | humanizePercentage }}. Ollama 상태(OLLAMA_HOST, 타임아웃, GPU 메모리)를 확인할 것."
+
+  # ---------------------------------------------------------------------------
+  # 워커 오류율 (F-04 rag-worker, F-05 stt-worker)
+  # ---------------------------------------------------------------------------
+  - name: vps-workers
+    rules:
+      - alert: VpsRagSearchErrorRateHigh
+        expr: |
+          (
+            sum(rate(vps_rag_embedding_search_requests_total{result="error"}[10m]))
+            / sum(rate(vps_rag_embedding_search_requests_total[10m]))
+          ) > 0.1
+          and sum(increase(vps_rag_embedding_search_requests_total[10m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+          requirement: F-04
+        annotations:
+          summary: "유사사례 검색 오류율 10% 초과"
+          description: "오류율 = {{ $value | humanizePercentage }}. postgres/pgvector 연결을 확인할 것."
+
+      - alert: VpsSttErrorRateHigh
+        expr: |
+          (
+            sum(rate(vps_stt_transcription_requests_total{result="error"}[10m]))
+            / sum(rate(vps_stt_transcription_requests_total[10m]))
+          ) > 0.1
+          and sum(increase(vps_stt_transcription_requests_total[10m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+          requirement: F-05
+        annotations:
+          summary: "STT 변환 오류율 10% 초과"
+          description: "오류율 = {{ $value | humanizePercentage }}."
+
+  # ---------------------------------------------------------------------------
+  # 스크레이프 대상 생존
+  # ---------------------------------------------------------------------------
+  - name: vps-availability
+    rules:
+      - alert: VpsTargetDown
+        expr: up{job=~"vps-.*"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.job }} 스크레이프 실패"
+          description: "{{ $labels.instance }}가 2분 이상 응답하지 않음."

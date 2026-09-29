@@ -6,18 +6,18 @@
 #
 # 아래 커스텀 메트릭들은 각 서비스의 infrastructure/metrics.py에서 prometheus_client로
 # 실제 구현·연결돼 있다(N-05, 2026-08-31로 api까지 전부 연결 완료 — apps/api/src/main.py
-# _record_analysis_metrics/_record_deepvoice_metrics 참고). alerting rule_files는
-# 아직 TODO(아래).
+# _record_analysis_metrics/_record_deepvoice_metrics 참고). alerting rule은
+# prometheus/alerting/vps-rules.yml(N-05 SLA, 高위험 급증, LLM 폴백, 워커 오류율, 생존).
 # =============================================================================
 
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
-# TODO: gpu-fleet-ops의 alerting/ 폴더처럼 rule_files 추가
-#       (예: 위험도 高 탐지 급증 시 알림, API 응답시간 N-05 SLA 5초 초과 시 알림 등)
-# rule_files:
-#   - "alerting/*.yml"
+# k8s에서는 ConfigMap(prometheus-rules)이 /etc/prometheus/alerting/에 마운트된다.
+# Alertmanager는 아직 없음 — 발화 상태는 Prometheus UI /alerts에서 확인.
+rule_files:
+  - "alerting/*.yml"
 
 scrape_configs:
   # ---------------------------------------------------------------------------
@@ -42,7 +42,7 @@ scrape_configs:
     #
     #   vps_analysis_duration_seconds
     #     - Histogram
-    #     - N-05 "5초 이내 판정" SLA 계측용 — alerting rule은 아직 TODO
+    #     - N-05 "5초 이내 판정" SLA 계측용 (alerting/vps-rules.yml의 vps-sla 그룹)
     #
     #   vps_reports_submitted_total
     #     - Counter, label: channel(자동/수동)
