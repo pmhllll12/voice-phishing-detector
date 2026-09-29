@@ -18,6 +18,7 @@ permalink: /09-산출물및향후계획/
 | 코드 | `apps/stt-worker` — 모바일 오디오 STT | F-05 오디오 경로 연동 완료 |
 | 코드 | `apps/frontend` — 관제 대시보드 | F-06 완료 |
 | 인프라 | `docker-compose.yaml`, `infra/db/init.sql`, `prometheus/prometheus.yml` | 스키마/스킬 완료, compose 실기동·EC2 배포는 TODO |
+| 인프라 | `prometheus/alerting/vps-rules.yml` + `prometheus/tests/` | alerting rule 7종 + promtool 단위테스트 완료(2026-09-29), Alertmanager 미연결 |
 | 도구 | `.mcp.json` (Claude Code MCP 등록), `run-voice-phishing-detector` 스킬 | 완료 |
 | 이 문서 | Jekyll 제안서 사이트(`jekyll/`) — 지금 보고 있는 이 문서 | 완료(2026-08-31 기준 F-01~F-07/N-01~N-06 반영) |
 
@@ -83,5 +84,11 @@ permalink: /09-산출물및향후계획/
 이 7개 항목으로 향후 개선 과제 목록을 전부 처리했다(2026-09-01 기준). 다음
 포트폴리오 이터레이션의 우선순위는 EC2 실배포와 N-05 GPU 용량 확충/수요측
 속도제한이다.
+
+8. ~~관측성 alerting rule~~ 완료(2026-09-29) — `prometheus.yml`에 TODO로 남아 있던
+   `rule_files`를 채웠다. N-05 SLA(p95·준수율), 高위험 급증, LLM 폴백율, 워커
+   오류율, 스크레이프 생존까지 7개 규칙을 만들고 `promtool test rules`로
+   발화/비발화 조건을 단위테스트했다(6장 6절, 8장 2절). 남은 것은 Alertmanager와
+   수신 채널 연결, postgres_exporter 도입 여부 결정이다.
 
 [← 목차로]({{ "/toc/" | relative_url }})

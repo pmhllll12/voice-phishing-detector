@@ -22,6 +22,7 @@ api (FastAPI) ──► mcp-server (통화분석/사기패턴DB조회/신고연�
 stt-worker (faster-whisper, 모바일 오디오→텍스트) ◄── api (F-05 오디오 경로)
 
 prometheus ──► grafana  (애플리케이션 메트릭 관측)
+   └─ alerting rule 7종 (N-05 SLA/高위험 급증/LLM 폴백/워커 오류율/생존)
 ```
 
 5개 서비스로 구성된다.
@@ -105,5 +106,34 @@ N-03 마스킹을 mcp-server 호출 **이전**에 넣은 이유는, 판정(F-01/
   `_serialize_call_result` 참고).
 - **위험도 분포/처리 통계** — 저/중/고 등급별 건수, 카테고리별(기관사칭/공포조성/
   긴급송금유도/개인정보요구) 탐지 건수 집계.
+
+## 6) 관측성 및 알림 설계
+
+4개 백엔드 서비스가 각자 `/metrics`로 `vps_` 접두사 커스텀 메트릭을 노출하고,
+Prometheus가 이를 수집한다(`prometheus/prometheus.yml`). 메트릭을 "보기만" 하는
+데서 멈추지 않도록, 요구사항 위반을 직접 판정하는 alerting rule을
+`prometheus/alerting/vps-rules.yml`에 둔다.
+
+| 그룹 | 알림 | 조건 | 연결 요구사항 |
+|---|---|---|---|
+| vps-sla | `VpsAnalysisLatencyP95High` | 판정 소요시간 p95 > 5초 (5분 지속) | N-05 |
+| vps-sla | `VpsAnalysisSlaComplianceLow` | 5초 이내 판정 비율 < 90% (15분 창, 10분 지속) | N-05 |
+| vps-detection | `VpsHighRiskDetectionSurge` | 최근 10분 高위험 판정률이 직전 1시간 평균의 3배 초과 + 5건 이상 | F-02 |
+| vps-detection | `VpsLlmFallbackRateHigh` | Ollama 실패로 규칙 기반(v1) 폴백한 비율 > 20% | F-01 |
+| vps-workers | `VpsRagSearchErrorRateHigh` / `VpsSttErrorRateHigh` | 유사사례 검색·STT 오류율 > 10% | F-04 / F-05 |
+| vps-availability | `VpsTargetDown` | `vps-*` 스크레이프 대상 2분 이상 응답 없음 | 전체 |
+
+설계 원칙:
+
+- **표본 하한 조건** — 비율 기반 알림에는 모두 "최소 요청 수" 조건을 함께 건다.
+  데모 환경은 유휴 시간이 길어 1~2건만 실패해도 오류율 100%가 되기 때문이다.
+  高위험 급증도 같은 이유로 "배수 조건 + 절대 건수 5건 이상"을 동시에 요구한다.
+- **SLA를 두 축으로 본다** — N-05 부하테스트에서 순차 요청은 SLA를 지켰지만
+  동시성 4에서는 94.9%가 위반됐다(8장). p95만 보면 "일부 느린 요청"과 "대부분이
+  느린 상황"을 구분하기 어려워, 준수율(5초 버킷 비율)을 별도 critical 알림으로 둔다.
+- **k8s 배포** — 규칙 파일은 `prometheus-rules` ConfigMap으로 만들어
+  `/etc/prometheus/alerting/`에 마운트한다(로컬 base와 prod overlay 동일).
+- **한계** — Alertmanager와 수신 채널(메일/메신저)은 아직 연결하지 않았다. 현재는
+  Prometheus UI의 `/alerts`와 `ALERTS` 시계열로만 발화 상태를 확인한다.
 
 [← 목차로]({{ "/toc/" | relative_url }})
