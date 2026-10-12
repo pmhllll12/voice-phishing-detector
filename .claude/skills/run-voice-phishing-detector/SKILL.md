@@ -225,6 +225,15 @@ expiry/reuse/signature-tamper and needs no other service running.
   required for authentication" (no interactive sudo in this container). Drop `--with-deps`
   — the browser binary alone is enough for this driver; no missing shared libs were hit
   running headless Chromium with `--no-sandbox`.
+- **Windows browser shows an empty dashboard (stat tiles "—", no rows) while api is fine
+  from inside WSL** — a stale Windows `netsh interface portproxy` rule
+  (`0.0.0.0:8000 → <old WSL IP>:8000`, owned by `svchost`/iphlpsvc) hijacks
+  `localhost:8000` on the Windows side and times out, because the WSL IP changes across
+  reboots. Check with `/mnt/c/Windows/System32/netsh.exe interface portproxy show all`.
+  Fixing the rule needs an elevated Windows shell (the user has to run it); the no-admin
+  workaround is to start the frontend with the current WSL IP baked in:
+  `NEXT_PUBLIC_API_BASE_URL=http://$(ip -4 -o addr show eth0 | awk '{print $4}' | cut -d/ -f1):8000 npm run dev`.
+  The driver running inside WSL won't reproduce this — it only bites the user's Windows browser.
 - **`lsof -ti:PORT` misses Next.js's listener in this container** (it found nothing for
   the frontend's port even with `ss -tlnp` confirming something was listening there;
   worked fine for the plain uvicorn processes). Use `fuser -k PORT/tcp` instead, which

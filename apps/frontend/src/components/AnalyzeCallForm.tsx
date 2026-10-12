@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useRef, useState, type FormEvent } from "react";
 
 import { analyzeCall, analyzeCallAudio, ApiError, type CallAnalysis } from "@/lib/api";
+import { CitizenVerifyPanel } from "@/components/verify/CitizenVerifyPanel";
+import { StaffProofPanel } from "@/components/verify/StaffProofPanel";
 import { MOCK_NOTICE } from "@/lib/verify";
 
 // F-05: 텍스트 입력과 별개로, 마이크로 녹음한 오디오를 바로 업로드해 분석할 수 있다
@@ -37,28 +39,81 @@ function describeMicError(err: unknown): string {
 }
 
 // 역방향 신원확인 POC(모의 시제품): 방금 분석한 통화가 기관사칭/고위험이면 "AI는 의심만
-// 하고, 확정은 신원확인이 한다"는 안내와 국민용 확인 화면 링크를 붙인다. 링크에 call_id를
-// 실어 보내 검증 결과가 이 통화 기록에 붙게 한다(apps/api verify_call_identity).
-function VerificationPromptNotice({ call }: { call: CallAnalysis }) {
-  if (!call.verification_prompt?.required) return null;
+// 하고, 확정은 신원확인이 한다"는 안내와 함께, 직원 쪽(코드 만들기)과 고객 쪽(코드 입력)
+// 화면을 대시보드 안에 나란히 띄운다 — 세 화면을 따로 열지 않고 한 화면에서 흐름 전체를
+// 볼 수 있게. 고객 패널은 이 통화의 call_id에 묶여 있어서, 검증 결과가 아래 "최근 탐지 현황"
+// 의 이 통화 행 배지로 바로 나타난다. 단독 페이지(/verify/*)도 같은 컴포넌트를 쓴다.
+function PhoneFrame({ title, caption, children }: { title: string; caption: string; children: React.ReactNode }) {
   return (
     <div
-      role="status"
       style={{
-        border: "1px solid var(--series-1)",
-        borderRadius: "6px",
-        padding: "10px 12px",
-        fontSize: "14px",
-        background: "var(--surface-1)",
+        border: "1px solid var(--border)",
+        borderRadius: "14px",
+        background: "var(--page-plane)",
+        overflow: "hidden",
+        display: "flex",
+        flexDirection: "column",
       }}
     >
-      <strong>🪪 상대 신원 확인 권장</strong>
-      <p style={{ margin: "4px 0 6px", color: "var(--text-secondary)" }}>{call.verification_prompt.message}</p>
-      <Link href={`/verify/citizen?call_id=${encodeURIComponent(call.call_id)}`} style={{ color: "var(--series-1)" }}>
-        상대 신원 확인 화면 열기 →
-      </Link>
-      <p style={{ margin: "6px 0 0", fontSize: "12px", color: "var(--text-muted)" }}>{MOCK_NOTICE}</p>
+      <div style={{ padding: "8px 14px", borderBottom: "1px solid var(--border)", background: "var(--surface-1)" }}>
+        <strong style={{ fontSize: "14px" }}>📱 {title}</strong>
+        <span style={{ fontSize: "12px", color: "var(--text-muted)", marginLeft: "8px" }}>{caption}</span>
+      </div>
+      <div className="verify-scope" style={{ padding: "16px" }}>
+        {children}
+      </div>
     </div>
+  );
+}
+
+function IdentityVerificationSection({ call, onVerified }: { call: CallAnalysis; onVerified: () => void }) {
+  if (!call.verification_prompt?.required) return null;
+  return (
+    <section
+      aria-label="상대 신원 확인 (모의)"
+      style={{
+        border: "1px solid var(--series-1)",
+        borderRadius: "8px",
+        padding: "12px",
+        fontSize: "14px",
+        background: "var(--surface-1)",
+        display: "flex",
+        flexDirection: "column",
+        gap: "12px",
+      }}
+    >
+      <div>
+        <strong>🪪 상대 신원 확인 권장</strong>
+        <p style={{ margin: "4px 0 0", color: "var(--text-secondary)" }}>{call.verification_prompt.message}</p>
+        <p style={{ margin: "4px 0 0", color: "var(--text-secondary)" }}>
+          아래 왼쪽은 전화를 건 직원의 휴대폰, 오른쪽은 전화를 받은 고객의 휴대폰을 흉내 낸 화면입니다. 왼쪽에서 만든
+          확인 코드를 오른쪽에 입력해 보세요.
+        </p>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "12px" }}>
+        <PhoneFrame title="직원 휴대폰 (모의)" caption="전화를 건 쪽">
+          <StaffProofPanel />
+        </PhoneFrame>
+        <PhoneFrame title="고객 휴대폰 (모의)" caption="전화를 받은 쪽 · 이 통화에 결과가 기록됨">
+          {/* key: 다른 통화를 분석하면 이전 통화의 입력/결과 상태를 버리고 새로 시작한다. */}
+          <CitizenVerifyPanel key={call.call_id} callId={call.call_id} resultMinHeight="0" onVerified={onVerified} />
+        </PhoneFrame>
+      </div>
+      <p style={{ margin: 0, fontSize: "12px", color: "var(--text-muted)" }}>
+        {MOCK_NOTICE} · 단독 화면으로 보기:{" "}
+        <Link href="/verify/staff" target="_blank" style={{ color: "var(--series-1)" }}>
+          직원용
+        </Link>{" "}
+        /{" "}
+        <Link
+          href={`/verify/citizen?call_id=${encodeURIComponent(call.call_id)}`}
+          target="_blank"
+          style={{ color: "var(--series-1)" }}
+        >
+          고객용
+        </Link>
+      </p>
+    </section>
   );
 }
 
@@ -146,63 +201,66 @@ export function AnalyzeCallForm({ onAnalyzed }: { onAnalyzed: () => void }) {
   }
 
   return (
-    <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-      <textarea
-        value={transcript}
-        onChange={(e) => setTranscript(e.target.value)}
-        placeholder="예: 검찰청 수사관인데 계좌가 범죄에 연루돼서 지금 즉시 안전계좌로 이체해야 한다고 전화왔어"
-        rows={3}
-        style={{
-          resize: "vertical",
-          padding: "10px 12px",
-          borderRadius: "6px",
-          border: "1px solid var(--border)",
-          background: "var(--surface-1)",
-          color: "var(--text-primary)",
-          fontFamily: "inherit",
-          fontSize: "14px",
-        }}
-      />
-      <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
-        <button
-          type="submit"
-          disabled={textLoading || !transcript.trim()}
+    // 고객 패널(CitizenVerifyPanel)이 자체 <form>을 가지므로 분석 <form> 밖에 둔다(form 중첩 불가).
+    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+        <textarea
+          value={transcript}
+          onChange={(e) => setTranscript(e.target.value)}
+          placeholder="예: 검찰청 수사관인데 계좌가 범죄에 연루돼서 지금 즉시 안전계좌로 이체해야 한다고 전화왔어"
+          rows={3}
           style={{
-            padding: "8px 16px",
+            resize: "vertical",
+            padding: "10px 12px",
             borderRadius: "6px",
-            border: "none",
-            background: "var(--series-1)",
-            color: "#ffffff",
+            border: "1px solid var(--border)",
+            background: "var(--surface-1)",
+            color: "var(--text-primary)",
+            fontFamily: "inherit",
             fontSize: "14px",
-            cursor: textLoading ? "default" : "pointer",
-            opacity: textLoading || !transcript.trim() ? 0.6 : 1,
           }}
-        >
-          {textLoading ? "분석 중…" : "텍스트로 분석하기"}
-        </button>
+        />
+        <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+          <button
+            type="submit"
+            disabled={textLoading || !transcript.trim()}
+            style={{
+              padding: "8px 16px",
+              borderRadius: "6px",
+              border: "none",
+              background: "var(--series-1)",
+              color: "#ffffff",
+              fontSize: "14px",
+              cursor: textLoading ? "default" : "pointer",
+              opacity: textLoading || !transcript.trim() ? 0.6 : 1,
+            }}
+          >
+            {textLoading ? "분석 중…" : "텍스트로 분석하기"}
+          </button>
 
-        <button
-          type="button"
-          onClick={isRecording ? stopRecording : startRecording}
-          disabled={audioLoading}
-          style={{
-            padding: "8px 16px",
-            borderRadius: "6px",
-            border: isRecording ? "1px solid var(--status-critical)" : "1px solid var(--border)",
-            background: isRecording ? "var(--status-critical)" : "var(--surface-1)",
-            color: isRecording ? "#ffffff" : "var(--text-primary)",
-            fontSize: "14px",
-            cursor: audioLoading ? "default" : "pointer",
-            opacity: audioLoading ? 0.6 : 1,
-          }}
-        >
-          {audioLoading ? "음성 분석 중…" : isRecording ? "■ 녹음 중지" : "🎤 음성으로 분석"}
-        </button>
+          <button
+            type="button"
+            onClick={isRecording ? stopRecording : startRecording}
+            disabled={audioLoading}
+            style={{
+              padding: "8px 16px",
+              borderRadius: "6px",
+              border: isRecording ? "1px solid var(--status-critical)" : "1px solid var(--border)",
+              background: isRecording ? "var(--status-critical)" : "var(--surface-1)",
+              color: isRecording ? "#ffffff" : "var(--text-primary)",
+              fontSize: "14px",
+              cursor: audioLoading ? "default" : "pointer",
+              opacity: audioLoading ? 0.6 : 1,
+            }}
+          >
+            {audioLoading ? "음성 분석 중…" : isRecording ? "■ 녹음 중지" : "🎤 음성으로 분석"}
+          </button>
 
-        {textError && <span style={{ color: "var(--status-critical)", fontSize: "13px" }}>{textError}</span>}
-        {audioError && <span style={{ color: "var(--status-critical)", fontSize: "13px" }}>{audioError}</span>}
-      </div>
-      {lastAnalysis && <VerificationPromptNotice call={lastAnalysis} />}
-    </form>
+          {textError && <span style={{ color: "var(--status-critical)", fontSize: "13px" }}>{textError}</span>}
+          {audioError && <span style={{ color: "var(--status-critical)", fontSize: "13px" }}>{audioError}</span>}
+        </div>
+      </form>
+      {lastAnalysis && <IdentityVerificationSection call={lastAnalysis} onVerified={onAnalyzed} />}
+    </div>
   );
 }

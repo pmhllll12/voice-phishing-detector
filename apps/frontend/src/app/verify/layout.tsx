@@ -11,7 +11,7 @@ export const metadata = {
 
 export default function VerifyLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="verify-screen">
+    <div className="verify-screen verify-scope">
       <main style={{ flex: 1, width: "100%", maxWidth: "560px", margin: "0 auto", padding: "24px 16px" }}>
         {children}
       </main>

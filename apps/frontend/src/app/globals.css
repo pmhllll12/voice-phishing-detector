@@ -105,20 +105,25 @@ body {
    32px 이상. 결과 배경색은 흰 글자와의 대비가 4.5:1 이상 나오도록 상태 팔레트
    (--status-good/critical, 차트용 밝은 톤)보다 어두운 톤을 따로 둔다. 라이트/다크 모두
    같은 값 — 결과 화면은 배경 전체를 칠하므로 테마와 무관하게 읽혀야 한다. */
-.verify-screen {
+/* .verify-scope: 글자 크기/결과 색 토큰 — 단독 페이지(/verify/*)와 대시보드 안 패널이 공유.
+   .verify-screen: 단독 페이지 전용 레이아웃(화면 전체 높이 + 하단 고지 고정). */
+.verify-scope {
   --verify-ok-bg: #0b6b2f;
   --verify-fail-bg: #b3261e;
   --verify-on-result: #ffffff;
   font-size: 20px;
   line-height: 1.6;
+}
+
+.verify-screen {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
 }
 
-.verify-screen button,
-.verify-screen input,
-.verify-screen select {
+.verify-scope button,
+.verify-scope input,
+.verify-scope select {
   font: inherit;
 }
 
@@ -141,7 +146,7 @@ body {
 }
 
 .verify-primary-button:focus-visible,
-.verify-screen input:focus-visible {
+.verify-scope input:focus-visible {
   outline: 3px solid var(--text-primary);
   outline-offset: 2px;
 }
