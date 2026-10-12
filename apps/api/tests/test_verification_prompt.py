@@ -51,3 +51,36 @@ def test_low_risk_without_patterns_does_not_require_verification():
     prompt = decide_verification_prompt(_result(RiskLevel.LOW, 0, []))
 
     assert prompt.required is False
+
+
+# --- 입력 실수 재시도 규칙 (allows_code_retry) ---
+
+from src.domain.identity_verification import CallVerificationRecord, allows_code_retry  # noqa: E402
+
+
+def _record(reason: str) -> CallVerificationRecord:
+    return CallVerificationRecord(
+        call_id="call-1",
+        verified=reason == "verified",
+        reason=reason,
+        message="",
+        verified_at=datetime(2026, 10, 12, tzinfo=timezone.utc),
+    )
+
+
+def test_first_code_not_found_allows_retry():
+    assert allows_code_retry("code_not_found", []) is True
+
+
+def test_second_consecutive_code_not_found_does_not_allow_retry():
+    assert allows_code_retry("code_not_found", [_record("code_not_found")]) is False
+
+
+def test_non_typo_reasons_never_allow_retry():
+    for reason in ("credential_revoked", "proof_expired", "proof_already_used", "signature_invalid"):
+        assert allows_code_retry(reason, []) is False
+
+
+def test_consecutive_count_resets_after_other_result():
+    history = [_record("code_not_found"), _record("verified")]
+    assert allows_code_retry("code_not_found", history) is True

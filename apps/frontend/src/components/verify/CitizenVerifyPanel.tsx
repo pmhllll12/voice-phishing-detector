@@ -118,6 +118,9 @@ export function CitizenVerifyPanel({
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<CallVerification | null>(null);
   const [failed, setFailed] = useState(false);
+  // 입력 실수 재시도: 첫 번째 "없는 코드"는 결과 화면으로 넘어가지 않고 입력 화면에 머물며
+  // 다시 불러 달라고 안내한다. 빨강(확인 불가)과 섞이지 않도록 별도 상태로 둔다.
+  const [retryNotice, setRetryNotice] = useState(false);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -125,8 +128,15 @@ export function CitizenVerifyPanel({
     setLoading(true);
     setFailed(false);
     try {
-      setResult(await verifyCallIdentity(callId, code));
+      const verification = await verifyCallIdentity(callId, code);
       onVerified?.();
+      if (verification.retry_allowed) {
+        setCode("");
+        setRetryNotice(true);
+      } else {
+        setRetryNotice(false);
+        setResult(verification);
+      }
     } catch (err) {
       // 서버 오류 상세(실행 명령 등 개발자용 안내)는 국민 화면에 보여주지 않고 콘솔에만 남긴다.
       console.error("신원확인 요청 실패:", err instanceof ApiError ? err.message : err);
@@ -140,6 +150,7 @@ export function CitizenVerifyPanel({
     setCode("");
     setResult(null);
     setFailed(false);
+    setRetryNotice(false);
   }
 
   if (result) {
@@ -211,9 +222,27 @@ export function CitizenVerifyPanel({
           }}
         />
       </label>
-      <p style={{ margin: 0, color: "var(--status-critical)", fontWeight: 700 }}>
-        <span aria-hidden="true">⚠ </span>확인 코드를 못 대거나 둘러대면 사칭일 수 있습니다. 전화를 끊으세요.
-      </p>
+      {retryNotice ? (
+        <p
+          role="alert"
+          style={{
+            margin: 0,
+            padding: "12px 14px",
+            borderRadius: "10px",
+            border: "2px solid var(--status-warning)",
+            background: "var(--status-warning-bg)",
+            color: "var(--text-primary)",
+            fontWeight: 700,
+          }}
+        >
+          <span aria-hidden="true">⚠ </span>숫자가 맞지 않습니다. 상대방에게 확인 코드를 한 번 더 불러 달라고
+          하세요. 한 번 더 맞지 않으면 확인 불가로 처리됩니다.
+        </p>
+      ) : (
+        <p style={{ margin: 0, color: "var(--status-critical)", fontWeight: 700 }}>
+          <span aria-hidden="true">⚠ </span>확인 코드를 못 대거나 둘러대면 사칭일 수 있습니다. 전화를 끊으세요.
+        </p>
+      )}
       <button type="submit" className="verify-primary-button" disabled={loading || code.length !== 6}>
         {loading ? "확인 중…" : "확인하기"}
       </button>

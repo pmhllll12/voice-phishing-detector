@@ -181,6 +181,7 @@ def _serialize_verification_record(record: CallVerificationRecord) -> dict:
         "reason": record.reason,
         "message": record.message,
         "verified_at": record.verified_at.isoformat(),
+        "retry_allowed": record.retry_allowed,
     }
     if record.verified:
         payload.update(
@@ -467,7 +468,9 @@ def verify_call_identity(
     call_id: str, req: CallVerificationRequest, _role: Role = Depends(require_role(Role.HANDLER))
 ) -> dict:
     """역방향 신원확인 POC: 국민이 상대에게 받은 코드를 verify-worker로 검증하고 결과를 이
-    통화에 붙인다. 확인 불가면 보호자 알림(mock, 실제 발송 없음)을 남긴다. verify-worker는
+    통화에 붙인다. 확인 불가면 보호자 알림(mock, 실제 발송 없음)을 남긴다. 단 같은 통화의
+    연속 첫 번째 "없는 코드"는 입력 실수일 수 있어 retry_allowed=true로 재입력만 안내한다
+    (domain/identity_verification.py allows_code_retry). verify-worker는
     실제 모바일신분증과 연동하지 않는 모의 시제품이다. N-02: analyze_call과 동일하게 "처리"
     행위라 HANDLER 이상 권한이 필요하다. async가 아닌 def인 이유: verify-worker 호출이 동기
     httpx라, def로 둬야 FastAPI가 스레드풀에서 실행해 이벤트 루프를 막지 않는다.

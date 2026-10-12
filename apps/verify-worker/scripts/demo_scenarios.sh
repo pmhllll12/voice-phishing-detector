@@ -14,9 +14,13 @@ C=$(echo "$P" | code_of)
 echo "\$ POST (api) /api/v1/calls/demo-call-1/verification {\"code\":\"$C\"}"
 curl -s -X POST $API/api/v1/calls/demo-call-1/verification -H "$J" -H "$K" -d "{\"code\":\"$C\"}"; echo; echo
 
-echo "## 시나리오 2: 사칭범 (발급된 적 없는 코드)"
-echo '$ POST (api) /api/v1/calls/demo-call-2/verification {"code":"000000"}'
-curl -s -X POST $API/api/v1/calls/demo-call-2/verification -H "$J" -H "$K" -d '{"code":"000000"}'; echo; echo
+echo "## 시나리오 2: 사칭범 (발급된 적 없는 코드 — 첫 번째는 입력 실수일 수 있어 재입력 안내, 두 번째에 확인 불가)"
+# 같은 call_id로 다시 돌리면 연속 횟수가 이어지므로 실행마다 다른 call_id를 쓴다.
+C2=demo-call-2-$(date +%s)
+echo "\$ POST (api) /api/v1/calls/$C2/verification {\"code\":\"000000\"}  # 1회차"
+curl -s -X POST $API/api/v1/calls/$C2/verification -H "$J" -H "$K" -d '{"code":"000000"}'; echo
+echo "\$ POST (api) /api/v1/calls/$C2/verification {\"code\":\"000001\"}  # 2회차"
+curl -s -X POST $API/api/v1/calls/$C2/verification -H "$J" -H "$K" -d '{"code":"000001"}'; echo; echo
 
 echo "## 시나리오 3: 퇴사자 (증명 생성 → 자격증명 폐기 → 검증)"
 echo '$ POST /api/v1/credentials {"institution_name":"○○은행(모의)","staff_display_name":"최퇴사","role":"대출상담 직원"}'

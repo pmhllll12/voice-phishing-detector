@@ -50,6 +50,30 @@ def decide_verification_prompt(result: CallAnalysisResult) -> VerificationPrompt
     )
 
 
+# 입력 실수 재시도: "없는 코드"는 사칭범일 수도 있지만 어르신이 숫자 하나를 잘못 누른 것일
+# 수도 있다. 한 번 틀렸다고 바로 "전화를 끊으세요" + 보호자 알림을 내면 진짜 직원과의 통화를
+# 끊게 만들고 보호자도 놀라게 한다 — 그래서 같은 통화에서 연속 첫 번째 code_not_found만 재입력을
+# 허용한다. 폐기/만료/재사용/서명 불일치는 입력 실수로 생길 수 없는 결과라 재시도 대상이 아니다.
+# 6자리(10^6) 코드를 두 번 안에 맞힐 확률은 2/10^6이라, 한 번 더 기회를 줘도 사칭범에게
+# 실질적인 이득은 없다.
+RETRYABLE_REASON = "code_not_found"
+MAX_CODE_ENTRY_ATTEMPTS = 2
+
+
+def allows_code_retry(reason: str, previous_records: list["CallVerificationRecord"]) -> bool:
+    """이번 결과(reason)를 재입력 안내로 처리할지. previous_records는 같은 통화의 이전 검증
+    기록(오래된 것부터). 연속 횟수는 맨 뒤에서부터 code_not_found가 이어진 만큼만 센다 —
+    중간에 확인됨 등 다른 결과가 있었으면 거기서 다시 0부터 센다."""
+    if reason != RETRYABLE_REASON:
+        return False
+    consecutive_failures = 0
+    for record in reversed(previous_records):
+        if record.reason != RETRYABLE_REASON:
+            break
+        consecutive_failures += 1
+    return consecutive_failures + 1 < MAX_CODE_ENTRY_ATTEMPTS
+
+
 @dataclass(frozen=True)
 class GuardianNotification:
     """확인 불가 시 보호자 알림(mock). 실제 문자/푸시 발송은 하지 않고, 알림을 "보냈어야
@@ -77,3 +101,6 @@ class CallVerificationRecord:
     purpose: str | None = None
     expires_at: str | None = None
     guardian_notification: GuardianNotification | None = None
+    # True면 "확인 불가"로 확정하지 않고 재입력을 안내한다(allows_code_retry 참고) — 이때는
+    # 보호자 알림도 남기지 않는다.
+    retry_allowed: bool = False

@@ -87,6 +87,9 @@ export interface IdentityVerification {
   reason: string;
   message: string;
   verified_at: string;
+  // 입력 실수 재시도: true면 "확인 불가"로 확정하지 않고 재입력을 안내한다(보호자 알림 없음).
+  // 같은 통화의 연속 첫 번째 "없는 코드"일 때만 true (apps/api allows_code_retry).
+  retry_allowed?: boolean;
   institution_name?: string;
   staff_display_name?: string;
   purpose?: string;

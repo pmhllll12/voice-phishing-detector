@@ -15,7 +15,7 @@ from src.domain.entities import (
     StatsSummary,
 )
 from src.domain.entity_extraction import extract_entities
-from src.domain.identity_verification import CallVerificationRecord
+from src.domain.identity_verification import CallVerificationRecord, allows_code_retry
 from src.domain.pii_masking import mask_pii
 from src.domain.ports import (
     CallAnalysisPort,
@@ -259,7 +259,14 @@ class CallVerificationService:
     def execute(self, call_id: str, code: str) -> CallVerificationRecord:
         raw = self._verification_port.verify(code)
         verified = bool(raw["verified"])
-        guardian_notification = None if verified else self._guardian_port.notify(call_id, raw["reason"])
+        # 입력 실수 재시도(domain/identity_verification.py allows_code_retry): 같은 통화의 연속
+        # 첫 번째 "없는 코드"는 확인 불가로 확정하지 않고, 보호자 알림도 보내지 않는다.
+        retry_allowed = not verified and allows_code_retry(
+            raw["reason"], self._verification_log_port.list_for_call(call_id)
+        )
+        guardian_notification = (
+            None if verified or retry_allowed else self._guardian_port.notify(call_id, raw["reason"])
+        )
         record = CallVerificationRecord(
             call_id=call_id,
             verified=verified,
@@ -271,6 +278,7 @@ class CallVerificationService:
             purpose=raw.get("purpose"),
             expires_at=raw.get("expires_at"),
             guardian_notification=guardian_notification,
+            retry_allowed=retry_allowed,
         )
         self._verification_log_port.add(record)
         return record

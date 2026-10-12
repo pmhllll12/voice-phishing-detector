@@ -52,6 +52,15 @@
 | `proof_expired` | 증명 유효시간(기본 180초) 경과 | 오래된 코드 |
 | `proof_already_used` | 이미 한 번 검증에 쓰인 코드 | 재사용 시도 |
 
+**입력 실수 재시도**(api `allows_code_retry`): `code_not_found`는 사칭범일 수도, 어르신이 숫자
+하나를 잘못 누른 것일 수도 있다. 그래서 같은 통화에서 **연속 첫 번째** `code_not_found`는
+확인 불가로 확정하지 않고 `retry_allowed: true`로 응답한다. 이때 화면은 "숫자가 맞지 않습니다.
+한 번 더 불러 달라고 하세요"를 보여주고, 보호자 알림도 남기지 않는다. 연속 두 번째부터는 확인
+불가와 보호자 알림(모의)으로 처리한다. 폐기/만료/재사용/서명 불일치는 입력 실수로 생길 수 없어서
+첫 시도에도 바로 확인 불가다. 연속 횟수는 다른 결과(확인됨 등)가 나오면 0부터 다시 센다.
+6자리 코드를 두 번 안에 맞힐 확률은 2/10^6이라, 한 번 더 기회를 줘도 사칭범에게 실질적인
+이득은 없다.
+
 국민용 화면은 사유 코드를 보여주지 않고 두 결과만 보여준다. 사유 코드와 사람이 읽을
 문구(`message`)는 API 응답과 통화 기록, 메트릭 라벨에 남는다(N-04).
 
@@ -79,17 +88,28 @@ $ POST :8000/api/v1/calls/demo-call-1/verification {"code":"214165"}
  "expires_at":"2026-10-12T01:53:17.723455+00:00","guardian_notification":null}
 ```
 
-### 시나리오 2: 사칭범 (발급된 적 없는 코드) → 확인 불가
+### 시나리오 2: 사칭범 (발급된 적 없는 코드) → 1회차 재입력 안내, 2회차 확인 불가
+
+입력 실수 재시도 규칙(2장)을 추가한 뒤 다시 실행한 결과다(2026-10-12). 스크립트는 연속 횟수가
+이전 실행과 섞이지 않게 실행마다 다른 call_id를 쓴다.
 
 ```
-$ POST :8000/api/v1/calls/demo-call-2/verification {"code":"000000"}
-{"call_id":"demo-call-2","verified":false,"reason":"code_not_found",
+$ POST :8000/api/v1/calls/demo-call-2-1791777824/verification {"code":"000000"}   # 1회차
+{"call_id":"demo-call-2-1791777824","verified":false,"reason":"code_not_found",
  "message":"입력한 코드로 발급된 증명이 없습니다. 상대방이 기관 직원임을 증명하지 못했습니다.",
- "verified_at":"2026-10-12T01:50:17.771902+00:00",
- "guardian_notification":{"notification_id":"c19ebd83-d884-4b70-b19f-5d18ce2b758a","status":"logged",
-   "created_at":"2026-10-12T01:50:17.771895+00:00",
+ "verified_at":"2026-10-12T04:03:44.891410+00:00","retry_allowed":true,"guardian_notification":null}
+
+$ POST :8000/api/v1/calls/demo-call-2-1791777824/verification {"code":"000001"}   # 2회차
+{"call_id":"demo-call-2-1791777824","verified":false,"reason":"code_not_found",
+ "message":"입력한 코드로 발급된 증명이 없습니다. 상대방이 기관 직원임을 증명하지 못했습니다.",
+ "verified_at":"2026-10-12T04:03:44.907613+00:00","retry_allowed":false,
+ "guardian_notification":{"notification_id":"d27ee6cc-7ee2-48eb-ad18-afdef625211c","status":"logged",
+   "created_at":"2026-10-12T04:03:44.907597+00:00",
    "note":"MOCK: 실제 보호자 알림(문자/푸시) 발송 없음 — 모의 시연용 기록만 남김"}}
 ```
+
+시나리오 1·3의 위 응답은 재시도 규칙 추가 전 실행분이라 `retry_allowed` 필드가 없다. 지금은
+두 시나리오 모두 `"retry_allowed":false`가 함께 나온다(2026-10-12 재실행으로 확인).
 
 ### 시나리오 3: 퇴사자 (증명 생성 → 폐기 → 검증) → 확인 불가
 
