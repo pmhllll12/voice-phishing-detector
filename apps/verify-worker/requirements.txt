@@ -1,0 +1,6 @@
+# apps/verify-worker 최소 의존성
+# TODO: 버전 핀 고정 (pip freeze 후 반영)
+fastapi
+uvicorn[standard]
+prometheus-client
+cryptography        # 모의 기관 자격증명의 Ed25519 서명/검증 (infrastructure/adapters/ed25519_signer.py 참고)

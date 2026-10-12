@@ -148,6 +148,29 @@ scrape_configs:
     #     - Info, 현재 모델/디바이스/양자화 구성
 
   # ---------------------------------------------------------------------------
+  # verify-worker: 역방향 신원확인 POC(모의 시제품, 실제 모바일신분증과 연동 안 함)
+  # job 이름을 vps-가 아니라 poc-로 둔 이유: alerting/vps-rules.yml의 생존 알림이
+  # up{job=~"vps-.*"} == 0 으로 걸려 있는데, verify-worker는 k3s/compose에 배포하지
+  # 않는 로컬 시연용이라 그 알림 대상에 넣으면 상시 발화한다. 메트릭 이름은 vps_ 접두사 유지.
+  # ---------------------------------------------------------------------------
+  - job_name: "poc-verify-worker"
+    static_configs:
+      - targets: ["verify-worker:8400"]
+    # apps/verify-worker/src/infrastructure/metrics.py에서 노출하는 메트릭:
+    #
+    #   vps_verify_requests_total
+    #     - Counter, label: result(verified/unverified), reason(사유 코드)
+    #
+    #   vps_verify_duration_seconds
+    #     - Histogram (0.1ms~100ms 버킷), 검증 1건 소요시간
+    #
+    #   vps_verify_proofs_created_total
+    #     - Counter, 직원이 생성한 일회용 증명 수
+    #
+    #   vps_verify_credentials_revoked_total
+    #     - Counter, 폐기된 자격증명 수
+
+  # ---------------------------------------------------------------------------
   # prometheus 자체 모니터링 (기본 제공)
   # ---------------------------------------------------------------------------
   - job_name: "prometheus"
