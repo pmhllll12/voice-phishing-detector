@@ -635,7 +635,9 @@ stt-worker) 전부에 대한 scrape 대상이 설정돼 있고, k3s(`kubectl app
       서비스 pytest 154개를 병렬 job으로 자동 실행. postgres 의존 테스트는
       skipif로 건너뛰지 않고 서비스 컨테이너로 실제로 돌림. Ollama 없이도
       mcp-server 71개가 전부 통과하는 걸 로컬에서 Ollama를 직접 내려서 확인한
-      뒤 워크플로우를 작성함. 2026-08-31 기준 push/PR 양쪽에서 8개 job 전부 통과)
+      뒤 워크플로우를 작성함. 2026-08-31 기준 push/PR 양쪽에서 8개 job 전부 통과.
+      2026-10-12 역방향 신원확인 POC(모의) `verify-worker` job 추가 — 인메모리라
+      서비스 컨테이너 없이 pytest 13개, Python 3.11 로컬 실행으로 먼저 확인함)
 - [x] `docs/requirements.md`(요구사항정의서) 작성 — F-01~F-07/N-01~N-06 각각의
       입력/처리/출력/수용기준과 구현·테스트 근거, 요구사항 추적표(traceability matrix)
 - [x] `docs/design.md` 나머지 챕터 작성 — 시스템 아키텍처/데이터 모델/API 명세
