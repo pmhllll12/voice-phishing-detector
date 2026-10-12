@@ -1,8 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { useRef, useState, type FormEvent } from "react";
 
-import { analyzeCall, analyzeCallAudio, ApiError } from "@/lib/api";
+import { analyzeCall, analyzeCallAudio, ApiError, type CallAnalysis } from "@/lib/api";
+import { MOCK_NOTICE } from "@/lib/verify";
 
 // F-05: 텍스트 입력과 별개로, 마이크로 녹음한 오디오를 바로 업로드해 분석할 수 있다
 // (stt-worker가 텍스트로 변환한 뒤 동일한 판정 경로를 탄다 — apps/api/src/main.py
@@ -34,8 +36,35 @@ function describeMicError(err: unknown): string {
   return "마이크 접근 권한이 거부됐거나 사용할 수 없습니다.";
 }
 
+// 역방향 신원확인 POC(모의 시제품): 방금 분석한 통화가 기관사칭/고위험이면 "AI는 의심만
+// 하고, 확정은 신원확인이 한다"는 안내와 국민용 확인 화면 링크를 붙인다. 링크에 call_id를
+// 실어 보내 검증 결과가 이 통화 기록에 붙게 한다(apps/api verify_call_identity).
+function VerificationPromptNotice({ call }: { call: CallAnalysis }) {
+  if (!call.verification_prompt?.required) return null;
+  return (
+    <div
+      role="status"
+      style={{
+        border: "1px solid var(--series-1)",
+        borderRadius: "6px",
+        padding: "10px 12px",
+        fontSize: "14px",
+        background: "var(--surface-1)",
+      }}
+    >
+      <strong>🪪 상대 신원 확인 권장</strong>
+      <p style={{ margin: "4px 0 6px", color: "var(--text-secondary)" }}>{call.verification_prompt.message}</p>
+      <Link href={`/verify/citizen?call_id=${encodeURIComponent(call.call_id)}`} style={{ color: "var(--series-1)" }}>
+        상대 신원 확인 화면 열기 →
+      </Link>
+      <p style={{ margin: "6px 0 0", fontSize: "12px", color: "var(--text-muted)" }}>{MOCK_NOTICE}</p>
+    </div>
+  );
+}
+
 export function AnalyzeCallForm({ onAnalyzed }: { onAnalyzed: () => void }) {
   const [transcript, setTranscript] = useState("");
+  const [lastAnalysis, setLastAnalysis] = useState<CallAnalysis | null>(null);
   const [textLoading, setTextLoading] = useState(false);
   const [textError, setTextError] = useState<string | null>(null);
 
@@ -53,7 +82,7 @@ export function AnalyzeCallForm({ onAnalyzed }: { onAnalyzed: () => void }) {
     setTextLoading(true);
     setTextError(null);
     try {
-      await analyzeCall(trimmed);
+      setLastAnalysis(await analyzeCall(trimmed));
       setTranscript("");
       onAnalyzed();
     } catch (err) {
@@ -90,7 +119,7 @@ export function AnalyzeCallForm({ onAnalyzed }: { onAnalyzed: () => void }) {
         const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
         setAudioLoading(true);
         try {
-          await analyzeCallAudio(blob);
+          setLastAnalysis(await analyzeCallAudio(blob));
           onAnalyzed();
         } catch (err) {
           setAudioError(err instanceof ApiError ? err.message : "음성 분석 요청에 실패했습니다.");
@@ -169,6 +198,7 @@ export function AnalyzeCallForm({ onAnalyzed }: { onAnalyzed: () => void }) {
         {textError && <span style={{ color: "var(--status-critical)", fontSize: "13px" }}>{textError}</span>}
         {audioError && <span style={{ color: "var(--status-critical)", fontSize: "13px" }}>{audioError}</span>}
       </div>
+      {lastAnalysis && <VerificationPromptNotice call={lastAnalysis} />}
     </form>
   );
 }

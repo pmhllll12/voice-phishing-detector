@@ -65,6 +65,15 @@ export interface CallAnalysis {
   // 참고). 같으면 가산이 없었다는 뜻이라 배지는 risk_score만 그대로 보여준다.
   base_risk_score: number;
   correlation_matches: CorrelationMatch[];
+  // 역방향 신원확인 POC(모의 시제품): 기관사칭 패턴이나 고위험이면 required=true와 근거
+  // 문구가 온다(apps/api/src/domain/identity_verification.py). 이 필드가 생기기 전 api와도
+  // 동작하도록 optional로 둔다.
+  verification_prompt?: VerificationPrompt;
+}
+
+export interface VerificationPrompt {
+  required: boolean;
+  message?: string;
 }
 
 export interface CategoryCount {
