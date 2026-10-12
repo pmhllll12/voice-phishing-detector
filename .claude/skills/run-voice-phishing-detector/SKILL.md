@@ -34,13 +34,17 @@ too — api's `/ready` and `/api/v1/calls/analyze` both fail without it, and so 
 rag-worker's `/ready` now (unlike stt-worker/Ollama, there's no graceful degrade here, see
 apps/api/src/main.py `_check_database_ready` and apps/rag-worker/src/infrastructure/readiness.py):
 
+The container is published on host port **5433** (not 5432) on this machine — the systemd
+units for api/mcp-server/rag-worker get `DATABASE_URL=…@localhost:5433/vps_detector` from a
+drop-in. Keep `-p 5433` on every `psql` below.
+
 ```bash
 docker exec vps-postgres pg_isready -U vps_app -d vps_detector 2>/dev/null || {
   docker start vps-postgres 2>/dev/null || docker run -d --name vps-postgres --restart unless-stopped \
     -e POSTGRES_USER=vps_app -e POSTGRES_PASSWORD=vps_dev_password -e POSTGRES_DB=vps_detector \
-    -p 5432:5432 -v vps_postgres_data:/var/lib/postgresql/data pgvector/pgvector:pg16
+    -p 5433:5432 -v vps_postgres_data:/var/lib/postgresql/data pgvector/pgvector:pg16
   until docker exec vps-postgres pg_isready -U vps_app -d vps_detector 2>/dev/null; do sleep 1; done
-  PGPASSWORD=vps_dev_password psql -h localhost -U vps_app -d vps_detector -f infra/db/init.sql
+  PGPASSWORD=vps_dev_password psql -h localhost -p 5433 -U vps_app -d vps_detector -f infra/db/init.sql
 }
 ```
 
@@ -59,7 +63,7 @@ it's empty (fresh container, new `vps_postgres_data` volume, or dataset changes 
 `apps/rag-worker/data/fraud_cases.json`):
 
 ```bash
-FRAUD_CASE_COUNT=$(PGPASSWORD=vps_dev_password psql -h localhost -U vps_app -d vps_detector -tAc "SELECT count(*) FROM fraud_cases")
+FRAUD_CASE_COUNT=$(PGPASSWORD=vps_dev_password psql -h localhost -p 5433 -U vps_app -d vps_detector -tAc "SELECT count(*) FROM fraud_cases")
 [ "$FRAUD_CASE_COUNT" = "0" ] && (cd apps/rag-worker && .venv/bin/python -m scripts.seed_fraud_cases)
 ```
 
@@ -189,6 +193,19 @@ no guardian alert); a second wrong code on the same call → red "확인되지 �
 끊으세요" + "보호자에게 알렸습니다(모의)".
 Never revoke the seeded `demo-bank-staff` — issue a fresh credential for the 퇴사자 demo.
 
+Proposal screenshots (`docs/images/poc/`, numbered in demo order) plus the raw api responses
+of the same run come from a second Playwright script in this folder:
+
+```bash
+cd .claude/skills/run-voice-phishing-detector
+node capture_poc.mjs http://localhost:<frontend-port> ../../../docs/images/poc /tmp/poc-responses
+```
+
+It analyzes the 기관사칭 example 3 times through the real api (LLM included, so allow ~10s
+each), runs the genuine / impersonator / resigned scenarios against those call_ids, and
+fails loudly if `verification_prompt.required` is not true. Risk scores differ run to run
+(LLM) — that's expected; the prompt itself is pattern-based.
+
 ## Run (human path)
 
 Same commands as above, each in its own terminal without `nohup`/`&`, then open
@@ -259,9 +276,11 @@ expiry/reuse/signature-tamper and needs no other service running.
   `POST /api/v1/calls/analyze` 500s**: postgres isn't reachable. `docker ps --filter
   name=vps-postgres` — if it's not there or not `Up`, follow the Prerequisites step
   above to (re)create/start it. If it's up but still erroring, check the connection
-  string matches (`DATABASE_URL`, default `postgresql://vps_app:vps_dev_password@
-  localhost:5432/vps_detector`) and that `infra/db/init.sql` was actually applied
-  (`PGPASSWORD=vps_dev_password psql -h localhost -U vps_app -d vps_detector -c '\dt'`
+  string matches (`DATABASE_URL` — the code default is `postgresql://vps_app:vps_dev_password@
+  localhost:5432/vps_detector`, but on this machine the container is published on **5433** and
+  the systemd units override it via a drop-in, `Environment=DATABASE_URL=…localhost:5433/…`;
+  a manual `uvicorn` launch must export the same 5433 URL) and that `infra/db/init.sql` was actually applied
+  (`PGPASSWORD=vps_dev_password psql -h localhost -p 5433 -U vps_app -d vps_detector -c '\dt'`
   should list `call_analysis_results` and `report_records`).
 - **Driver prints `WARNING: 총 분석 건수가 늘지 않았습니다`**: the POST to
   `/api/v1/calls/analyze` didn't complete in 25s or errored. Check `/tmp/api.log` and

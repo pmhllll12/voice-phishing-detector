@@ -68,87 +68,119 @@
 나간다. credential_id, 역할, 서명은 내보내지 않는다(`tests/test_verify_response.py`가 응답
 키 집합을 고정함).
 
-## 3. 시나리오별 요청/응답 (2026-10-12 실제 실행 결과)
+## 3. 시나리오별 실제 실행 결과 (2026-10-12, 전체 경로)
 
-`apps/verify-worker/scripts/demo_scenarios.sh`를 실행한 출력 그대로다. 코드, 시각, ID는
+postgres, Ollama, 백엔드 5개(api / mcp-server / rag-worker / stt-worker / verify-worker),
+frontend를 실행 스킬(`.claude/skills/run-voice-phishing-detector/SKILL.md`) 그대로 띄우고,
+`capture_poc.mjs`(같은 폴더)로 화면을 조작해 얻은 응답 원문과 캡처다. 요청은 전부 실제로 떠 있는
+api(8000)와 verify-worker(8400)를 거쳤고, 가로채거나 흉내 낸 응답은 없다. 코드, 시각, ID는
 실행할 때마다 다르다. 국민 측 검증은 api(`POST /api/v1/calls/{call_id}/verification`,
-`X-API-Key: dev-handler-key`)를 거친다.
+`X-API-Key: dev-handler-key`)를 거친다. 캡처는 `docs/images/poc/`에 있다.
+
+### 0단계: 통화 분석 → 신원확인 안내 (`verification_prompt`)
+
+대시보드 "통화 분석해보기"에서 "기관사칭 예시 넣기" → "텍스트로 분석하기". 예시 문장은 합성
+문장이다(실제 통화 아님). `POST /api/v1/calls/analyze` 응답에서 기존 필드는 그대로이고, 아래
+두 필드가 추가로 붙는다(일부 필드 생략).
+
+```
+$ POST :8000/api/v1/calls/analyze {"transcript":"서울중앙지검 수사관입니다. 고객님 명의 계좌가 범죄에 연루돼 안전계좌로 이체하셔야 합니다"}
+{"call_id":"eaacdd09-00da-4fd1-8a46-d3db1ea8de41","risk_score":85,"risk_level":"high",
+ "detected_patterns":[
+   {"category":"authority_impersonation","category_label":"기관사칭","matched_keywords":["서울중앙지검 수사관입니다."]},
+   {"category":"fear_inducement","category_label":"공포조성","matched_keywords":["고객님 명의 계좌가 범죄에 연루됨"]}],
+ …,
+ "verification_prompt":{"required":true,
+   "message":"기관사칭 의심 표현(서울중앙지검 수사관입니다.)이 탐지되었습니다. 상대방에게 '확인 코드'를 불러 달라고 해서 실제 기관 직원인지 확인하세요. 확인되기 전에는 송금, 앱 설치, 개인정보 제공을 하지 마세요."},
+ "identity_verifications":[]}
+```
+
+기관사칭 패턴(`authority_impersonation`)이 있거나 `risk_level == "high"`면 안내하고, 해당 없으면
+`{"required": false}`다. 같은 예시 문장을 세 번 분석했더니 위험도는 85(고위험), 65(중위험),
+75(고위험)로 실행마다 달랐다(LLM 판정). 그래도 기관사칭 패턴은 세 번 모두 탐지돼 안내는 매번
+떴다. AI 판정은 이렇게 흔들릴 수 있어서, "진짜 직원인가"는 AI가 아니라 서명 검증이 확정한다.
+
+![01 분석 → 신원확인 권장](images/poc/01-analyze.png)
 
 ### 시나리오 1: 정상 직원 → 확인됨
 
-```
-$ POST :8400/api/v1/proofs {"credential_id":"demo-bank-staff","purpose":"대출 상담 전화"}
-{"code":"214165","purpose":"대출 상담 전화","expires_at":"2026-10-12T01:53:17.723455+00:00","ttl_seconds":180}
+0단계의 통화(`eaacdd09-…`) 아래에 뜬 직원 휴대폰(모의)에서 "확인 코드 만들기" → 고객 휴대폰
+(모의)에 그 코드를 입력 → "확인하기".
 
-$ POST :8000/api/v1/calls/demo-call-1/verification {"code":"214165"}
-{"call_id":"demo-call-1","verified":true,"reason":"verified",
- "message":"기관(모의)이 서명한 재직 자격증명과 일회용 증명이 모두 유효합니다.",
- "verified_at":"2026-10-12T01:50:17.757714+00:00",
- "institution_name":"○○은행(모의)","staff_display_name":"김○○","purpose":"대출 상담 전화",
- "expires_at":"2026-10-12T01:53:17.723455+00:00","guardian_notification":null}
 ```
+$ POST :8000/api/v1/calls/eaacdd09-00da-4fd1-8a46-d3db1ea8de41/verification {"code":"105921"}
+{"call_id":"eaacdd09-00da-4fd1-8a46-d3db1ea8de41","verified":true,"reason":"verified",
+ "message":"기관(모의)이 서명한 재직 자격증명과 일회용 증명이 모두 유효합니다.",
+ "verified_at":"2026-10-12T07:49:52.753304+00:00","retry_allowed":false,
+ "institution_name":"○○은행(모의)","staff_display_name":"김○○","purpose":"대출 상담 전화",
+ "expires_at":"2026-10-12T07:52:52.527210+00:00","guardian_notification":null}
+```
+
+![02 직원 화면 코드 생성](images/poc/02-staff-code.png)
+![03 확인됨](images/poc/03-citizen-verified.png)
 
 ### 시나리오 2: 사칭범 (발급된 적 없는 코드) → 1회차 재입력 안내, 2회차 확인 불가
 
-입력 실수 재시도 규칙(2장)을 추가한 뒤 다시 실행한 결과다(2026-10-12). 스크립트는 연속 횟수가
-이전 실행과 섞이지 않게 실행마다 다른 call_id를 쓴다.
+같은 예시 문장을 새로 분석해 받은 call_id로 국민용 화면(`/verify/citizen?call_id=…`)을 열고,
+발급된 적 없는 코드를 두 번 넣었다.
 
 ```
-$ POST :8000/api/v1/calls/demo-call-2-1791777824/verification {"code":"000000"}   # 1회차
-{"call_id":"demo-call-2-1791777824","verified":false,"reason":"code_not_found",
+$ POST :8000/api/v1/calls/9a76146f-5907-4204-9e2d-f8b70324471f/verification {"code":"000000"}   # 1회차
+{"call_id":"9a76146f-5907-4204-9e2d-f8b70324471f","verified":false,"reason":"code_not_found",
  "message":"입력한 코드로 발급된 증명이 없습니다. 상대방이 기관 직원임을 증명하지 못했습니다.",
- "verified_at":"2026-10-12T04:03:44.891410+00:00","retry_allowed":true,"guardian_notification":null}
+ "verified_at":"2026-10-12T07:49:55.994670+00:00","retry_allowed":true,"guardian_notification":null}
 
-$ POST :8000/api/v1/calls/demo-call-2-1791777824/verification {"code":"000001"}   # 2회차
-{"call_id":"demo-call-2-1791777824","verified":false,"reason":"code_not_found",
+$ POST :8000/api/v1/calls/9a76146f-5907-4204-9e2d-f8b70324471f/verification {"code":"000001"}   # 2회차
+{"call_id":"9a76146f-5907-4204-9e2d-f8b70324471f","verified":false,"reason":"code_not_found",
  "message":"입력한 코드로 발급된 증명이 없습니다. 상대방이 기관 직원임을 증명하지 못했습니다.",
- "verified_at":"2026-10-12T04:03:44.907613+00:00","retry_allowed":false,
- "guardian_notification":{"notification_id":"d27ee6cc-7ee2-48eb-ad18-afdef625211c","status":"logged",
-   "created_at":"2026-10-12T04:03:44.907597+00:00",
+ "verified_at":"2026-10-12T07:49:56.132794+00:00","retry_allowed":false,
+ "guardian_notification":{"notification_id":"d418bac0-e203-43ad-bccd-f876d50d9bc2","status":"logged",
+   "created_at":"2026-10-12T07:49:56.132785+00:00",
    "note":"MOCK: 실제 보호자 알림(문자/푸시) 발송 없음 — 모의 시연용 기록만 남김"}}
 ```
 
-시나리오 1·3의 위 응답은 재시도 규칙 추가 전 실행분이라 `retry_allowed` 필드가 없다. 지금은
-두 시나리오 모두 `"retry_allowed":false`가 함께 나온다(2026-10-12 재실행으로 확인).
+![04 1회차 재입력 안내](images/poc/04-impersonator-retry.png)
+![05 2회차 확인 불가](images/poc/05-impersonator-unverified.png)
 
 ### 시나리오 3: 퇴사자 (증명 생성 → 폐기 → 검증) → 확인 불가
 
+직원용 화면에는 폐기 버튼이 없어서, 발급·증명 생성·폐기는 verify-worker API를 직접 호출했다.
+시드 자격증명(`demo-bank-staff`)은 폐기하지 않고 새로 발급한 것을 폐기했다. 그 뒤 새로 분석한
+통화의 국민용 화면에 코드를 넣었다.
+
 ```
 $ POST :8400/api/v1/credentials {"institution_name":"○○은행(모의)","staff_display_name":"최퇴사","role":"대출상담 직원"}
-{"credential_id":"d63b0827-ce58-472c-aa65-6deae208adbd","institution_name":"○○은행(모의)",
- "staff_display_name":"최퇴사","role":"대출상담 직원","issued_at":"2026-10-12T01:50:17.779376+00:00",
- "signature":"275d863e…799cfc08","revoked":false}
+{"credential_id":"d1a74044-758e-47a1-871c-fce08ad60a3a","institution_name":"○○은행(모의)",
+ "staff_display_name":"최퇴사","role":"대출상담 직원","issued_at":"2026-10-12T07:49:56.226652+00:00",
+ "signature":"be5a2213…1976280e","revoked":false}
 
-$ POST :8400/api/v1/proofs {"credential_id":"d63b0827-…","purpose":"방문 상담"}
-{"code":"407227","purpose":"방문 상담","expires_at":"2026-10-12T01:53:17.808778+00:00","ttl_seconds":180}
+$ POST :8400/api/v1/proofs {"credential_id":"d1a74044-…","purpose":"대출 상담 전화"}
+{"code":"156194","purpose":"대출 상담 전화","expires_at":"2026-10-12T07:52:56.230653+00:00","ttl_seconds":180}
 
-$ POST :8400/api/v1/credentials/d63b0827-…/revoke
-{"credential_id":"d63b0827-ce58-472c-aa65-6deae208adbd","revoked":true}
+$ POST :8400/api/v1/credentials/d1a74044-…/revoke
+{"credential_id":"d1a74044-758e-47a1-871c-fce08ad60a3a","revoked":true}
 
-$ POST :8000/api/v1/calls/demo-call-3/verification {"code":"407227"}
-{"call_id":"demo-call-3","verified":false,"reason":"credential_revoked",
+$ POST :8000/api/v1/calls/fb79b04f-7709-4574-a67c-38476d1c4306/verification {"code":"156194"}
+{"call_id":"fb79b04f-7709-4574-a67c-38476d1c4306","verified":false,"reason":"credential_revoked",
  "message":"자격증명이 폐기되었습니다(퇴사 등으로 더 이상 재직 중이 아님).",
- "verified_at":"2026-10-12T01:50:17.851023+00:00",
- "guardian_notification":{"notification_id":"c687d1ae-1fb1-48ba-9dbe-716395ee568a","status":"logged",…}}
+ "verified_at":"2026-10-12T07:49:59.293071+00:00","retry_allowed":false,
+ "guardian_notification":{"notification_id":"fb7491fa-45fa-4d74-afc0-876f79627d0c","status":"logged",…}}
 ```
 
-(위 실행에서 api는 브랜치 코드를 8010 포트에 따로 띄워 호출했다. 응답 형식은 같다.)
+국민 화면은 사칭범(05)과 퇴사자(06)가 똑같은 빨간 화면이다. 국민에게는 두 결과만 보여주고,
+사유 코드(`code_not_found` / `credential_revoked`)는 응답과 통화 기록에만 남긴다(2장).
 
-### 판정 응답의 신원확인 안내 (`verification_prompt`)
+![06 퇴사자 확인 불가](images/poc/06-resigned-unverified.png)
 
-`POST /api/v1/calls/analyze` 응답에 기존 필드는 그대로 두고 아래 필드만 추가했다.
-기관사칭 패턴(`authority_impersonation`)이 있거나 `risk_level == "high"`면 안내한다.
+### 대시보드에 남은 결과
 
-```json
-"verification_prompt": {
-  "required": true,
-  "message": "기관사칭 의심 표현(검찰청, 수사관)이 탐지되었습니다. 상대방에게 '확인 코드'를 불러 달라고 해서 실제 기관 직원인지 확인하세요. 확인되기 전에는 송금, 앱 설치, 개인정보 제공을 하지 마세요."
-}
-```
+세 통화의 신원확인 결과가 "최근 탐지 현황" 표의 해당 통화에 배지로 붙는다(위에서부터 퇴사자,
+사칭범, 정상 직원).
 
-해당 없으면 `{"required": false}`다. 이 문구는 `decide_verification_prompt()`의 실제 출력
-형식이다. 단, 위 키워드 예시는 단위 테스트 입력 기준이고, 실제 analyze 경로의 라이브 응답은
-이번에 확인하지 못했다(아래 5장 참고).
+![07 대시보드 결과 배지](images/poc/07-dashboard-records.png)
+
+같은 세 시나리오를 curl로만 돌리려면 `apps/verify-worker/scripts/demo_scenarios.sh`를 쓴다
+(분석 단계 없이 고정 call_id 사용).
 
 ## 4. 실측 검증 소요시간
 
@@ -183,6 +215,6 @@ $ POST :8000/api/v1/calls/demo-call-3/verification {"code":"407227"}
   append-only 테이블을 추가해야 한다.
 - **배포 미등록**: k3s/docker compose에 등록하지 않았다. Prometheus job(`poc-verify-worker`)만
   추가했고, `vps-` 생존 알림 대상에서는 의도적으로 뺐다.
-- **analyze 경로 라이브 확인 못 함**: 2026-10-12 작업 시점에 docker 데몬과 postgres가 꺼져
-  있어서, `/api/v1/calls/analyze`의 `verification_prompt`는 단위 테스트(4건)와 Playwright
-  화면 확인(analyze 응답을 가로채서 렌더링만 확인)으로만 검증했다.
+- **전체 경로는 로컬 단일 호스트에서만 확인**: 분석 → 신원확인 안내 → 코드 생성 → 검증 →
+  통화 기록 배지까지 실제 서비스를 모두 띄워 확인했다(3장, 2026-10-12). 같은 호스트의 루프백
+  환경이고, 여러 대로 나눈 배포나 휴대폰 실기기에서는 확인하지 않았다.
