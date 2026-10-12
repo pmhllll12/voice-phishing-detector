@@ -335,7 +335,7 @@ verify-worker가 꺼져 있으면 api가 502와 실행 방법을 반환합니다
 
 **시연 순서** (frontend `npm run dev` 후):
 
-1. **정상 직원**: http://localhost:3000/verify/staff 에서 ○○은행(모의) 선택 → "증명 보내기"
+1. **정상 직원**: http://localhost:3000/verify/staff 에서 ○○은행(모의) 선택 → "확인 코드 만들기"
    → 6자리 코드 확인 → http://localhost:3000/verify/citizen 에 그 코드 입력 → 초록 "확인된
    ○○은행(모의) 직원입니다"
 2. **사칭범**: 국민용 화면에 발급된 적 없는 코드(예: `000000`) 입력 → 빨강 "확인되지

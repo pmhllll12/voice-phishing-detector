@@ -1,7 +1,8 @@
 "use client";
 
 // 역방향 신원확인 POC — 직원용 화면(모의). 통화/방문 중인 기관 직원이 자기 자격증명을 골라
-// 일회용 증명(6자리 코드)을 만들고, 그 코드를 국민에게 불러준다. 국민은 /verify/citizen에서
+// 일회용 증명(6자리 코드)을 만들고, 그 코드를 국민에게 말로 불러준다(어디로도 전송하지 않음 —
+// 버튼 이름을 "증명 보내기"에서 "확인 코드 만들기"로 바꾼 이유). 국민은 /verify/citizen에서
 // 코드를 입력해 확인한다. 자격증명은 verify-worker가 기동 시 시드한 모의 기관 것들이다.
 
 import { useEffect, useState } from "react";
@@ -66,7 +67,10 @@ export default function StaffVerifyPage() {
     <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
       <header>
         <p style={{ margin: 0, color: "var(--text-secondary)" }}>직원용 · 모의 시연</p>
-        <h1 style={{ margin: "4px 0 0", fontSize: "30px" }}>내 신원 증명 보내기</h1>
+        <h1 style={{ margin: "4px 0 0", fontSize: "30px" }}>고객에게 불러줄 확인 코드</h1>
+        <p style={{ margin: "8px 0 0", color: "var(--text-secondary)" }}>
+          코드는 어디로도 전송되지 않습니다. 화면에 나온 6자리를 통화 중인 고객에게 말로 불러주세요.
+        </p>
       </header>
 
       <fieldset style={{ border: "1px solid var(--border)", borderRadius: "10px", padding: "16px", margin: 0 }}>
@@ -116,7 +120,7 @@ export default function StaffVerifyPage() {
         onClick={handleSend}
         disabled={loading || !selectedId || !purpose.trim()}
       >
-        {loading ? "만드는 중…" : proof ? "새 증명 보내기" : "증명 보내기"}
+        {loading ? "만드는 중…" : proof ? "새 확인 코드 만들기" : "확인 코드 만들기"}
       </button>
 
       {error && (
@@ -136,7 +140,7 @@ export default function StaffVerifyPage() {
             background: "var(--surface-1)",
           }}
         >
-          <p style={{ margin: 0 }}>상대방에게 이 코드를 불러주세요</p>
+          <p style={{ margin: 0 }}>고객에게 이 코드를 불러주세요</p>
           <p
             style={{
               margin: "8px 0",
@@ -151,7 +155,7 @@ export default function StaffVerifyPage() {
             {proof.code}
           </p>
           <p style={{ margin: 0, fontWeight: 700 }}>
-            {expired ? "⏱ 만료됨 — 새 증명을 보내세요" : `⏱ 남은 시간 ${formatMinSec(remaining)}`}
+            {expired ? "⏱ 만료됨 — 새 확인 코드를 만드세요" : `⏱ 남은 시간 ${formatMinSec(remaining)}`}
           </p>
           <p style={{ margin: "8px 0 0", color: "var(--text-secondary)" }}>목적: {proof.purpose} · 1회만 사용 가능</p>
         </section>

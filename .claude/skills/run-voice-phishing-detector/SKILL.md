@@ -181,7 +181,7 @@ after pulling it, the unit has no `--reload`). All 3 demo scenarios via curl:
 apps/verify-worker/scripts/demo_scenarios.sh   # expect: verified / code_not_found / credential_revoked
 ```
 
-UI: `<frontend>/verify/staff` → "증명 보내기" → copy the 6-digit code →
+UI: `<frontend>/verify/staff` → "확인 코드 만들기" → copy the 6-digit code →
 `<frontend>/verify/citizen` → enter it → green "확인된 ○○은행(모의) 직원입니다". An unknown
 code (e.g. `000000`) → red "확인되지 않았습니다. 전화를 끊으세요" + "보호자에게 알렸습니다(모의)".
 Never revoke the seeded `demo-bank-staff` — issue a fresh credential for the 퇴사자 demo.
