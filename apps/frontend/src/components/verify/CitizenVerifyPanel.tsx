@@ -11,11 +11,61 @@
 // 국민용 페이지(/verify/citizen)와 관제 대시보드(분석 결과 아래 "고객 휴대폰(모의)" 패널)가
 // 이 컴포넌트를 함께 쓴다. callId로 넘긴 통화 기록에 검증 결과가 붙는다(apps/api
 // CallVerificationService 참고).
+//
+// 방문 시나리오(QR): 직원 화면의 QR이 /verify/citizen?code=XXXXXX를 담고 있어서, 주소로 코드가
+// 들어오면(initialCode) 입력칸에 미리 채우고 문구를 방문 상황("문을 열어 주지 마세요")으로
+// 바꾼다. 확인 버튼은 사람이 직접 누른다 — 링크를 연 것만으로 검증되면 안 된다. 이 링크 방식은
+// 시연 편의용이고, 실제 구조에서는 정부 앱 안에서 QR을 읽어야 한다(가짜 QR 링크 피싱 방지,
+// docs/poc-mobile-id.md 참고).
 
 import { useState, type FormEvent } from "react";
 
 import { ApiError } from "@/lib/api";
 import { verifyCallIdentity, type CallVerification } from "@/lib/verify";
+
+type Scene = "call" | "visit";
+
+// 전화/방문에 따라 달라지는 문구만 모았다. 결과는 어느 쪽이든 확인됨/확인 불가 두 가지다.
+const SCENE_TEXT: Record<
+  Scene,
+  {
+    title: string;
+    step1: React.ReactNode;
+    step2: string;
+    retry: string;
+    warning: string;
+    failHeadline: string;
+    okCaution: string;
+  }
+> = {
+  call: {
+    title: "전화한 사람이 진짜 직원인지 확인하기",
+    step1: (
+      <>
+        <strong>1.</strong> 전화한 사람에게 <strong>&ldquo;확인 코드를 불러 주세요&rdquo;</strong>라고 말하세요.
+      </>
+    ),
+    step2: "불러 준 확인 코드 6자리를 입력하세요.",
+    retry: "숫자가 맞지 않습니다. 상대방에게 확인 코드를 한 번 더 불러 달라고 하세요. 한 번 더 맞지 않으면 확인 불가로 처리됩니다.",
+    warning: "확인 코드를 못 대거나 둘러대면 사칭일 수 있습니다. 전화를 끊으세요.",
+    failHeadline: "확인되지 않았습니다. 전화를 끊으세요",
+    okCaution: "직원이 맞아도 송금, 비밀번호, 앱 설치를 요구하면 전화를 끊으세요. 통화 내용이 위 목적과 다를 때도 끊으세요.",
+  },
+  visit: {
+    title: "찾아온 사람이 진짜 직원인지 확인하기",
+    step1: (
+      <>
+        <strong>1.</strong> 찾아온 사람이 보여준 <strong>QR로 확인 코드가 입력</strong>되어 있습니다. 상대방 화면의
+        6자리와 같은지 확인하세요.
+      </>
+    ),
+    step2: "숫자가 같으면 아래 \"확인하기\"를 누르세요. 다르면 상대방 화면의 6자리를 직접 입력하세요.",
+    retry: "숫자가 맞지 않습니다. 상대방에게 확인 코드를 한 번 더 보여 달라고 하세요. 한 번 더 맞지 않으면 확인 불가로 처리됩니다.",
+    warning: "QR이나 확인 코드를 못 보여 주거나 둘러대면 사칭일 수 있습니다. 문을 열어 주지 마세요.",
+    failHeadline: "확인되지 않았습니다. 문을 열어 주지 마세요",
+    okCaution: "직원이 맞아도 송금, 비밀번호, 앱 설치를 요구하면 돌려보내세요. 방문 내용이 위 목적과 다를 때도 돌려보내세요.",
+  },
+};
 
 const resultHeadlineStyle = { margin: "8px 0 16px", fontSize: "34px", lineHeight: 1.35, fontWeight: 800 } as const;
 
@@ -57,7 +107,7 @@ function ResultPanel({
   );
 }
 
-function VerifiedResult({ result, minHeight }: { result: CallVerification; minHeight: string }) {
+function VerifiedResult({ result, minHeight, scene }: { result: CallVerification; minHeight: string; scene: Scene }) {
   return (
     <ResultPanel tone="ok" icon="✔" label="확인됨" minHeight={minHeight}>
       <p style={resultHeadlineStyle}>확인된 {result.institution_name} 직원입니다</p>
@@ -80,17 +130,17 @@ function VerifiedResult({ result, minHeight }: { result: CallVerification; minHe
           fontWeight: 700,
         }}
       >
-        <span aria-hidden="true">⚠ </span>직원이 맞아도 송금, 비밀번호, 앱 설치를 요구하면 전화를 끊으세요. 통화
-        내용이 위 목적과 다를 때도 끊으세요.
+        <span aria-hidden="true">⚠ </span>
+        {SCENE_TEXT[scene].okCaution}
       </p>
     </ResultPanel>
   );
 }
 
-function UnverifiedResult({ result, minHeight }: { result: CallVerification; minHeight: string }) {
+function UnverifiedResult({ result, minHeight, scene }: { result: CallVerification; minHeight: string; scene: Scene }) {
   return (
     <ResultPanel tone="fail" icon="✖" label="확인 불가" minHeight={minHeight}>
-      <p style={resultHeadlineStyle}>확인되지 않았습니다. 전화를 끊으세요</p>
+      <p style={resultHeadlineStyle}>{SCENE_TEXT[scene].failHeadline}</p>
       <p style={{ margin: 0 }}>돈을 보내거나 앱을 설치하지 마세요.</p>
       <p style={{ margin: "8px 0 0" }}>궁금하면 그 기관의 대표번호로 직접 전화해 확인하세요.</p>
       {result.guardian_notification && (
@@ -109,12 +159,16 @@ export function CitizenVerifyPanel({
   callId,
   resultMinHeight = "55vh",
   onVerified,
+  initialCode,
 }: {
   callId: string;
   resultMinHeight?: string;
   onVerified?: () => void;
+  initialCode?: string;
 }) {
-  const [code, setCode] = useState("");
+  const prefilled = (initialCode ?? "").replace(/\D/g, "").slice(0, 6);
+  const scene: Scene = prefilled ? "visit" : "call";
+  const [code, setCode] = useState(prefilled);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<CallVerification | null>(null);
   const [failed, setFailed] = useState(false);
@@ -157,9 +211,9 @@ export function CitizenVerifyPanel({
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
         {result.verified ? (
-          <VerifiedResult result={result} minHeight={resultMinHeight} />
+          <VerifiedResult result={result} minHeight={resultMinHeight} scene={scene} />
         ) : (
-          <UnverifiedResult result={result} minHeight={resultMinHeight} />
+          <UnverifiedResult result={result} minHeight={resultMinHeight} scene={scene} />
         )}
         <button type="button" className="verify-primary-button" onClick={reset}>
           처음으로
@@ -193,14 +247,12 @@ export function CitizenVerifyPanel({
     <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
       <header>
         <p style={{ margin: 0, color: "var(--text-secondary)" }}>국민용 · 모의 시연</p>
-        <h1 style={{ margin: "4px 0 0", fontSize: "32px", lineHeight: 1.35 }}>전화한 사람이 진짜 직원인지 확인하기</h1>
+        <h1 style={{ margin: "4px 0 0", fontSize: "32px", lineHeight: 1.35 }}>{SCENE_TEXT[scene].title}</h1>
       </header>
-      <p style={{ margin: 0 }}>
-        <strong>1.</strong> 전화한 사람에게 <strong>&ldquo;확인 코드를 불러 주세요&rdquo;</strong>라고 말하세요.
-      </p>
+      <p style={{ margin: 0 }}>{SCENE_TEXT[scene].step1}</p>
       <label style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
         <span>
-          <strong>2.</strong> 불러 준 확인 코드 6자리를 입력하세요.
+          <strong>2.</strong> {SCENE_TEXT[scene].step2}
         </span>
         <input
           value={code}
@@ -235,12 +287,13 @@ export function CitizenVerifyPanel({
             fontWeight: 700,
           }}
         >
-          <span aria-hidden="true">⚠ </span>숫자가 맞지 않습니다. 상대방에게 확인 코드를 한 번 더 불러 달라고
-          하세요. 한 번 더 맞지 않으면 확인 불가로 처리됩니다.
+          <span aria-hidden="true">⚠ </span>
+          {SCENE_TEXT[scene].retry}
         </p>
       ) : (
         <p style={{ margin: 0, color: "var(--status-critical)", fontWeight: 700 }}>
-          <span aria-hidden="true">⚠ </span>확인 코드를 못 대거나 둘러대면 사칭일 수 있습니다. 전화를 끊으세요.
+          <span aria-hidden="true">⚠ </span>
+          {SCENE_TEXT[scene].warning}
         </p>
       )}
       <button type="submit" className="verify-primary-button" disabled={loading || code.length !== 6}>

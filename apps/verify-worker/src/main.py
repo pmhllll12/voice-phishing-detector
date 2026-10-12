@@ -74,12 +74,13 @@ revoke_credential_service = RevokeCredentialService(_credentials)
 create_proof_service = CreateProofService(_credentials, _proofs, _clock, ttl_seconds=PROOF_TTL_SECONDS)
 verify_proof_service = VerifyProofService(_signer, _credentials, _proofs, _clock)
 
-# 시연용 고정 자격증명 2건. 직원용 화면이 바로 고를 수 있게 기동 시 발급해둔다 — 이름도
-# 기관도 전부 가상이다. 퇴사자 시나리오는 이 둘을 폐기하지 말고 새로 발급해서 시연할 것
+# 시연용 고정 자격증명 3건(전화 2 + 방문 1). 직원용 화면이 바로 고를 수 있게 기동 시 발급해둔다
+# — 이름도 기관도 전부 가상이다. 퇴사자 시나리오는 이 둘을 폐기하지 말고 새로 발급해서 시연할 것
 # (README "역방향 신원확인 POC" 시연 순서 참고).
 DEMO_CREDENTIALS = [
     ("demo-bank-staff", "○○은행(모의)", "김민수", "대출상담 직원"),
     ("demo-district-staff", "△△구청(모의)", "이영희", "복지 담당 주무관"),
+    ("demo-gas-staff", "□□도시가스(모의)", "박준호", "안전점검원"),  # 방문 시나리오(QR)
 ]
 for _cid, _inst, _name, _role in DEMO_CREDENTIALS:
     issue_credential_service.execute(_inst, _name, _role, credential_id=_cid)

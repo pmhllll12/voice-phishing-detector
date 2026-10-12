@@ -325,8 +325,9 @@ uvicorn src.main:app --port 8400        # 증명 유효시간 조정: PROOF_TTL_
 ```
 
 떠 있는지 확인: `curl http://localhost:8400/health` → `{"status":"ok","proof_ttl_seconds":180,...}`.
-기동하면 시연용 모의 자격증명 2건(`demo-bank-staff` ○○은행(모의) 김민수,
-`demo-district-staff` △△구청(모의) 이영희)이 자동 발급됩니다. 저장소가 인메모리라
+기동하면 시연용 모의 자격증명 3건(`demo-bank-staff` ○○은행(모의) 김민수,
+`demo-district-staff` △△구청(모의) 이영희, 방문 시연용 `demo-gas-staff` □□도시가스(모의)
+박준호)이 자동 발급됩니다. 저장소가 인메모리라
 재시작하면 증명/폐기 기록이 전부 초기화됩니다.
 
 국민용 화면은 api(`POST /api/v1/calls/{call_id}/verification`)를 거칩니다 — api가
@@ -352,6 +353,21 @@ verify-worker가 꺼져 있으면 api가 502와 실행 방법을 반환합니다
 3. **퇴사자**: 새 자격증명 발급 → 증명 생성 → 자격증명 폐기 → 그 코드로 검증 → 빨강
    (화면에는 폐기 버튼이 없어 curl로 진행 — `apps/verify-worker/scripts/demo_scenarios.sh`가
    세 시나리오를 전부 curl로 재현함. 시연용 시드 자격증명은 폐기하지 말 것)
+4. **방문(QR)**: `/verify/staff`에서 □□도시가스(모의) 선택, 목적 "가스 점검 방문(모의)" →
+   "확인 코드 만들기" → 코드 아래에 같은 증명을 담은 QR이 뜸 → QR을 휴대폰 기본 카메라로 읽으면
+   `/verify/citizen?code=XXXXXX`가 열리고 코드가 미리 채워짐 → 거주자가 "확인하기"를 직접 눌러야
+   검증됨(링크를 연 것만으로는 검증되지 않음). 문구도 방문 상황("문을 열어 주지 마세요")으로 바뀜.
+   **실제 구조에서는 링크를 여는 게 아니라 정부 앱 안에서 QR을 읽어야 합니다**(가짜 QR 링크
+   피싱 방지). 이 POC의 링크 방식은 시연 편의를 위한 것입니다.
+
+   휴대폰으로 QR을 읽어 시연하려면, QR 속 주소와 국민 화면이 호출하는 api 주소를 휴대폰이 열 수
+   있어야 합니다. 기본값은 `localhost`라 휴대폰에서는 열리지 않습니다. PC와 휴대폰을 같은 Wi-Fi에
+   두고, Windows(WSL2)라면 관리자 PowerShell에서 3000(또는 3001)·8000 포트를 portproxy로 열고
+   방화벽을 허용한 뒤, PC의 IP로 frontend를 띄웁니다:
+   `NEXT_PUBLIC_CITIZEN_BASE_URL=http://<PC IP>:3001 NEXT_PUBLIC_API_BASE_URL=http://<PC IP>:8000 npm run dev`.
+   설정 없이 한 PC로만 보여줄 때는 QR 아래 화면 대신 브라우저 새 창에서
+   `/verify/citizen?code=XXXXXX`를 직접 열면 됩니다. (휴대폰 실기기로 QR을 읽는 경로는 아직 직접
+   확인하지 않았습니다. QR 내용과 미리 채우기는 브라우저로 확인함.)
 
 대시보드(`/dashboard`)에서 기관사칭 문구를 분석하면 결과 아래에 "상대 신원 확인 권장" 안내와
 `/verify/citizen?call_id=...` 링크가 뜨고, 그 링크로 검증한 결과는 해당 통화 기록의
