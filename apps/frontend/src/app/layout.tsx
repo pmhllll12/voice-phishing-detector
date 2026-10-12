@@ -1,8 +1,8 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "보이스피싱 탐지 관제 대시보드",
-  description: "F-06: 실시간 탐지 현황/통계 시각화",
+  title: "박민호 — Portfolio",
+  description: "AI / Cloud Infrastructure Engineer 포트폴리오",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

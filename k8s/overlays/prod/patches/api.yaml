@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+spec:
+  replicas: 2
+  template:
+    spec:
+      containers:
+        - name: api
+          # base(Dockerfile CMD)의 --reload를 뺀다 — 프로덕션 이미지는 고정이라
+          # 파일 변경 감시가 불필요한 오버헤드다.
+          command:
+            ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi

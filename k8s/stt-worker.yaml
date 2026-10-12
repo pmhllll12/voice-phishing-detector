@@ -1,0 +1,54 @@
+# =============================================================================
+# stt-worker.yaml
+#
+# 모바일 오디오 실시간 감지용 STT(F-05 오디오 경로) — faster-whisper로 오디오 청크를
+# 텍스트로 변환, api가 호출한다. GPU 패스스루 없이도 자동으로 CPU 폴백한다
+# (faster_whisper_adapter.py 참고) — docker-compose 때와 마찬가지로 이 매니페스트도
+# GPU 리소스 요청을 하지 않는다(필요해지면 nvidia device plugin 설치 후 여기에
+# resources.limits["nvidia.com/gpu"] 추가).
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: stt-worker
+spec:
+  type: NodePort
+  selector:
+    app: stt-worker
+  ports:
+    - port: 8300
+      targetPort: 8300
+      nodePort: 8300
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stt-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: stt-worker
+  template:
+    metadata:
+      labels:
+        app: stt-worker
+    spec:
+      containers:
+        - name: stt-worker
+          image: vps-detector/stt-worker:local
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8300
+          readinessProbe:
+            httpGet: { path: /health, port: 8300 }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: { path: /health, port: 8300 }
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5

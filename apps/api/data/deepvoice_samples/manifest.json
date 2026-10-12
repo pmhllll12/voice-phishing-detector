@@ -1,0 +1,119 @@
+{
+  "description": "F-03 딥보이스 임계값 보정용 데이터셋. 실제 보이스피싱 녹음은 사용하지 않는다(docs/RFP.md 4장) — 대신 (1) 공개 TTS 엔진이 실제로 생성한 합성 음성과 (2) 라이선스가 명확한 공개 인간 발화 녹음, 두 실측 소스를 사용한다. 재생성 방법은 apps/api/scripts/generate_deepvoice_dataset.py 참고.",
+  "label_true_for_is_synthetic": "tts",
+  "label_false_for_is_synthetic": "natural",
+  "samples": [
+    {
+      "id": "tts_0",
+      "path": "tts/tts_0.wav",
+      "label": "tts",
+      "source": "gTTS (Google Translate TTS, ko)",
+      "text": "안녕하세요, 오늘 날씨가 정말 좋네요."
+    },
+    {
+      "id": "tts_1",
+      "path": "tts/tts_1.wav",
+      "label": "tts",
+      "source": "gTTS (Google Translate TTS, ko)",
+      "text": "검찰청 수사관인데 계좌가 범죄에 연루되어 지금 즉시 안전계좌로 이체해야 합니다."
+    },
+    {
+      "id": "tts_2",
+      "path": "tts/tts_2.wav",
+      "label": "tts",
+      "source": "gTTS (Google Translate TTS, ko)",
+      "text": "택배가 반송된다는 문자를 받았는데 링크를 눌렀더니 앱이 설치됐어요."
+    },
+    {
+      "id": "tts_3",
+      "path": "tts/tts_3.wav",
+      "label": "tts",
+      "source": "gTTS (Google Translate TTS, ko)",
+      "text": "고객님의 계좌가 명의도용으로 사용되었습니다. 본인 확인이 필요합니다."
+    },
+    {
+      "id": "tts_4",
+      "path": "tts/tts_4.wav",
+      "label": "tts",
+      "source": "gTTS (Google Translate TTS, ko)",
+      "text": "회의는 오후 세 시에 시작할 예정이니 늦지 않게 참석해 주세요."
+    },
+    {
+      "id": "tts_5",
+      "path": "tts/tts_5.wav",
+      "label": "tts",
+      "source": "gTTS (Google Translate TTS, ko)",
+      "text": "아버지 저 핸드폰 액정이 깨져서 지금 이 번호로 통화하고 있어요."
+    },
+    {
+      "id": "tts_6",
+      "path": "tts/tts_6.wav",
+      "label": "tts",
+      "source": "gTTS (Google Translate TTS, ko)",
+      "text": "금융감독원에서 안내드립니다. 고객님 명의로 대포통장이 개설되었습니다."
+    },
+    {
+      "id": "tts_7",
+      "path": "tts/tts_7.wav",
+      "label": "tts",
+      "source": "gTTS (Google Translate TTS, ko)",
+      "text": "오늘 점심 메뉴는 김치찌개와 계란말이입니다."
+    },
+    {
+      "id": "natural_0",
+      "path": "natural/natural_0.wav",
+      "label": "natural",
+      "source": "hf-internal-testing/librispeech_asr_dummy (LibriSpeech clean validation split, CC BY 4.0)",
+      "text": "THE TWENTIES"
+    },
+    {
+      "id": "natural_1",
+      "path": "natural/natural_1.wav",
+      "label": "natural",
+      "source": "hf-internal-testing/librispeech_asr_dummy (LibriSpeech clean validation split, CC BY 4.0)",
+      "text": "TEN SECONDS"
+    },
+    {
+      "id": "natural_2",
+      "path": "natural/natural_2.wav",
+      "label": "natural",
+      "source": "hf-internal-testing/librispeech_asr_dummy (LibriSpeech clean validation split, CC BY 4.0)",
+      "text": "WHERE IS THAT"
+    },
+    {
+      "id": "natural_3",
+      "path": "natural/natural_3.wav",
+      "label": "natural",
+      "source": "hf-internal-testing/librispeech_asr_dummy (LibriSpeech clean validation split, CC BY 4.0)",
+      "text": "HE DOESN'T WORK AT ALL"
+    },
+    {
+      "id": "natural_4",
+      "path": "natural/natural_4.wav",
+      "label": "natural",
+      "source": "hf-internal-testing/librispeech_asr_dummy (LibriSpeech clean validation split, CC BY 4.0)",
+      "text": "BY HARRY QUILTER M A"
+    },
+    {
+      "id": "natural_5",
+      "path": "natural/natural_5.wav",
+      "label": "natural",
+      "source": "hf-internal-testing/librispeech_asr_dummy (LibriSpeech clean validation split, CC BY 4.0)",
+      "text": "WHERE IS MY BROTHER NOW"
+    },
+    {
+      "id": "natural_6",
+      "path": "natural/natural_6.wav",
+      "label": "natural",
+      "source": "hf-internal-testing/librispeech_asr_dummy (LibriSpeech clean validation split, CC BY 4.0)",
+      "text": "KALIKO HESITATED"
+    },
+    {
+      "id": "natural_7",
+      "path": "natural/natural_7.wav",
+      "label": "natural",
+      "source": "hf-internal-testing/librispeech_asr_dummy (LibriSpeech clean validation split, CC BY 4.0)",
+      "text": "OH NO I'M QUITE SURE HE DIDN'T"
+    }
+  ]
+}

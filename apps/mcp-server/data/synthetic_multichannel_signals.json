@@ -1,0 +1,89 @@
+{
+  "_note": "docs/RFP.md 4장 데이터 제약에 따라 실제 통화/문자/이메일이 아닌 합성 시나리오다. 우선순위 2(크로스채널 상관관계 탐지) 검증 전용 — F-01/F-02 합성 데이터셋(synthetic_call_transcripts.json)과 별개다. sms/email 채널 자체의 신규 유입 경로는 이번 범위 밖이라(README 참고), 이 파일의 텍스트는 correlate_multichannel_signals 툴/테스트로 직접 주입해서 상관관계 로직만 검증한다.",
+  "scenarios": [
+    {
+      "scenario_id": "MC-01",
+      "description": "다단계 공격: 검찰 사칭 통화(계좌번호 언급) → 12분 뒤 동일 계좌번호가 포함된 문자(통화와 매칭) → 35분 뒤(문자 기준 23분 뒤) 동일 URL이 포함된 이메일(문자와는 매칭되지만 통화와는 시간 윈도우 밖)",
+      "events": [
+        {
+          "channel": "call",
+          "text": "검찰청 수사관입니다. 명의도용 사건에 연루되어 계좌가 범죄에 이용되고 있습니다. 자산 보호를 위해 안전계좌 110-234-567890으로 즉시 이체하세요.",
+          "minutes_offset": 0,
+          "expect_match": false
+        },
+        {
+          "channel": "sms",
+          "text": "[국민은행] 110-234-567890 계좌 자산보호 조치 안내드립니다. 아래 링크에서 본인확인 바랍니다 http://kb-safe-verify.example.net/auth",
+          "minutes_offset": 12,
+          "expect_match": true,
+          "expect_matched_channel": "call",
+          "expect_entity_type": "account"
+        },
+        {
+          "channel": "email",
+          "text": "제목: 금융감독원 자산보호 조치 안내. 첨부 파일을 확인하시고 아래 링크에서 조치를 완료하세요 http://kb-safe-verify.example.net/auth/confirm",
+          "minutes_offset": 35,
+          "expect_match": true,
+          "expect_matched_channel": "sms",
+          "expect_entity_type": "url"
+        }
+      ]
+    },
+    {
+      "scenario_id": "MC-02",
+      "description": "무관한 통화/문자 — 엔티티(전화번호/URL)가 서로 겹치지 않아 상관관계 없음(오탐 방지 확인)",
+      "events": [
+        {
+          "channel": "call",
+          "text": "내일 회의 시간 확인차 010-2222-3333으로 연락드리겠습니다.",
+          "minutes_offset": 0,
+          "expect_match": false
+        },
+        {
+          "channel": "sms",
+          "text": "택배 배송 안내입니다. 010-9999-8888로 문의주세요 http://benign-delivery.example.com/track",
+          "minutes_offset": 5,
+          "expect_match": false
+        }
+      ]
+    },
+    {
+      "scenario_id": "MC-03",
+      "description": "시간 윈도우(30분) 밖 — 동일 계좌번호라도 31분 뒤에 등장하면 상관관계로 보지 않음",
+      "events": [
+        {
+          "channel": "call",
+          "text": "안전계좌 110-999-111222로 입금 바랍니다.",
+          "minutes_offset": 0,
+          "expect_match": false
+        },
+        {
+          "channel": "sms",
+          "text": "110-999-111222 계좌 확인 부탁드립니다.",
+          "minutes_offset": 31,
+          "expect_match": false
+        }
+      ]
+    },
+    {
+      "scenario_id": "MC-04",
+      "description": "시간 윈도우 경계값(정확히 30분) — 경계는 포함(inclusive)이라 매칭되어야 함",
+      "events": [
+        {
+          "channel": "call",
+          "text": "안전계좌 110-888-333444로 입금 바랍니다.",
+          "minutes_offset": 0,
+          "expect_match": false
+        },
+        {
+          "channel": "sms",
+          "text": "110-888-333444 계좌 확인 부탁드립니다.",
+          "minutes_offset": 30,
+          "expect_match": true,
+          "expect_matched_channel": "call",
+          "expect_entity_type": "account"
+        }
+      ]
+    }
+  ]
+}

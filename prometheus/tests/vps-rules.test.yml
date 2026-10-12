@@ -1,0 +1,102 @@
+# promtool 단위 테스트 — alerting/vps-rules.yml이 의도한 조건에서만 발화하는지 검증.
+# 실행 (저장소 루트에서):
+#   docker run --rm --entrypoint promtool -v "$PWD/prometheus:/p:ro" -w /p \
+#     prom/prometheus:latest test rules tests/vps-rules.test.yml
+rule_files:
+  - ../alerting/vps-rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  # N-05: 모든 요청이 5초 초과(le=5.0 버킷 증가 없음) → p95/준수율 둘 다 발화
+  - interval: 1m
+    input_series:
+      - series: 'vps_analysis_duration_seconds_bucket{le="5.0"}'
+        values: '0+0x30'
+      - series: 'vps_analysis_duration_seconds_bucket{le="10.0"}'
+        values: '0+2x30'
+      - series: 'vps_analysis_duration_seconds_bucket{le="+Inf"}'
+        values: '0+2x30'
+      - series: 'vps_analysis_duration_seconds_count'
+        values: '0+2x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: VpsAnalysisLatencyP95High
+        exp_alerts:
+          - exp_labels: {severity: warning, requirement: N-05}
+            exp_annotations:
+              summary: "판정 p95 응답시간이 N-05 SLA(5초)를 초과"
+              description: "최근 5분 p95 = 9.75s. GPU 경합(동시 요청) 또는 LLM 콜드스타트 여부를 확인할 것."
+      - eval_time: 25m
+        alertname: VpsAnalysisSlaComplianceLow
+        exp_alerts:
+          - exp_labels: {severity: critical, requirement: N-05}
+            exp_annotations:
+              summary: "5초 이내 판정 비율이 90% 미만"
+              description: "최근 15분 SLA 준수율 = 0%."
+
+  # N-05: 전부 5초 이내 → 발화 안 함
+  - interval: 1m
+    input_series:
+      - series: 'vps_analysis_duration_seconds_bucket{le="5.0"}'
+        values: '0+2x30'
+      - series: 'vps_analysis_duration_seconds_bucket{le="+Inf"}'
+        values: '0+2x30'
+      - series: 'vps_analysis_duration_seconds_count'
+        values: '0+2x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: VpsAnalysisLatencyP95High
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: VpsAnalysisSlaComplianceLow
+        exp_alerts: []
+
+  # 高위험 급증: 1시간 동안 0건 → 이후 분당 1건. 평시 저빈도(1건)에는 발화 안 함.
+  - interval: 1m
+    input_series:
+      - series: 'vps_calls_analyzed_total{risk_level="high"}'
+        values: '0x70 1+1x30'
+    alert_rule_test:
+      - eval_time: 72m
+        alertname: VpsHighRiskDetectionSurge
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: VpsHighRiskDetectionSurge
+        exp_alerts:
+          - exp_labels: {severity: warning, requirement: F-02}
+            exp_annotations:
+              summary: "위험도 高 판정 급증"
+              description: "최근 10분 高위험 10건. 신종 수법 확산 또는 오탐(가중치 회귀) 여부를 확인할 것."
+
+  # LLM 폴백: 요청 절반이 폴백 → 발화
+  - interval: 1m
+    input_series:
+      - series: 'vps_mcp_llm_analysis_requests_total{result="success"}'
+        values: '0+1x30'
+      - series: 'vps_mcp_llm_analysis_requests_total{result="fallback"}'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: VpsLlmFallbackRateHigh
+        exp_alerts:
+          - exp_labels: {severity: warning, requirement: F-01}
+            exp_annotations:
+              summary: "LLM 분석 폴백 비율 20% 초과"
+              description: "폴백 비율 = 50%. Ollama 상태(OLLAMA_HOST, 타임아웃, GPU 메모리)를 확인할 것."
+
+  # 스크레이프 대상 다운
+  - interval: 1m
+    input_series:
+      - series: 'up{job="vps-api", instance="api:8000"}'
+        values: '1 1 0 0 0 0'
+      - series: 'up{job="prometheus", instance="localhost:9090"}'
+        values: '0 0 0 0 0 0'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: VpsTargetDown
+        exp_alerts:
+          - exp_labels: {severity: critical, job: vps-api, instance: "api:8000"}
+            exp_annotations:
+              summary: "vps-api 스크레이프 실패"
+              description: "api:8000가 2분 이상 응답하지 않음."
