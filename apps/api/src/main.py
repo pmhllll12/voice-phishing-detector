@@ -23,25 +23,30 @@ import psycopg
 from fastapi import Depends, FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from src.application.services import (
     AnalyzeCallService,
     CallLogQueryService,
+    CallVerificationService,
     DeepvoiceDetectionService,
     ReportSubmissionService,
     TranscribeAndAnalyzeCallService,
 )
 from src.domain.deepvoice import DeepvoiceVerdict
 from src.domain.entities import CallAnalysisResult, Role, role_satisfies
+from src.domain.identity_verification import CallVerificationRecord, decide_verification_prompt
 from src.infrastructure.adapters.api_key_role_auth import require_role
 from src.infrastructure.adapters.deepvoice_adapter import HeuristicDeepvoiceAdapter
+from src.infrastructure.adapters.in_memory_call_verification_log import InMemoryCallVerificationLog
 from src.infrastructure.adapters.mcp_client_adapter import McpServerCallAnalysisAdapter
 from src.infrastructure.adapters.mcp_correlation_adapter import McpCorrelationAdapter
+from src.infrastructure.adapters.mock_guardian_notifier import MockGuardianNotifier
 from src.infrastructure.adapters.postgres_call_log_repository import PostgresCallLogRepository
 from src.infrastructure.adapters.report_client_adapter import McpServerReportAdapter
 from src.infrastructure.adapters.stt_client_adapter import SttWorkerTranscriptionAdapter
+from src.infrastructure.adapters.verify_worker_client_adapter import VerifyWorkerClientAdapter
 from src.infrastructure.adapters.wav2vec2_deepvoice_adapter import Wav2Vec2DeepvoiceAdapter
 from src.infrastructure.metrics import (
     analysis_duration_seconds,
@@ -66,6 +71,9 @@ MCP_ANALYZE_TIMEOUT_SECONDS = float(os.environ.get("MCP_ANALYZE_TIMEOUT_SECONDS"
 # F-05: stt-worker REST 어댑터 주소. run-voice-phishing-detector 스킬 기준 로컬 기본 포트는
 # 8300 (apps/stt-worker/src/main.py 상단 주석 참고).
 STT_WORKER_URL = os.environ.get("STT_WORKER_URL", "http://localhost:8300")
+# 역방향 신원확인 POC: verify-worker 주소(apps/verify-worker/src/main.py 상단 주석 참고).
+# 실제 모바일신분증과 연동하지 않는 모의 시제품이다.
+VERIFY_WORKER_URL = os.environ.get("VERIFY_WORKER_URL", "http://localhost:8400")
 # N-01: 감사증적(call_analysis_results) postgres 주소. 로컬 기본값은 docker로 띄운
 # vps-postgres 컨테이너 기준(infra/db/init.sql, run-voice-phishing-detector 스킬 참고).
 # 프로덕션에서는 반드시 환경변수로 실제 비밀번호를 오버라이드할 것 — 아래 기본값은
@@ -102,6 +110,10 @@ deepvoice_detection_service = DeepvoiceDetectionService(
     Wav2Vec2DeepvoiceAdapter(fallback=HeuristicDeepvoiceAdapter())
 )
 report_submission_service = ReportSubmissionService(McpServerReportAdapter(MCP_SERVER_URL, MCP_SERVICE_API_KEY))
+call_verification_log = InMemoryCallVerificationLog()
+call_verification_service = CallVerificationService(
+    VerifyWorkerClientAdapter(VERIFY_WORKER_URL), MockGuardianNotifier(), call_verification_log
+)
 
 
 def _serialize_call_result(result: CallAnalysisResult, role: Role) -> dict:
@@ -145,8 +157,52 @@ def _serialize_call_result(result: CallAnalysisResult, role: Role) -> dict:
             for c in result.similar_cases
         ],
     }
+    # 역방향 신원확인 POC(기존 필드는 그대로 두고 새 필드만 추가): 기관사칭 패턴이나 고위험이면
+    # "상대 신원을 확인하세요" 안내를 붙인다 — 판단 로직은 domain/identity_verification.py.
+    # identity_verifications는 이 통화에 붙은 신원확인 결과 목록(POST .../verification).
+    prompt = decide_verification_prompt(result)
+    payload["verification_prompt"] = (
+        {"required": True, "message": prompt.message} if prompt.required else {"required": False}
+    )
+    payload["identity_verifications"] = [
+        _serialize_verification_record(r) for r in call_verification_log.list_for_call(result.call_id)
+    ]
     if role_satisfies(role, Role.ADMIN):
         payload["raw_transcript"] = result.raw_transcript
+    return payload
+
+
+def _serialize_verification_record(record: CallVerificationRecord) -> dict:
+    """verify-worker 응답과 같은 원칙: verified=True일 때만 기관명/마스킹된 성명/목적/만료시각을
+    내보낸다. reason/message(N-04)는 결과와 무관하게 항상 포함한다."""
+    payload = {
+        "call_id": record.call_id,
+        "verified": record.verified,
+        "reason": record.reason,
+        "message": record.message,
+        "verified_at": record.verified_at.isoformat(),
+        "retry_allowed": record.retry_allowed,
+    }
+    if record.verified:
+        payload.update(
+            {
+                "institution_name": record.institution_name,
+                "staff_display_name": record.staff_display_name,
+                "purpose": record.purpose,
+                "expires_at": record.expires_at,
+            }
+        )
+    notification = record.guardian_notification
+    payload["guardian_notification"] = (
+        {
+            "notification_id": notification.notification_id,
+            "status": notification.status,
+            "created_at": notification.created_at.isoformat(),
+            "note": notification.note,
+        }
+        if notification
+        else None
+    )
     return payload
 
 
@@ -401,6 +457,41 @@ async def submit_report(req: ReportRequest, _role: Role = Depends(require_role(R
         ) from e
     reports_submitted_total.labels(channel=result["channel"]).inc()
     return result
+
+
+class CallVerificationRequest(BaseModel):
+    code: str = Field(max_length=20)
+
+
+@app.post("/api/v1/calls/{call_id}/verification")
+def verify_call_identity(
+    call_id: str, req: CallVerificationRequest, _role: Role = Depends(require_role(Role.HANDLER))
+) -> dict:
+    """역방향 신원확인 POC: 국민이 상대에게 받은 코드를 verify-worker로 검증하고 결과를 이
+    통화에 붙인다. 확인 불가면 보호자 알림(mock, 실제 발송 없음)을 남긴다. 단 같은 통화의
+    연속 첫 번째 "없는 코드"는 입력 실수일 수 있어 retry_allowed=true로 재입력만 안내한다
+    (domain/identity_verification.py allows_code_retry). verify-worker는
+    실제 모바일신분증과 연동하지 않는 모의 시제품이다. N-02: analyze_call과 동일하게 "처리"
+    행위라 HANDLER 이상 권한이 필요하다. async가 아닌 def인 이유: verify-worker 호출이 동기
+    httpx라, def로 둬야 FastAPI가 스레드풀에서 실행해 이벤트 루프를 막지 않는다.
+    """
+    try:
+        record = call_verification_service.execute(call_id, req.code)
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(
+            status_code=422,
+            detail=f"verify-worker가 검증 요청을 거부했습니다: {e}",
+        ) from e
+    except httpx.HTTPError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"verify-worker({VERIFY_WORKER_URL}) 연결 실패: {e}. 먼저 verify-worker를 "
+                "실행하세요 (cd apps/verify-worker && source .venv/bin/activate && "
+                "uvicorn src.main:app --port 8400)."
+            ),
+        ) from e
+    return _serialize_verification_record(record)
 
 
 @app.get("/metrics")

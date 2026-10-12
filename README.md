@@ -30,6 +30,9 @@ AI 데이터센터/AI 인프라 엔지니어 직무 취업을 위한 개인 포�
   확장성/배포 구조 전부 작성 완료. AWS EC2로 실배포까지 검증했으나 비용(Always
   Free 대비) 때문에 Oracle Cloud로 전환 결정 — 배포 구조 자체(4.1~4.5)는
   사업자 무관하게 재사용, Oracle 인스턴스 확정값은 아직 미확정으로 표시됨
+- [poc-mobile-id.md (역방향 신원확인 POC)](docs/poc-mobile-id.md) — 기관 직원이 모의 재직
+  자격증명으로 먼저 자신을 증명하는 구조를 모사한 시제품의 구조도, 시나리오별 요청/응답,
+  실측 검증 소요시간 (**모의 시제품, 실제 모바일신분증과 연동 안 됨**)
 - [test-plan.md (시험계획서)](docs/test-plan.md) — 테스트 전략(단위/실측데이터셋/E2E
   3계층), F-01~F-07 검수 시나리오와 실측 결과, CI 파이프라인, 알려진 커버리지 공백
 
@@ -298,6 +301,62 @@ uvicorn src.main:app --port 8300
 (cuBLAS/cuDNN 경로를 못 찾거나 GPU가 없으면 `device`가 `cpu`로 표시됩니다 — 생성자 통과 후
 무음 버퍼로 실제 추론까지 태워보고 나서 폴백 여부를 정확히 판단합니다,
 `infrastructure/adapters/faster_whisper_adapter.py`의 `_load_and_warm_up()` 참고).
+
+## 역방향 신원확인 POC 로컬 실행 (verify-worker, 모의 시제품)
+
+> ⚠️ **모사 시제품 고지**: 이 기능은 「2026 모바일신분증 아이디어 공모전」 제출 아이디어의
+> 구조를 모사한 POC입니다. **실제 모바일신분증 시스템이나 정부/기관 시스템과 연동하지
+> 않습니다.** 발급 기관은 전부 "○○은행(모의)"처럼 가상이고("(모의)" 표시가 없는 기관명은
+> 발급 자체를 거부), 서명 키는 프로세스가 기동할 때 메모리에서 만든 모의 Ed25519 키입니다.
+> 보호자 알림도 실제로 발송하지 않고 기록만 남깁니다(mock).
+
+아이디어: 지금은 국민만 기관에 신분을 증명하지만, 반대로 전화를 건 기관 직원이 "재직
+자격증명"으로 먼저 자신을 증명하게 한다. 국민은 **확인됨(초록) / 확인 불가(빨강)** 두
+가지 결과만 본다. F-01이 기관사칭을 의심하면 판정 응답의 `verification_prompt`로 "상대
+신원을 확인하세요"라고 안내하고, 확정은 신원 검증이 한다 — **AI가 의심하고, 신분증이
+확정한다.** 구조도/요청·응답 예시/실측 소요시간은 [docs/poc-mobile-id.md](docs/poc-mobile-id.md).
+
+```bash
+cd apps/verify-worker
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements-dev.txt
+pytest -q                               # 시연 시나리오 3개 + 만료/재사용/서명변조 등 13건
+uvicorn src.main:app --port 8400        # 증명 유효시간 조정: PROOF_TTL_SECONDS=60 uvicorn ...
+```
+
+떠 있는지 확인: `curl http://localhost:8400/health` → `{"status":"ok","proof_ttl_seconds":180,...}`.
+기동하면 시연용 모의 자격증명 2건(`demo-bank-staff` ○○은행(모의) 김민수,
+`demo-district-staff` △△구청(모의) 이영희)이 자동 발급됩니다. 저장소가 인메모리라
+재시작하면 증명/폐기 기록이 전부 초기화됩니다.
+
+국민용 화면은 api(`POST /api/v1/calls/{call_id}/verification`)를 거칩니다 — api가
+이 브랜치 코드로 재시작돼 있어야 하고(systemd면 `systemctl --user restart api`),
+verify-worker가 꺼져 있으면 api가 502와 실행 방법을 반환합니다.
+
+**시연 순서** (frontend `npm run dev` 후):
+
+가장 간단한 방법은 **관제 대시보드 한 화면**에서 하는 것입니다. `/dashboard`에서 "기관사칭
+예시 넣기" → "텍스트로 분석하기"를 누르면(직접 입력해도 됨: "서울중앙지검 수사관입니다. 고객님
+명의 계좌가 범죄에 연루돼 안전계좌로 이체하셔야 합니다"), 결과 아래에 "직원 휴대폰(모의) | 고객 휴대폰(모의)" 두 패널이 나란히
+뜹니다. 왼쪽에서 "확인 코드 만들기" → 그 코드를 오른쪽에 입력 → 결과가 "최근 탐지 현황"의 그
+통화 행 배지(✔ 신원확인됨 / ✖ 신원확인 불가)로 바로 나타납니다.
+
+단독 화면으로 나눠서 보여주려면:
+
+1. **정상 직원**: http://localhost:3000/verify/staff 에서 ○○은행(모의) 선택 → "확인 코드 만들기"
+   → 6자리 코드 확인 → http://localhost:3000/verify/citizen 에 그 코드 입력 → 초록 "확인된
+   ○○은행(모의) 직원입니다"
+2. **사칭범**: 국민용 화면에 발급된 적 없는 코드(예: `000000`) 입력 → 첫 번째는 입력 실수일 수
+   있어 노란 "숫자가 맞지 않습니다. 한 번 더 불러 달라고 하세요"(보호자 알림 없음) → 한 번 더
+   틀린 코드 입력 → 빨강 "확인되지 않았습니다. 전화를 끊으세요" + "보호자에게 알렸습니다(모의)"
+3. **퇴사자**: 새 자격증명 발급 → 증명 생성 → 자격증명 폐기 → 그 코드로 검증 → 빨강
+   (화면에는 폐기 버튼이 없어 curl로 진행 — `apps/verify-worker/scripts/demo_scenarios.sh`가
+   세 시나리오를 전부 curl로 재현함. 시연용 시드 자격증명은 폐기하지 말 것)
+
+대시보드(`/dashboard`)에서 기관사칭 문구를 분석하면 결과 아래에 "상대 신원 확인 권장" 안내와
+`/verify/citizen?call_id=...` 링크가 뜨고, 그 링크로 검증한 결과는 해당 통화 기록의
+`identity_verifications`에 붙습니다. 대시보드 "최근 탐지 현황"의 위험도 배지 아래에도
+`✔ 신원확인됨` / `✖ 신원확인 불가 · 보호자 알림(모의)` / `🪪 신원확인 전`으로 표시됩니다(10초 자동 갱신).
 
 ## apps/api 로컬 실행 (F-03 딥보이스 판별 테스트에 필요)
 
@@ -845,3 +904,26 @@ stt-worker) 전부에 대한 scrape 대상이 설정돼 있고, k3s(`kubectl app
          까지 실측 확인. api(8000)는 이 세션의 로컬 k3s NodePort 라우팅과 겹쳐
          테스트를 mcp-server 직접 호출로 대체함(코드 변경과 무관한 환경 이슈).
          mcp-server/api systemd 서비스는 재시작 완료.
+- [x] 역방향 신원확인 POC (2026-10-12, 「2026 모바일신분증 아이디어 공모전」 제출용,
+      **모의 시제품 — 실제 모바일신분증과 연동 안 됨**). 위 "역방향 신원확인 POC 로컬 실행"
+      절과 [docs/poc-mobile-id.md](docs/poc-mobile-id.md) 참고.
+      1. `apps/verify-worker`(8400) 신규 — stt-worker와 같은 헥사고날 구조. 모의 기관이
+         Ed25519로 서명한 재직 자격증명 발급/폐기, 일회용 증명(6자리, TTL 기본 180초),
+         검증(코드 없음/서명 불일치/폐기/만료/재사용 → 전부 verified=false + 사유 코드,
+         N-04). verified=true여도 기관명·마스킹된 성명(김○○)·목적·만료시각만 반환.
+         `vps_verify_*` 메트릭 4종, prometheus.yml에 `poc-verify-worker` job 추가
+         (k3s 미배포라 `vps-` 생존 알림 대상에서 의도적으로 제외).
+      2. `apps/api`: 판정 응답에 `verification_prompt`(기관사칭 패턴 또는 고위험이면
+         안내, 판단 로직은 `domain/identity_verification.py`)와 `identity_verifications`
+         필드 추가(기존 필드 무변경). `POST /api/v1/calls/{call_id}/verification` 신설 —
+         확인 불가면 보호자 알림 mock 기록. 검증 기록은 인메모리(감사증적 테이블은
+         append-only라 UPDATE 불가 — 영속화는 다음 과제).
+      3. `apps/frontend`: `/verify/staff`, `/verify/citizen`(고령층 기준 글자 크기,
+         아이콘+문구 병기, 화면당 버튼 1개), 대시보드 분석 폼에 신원확인 안내 링크.
+      4. 테스트: verify-worker 13건, api 14건 추가(api 전체 79 passed/9 skipped — 입력
+         실수 재시도 규칙 포함).
+         curl로 세 시나리오 실실행 확인, Playwright로 화면 렌더링 확인. 실측 검증
+         소요시간(i7-8700, 200건): 서버 내부 평균 0.146ms, verify-worker HTTP 왕복
+         p95 1.21ms, api 경유 p95 9.44ms.
+      5. 한계: 인증(RBAC)은 verify-worker에 미적용(로컬 시연 범위), 코드 무차별 대입에
+         대한 속도 제한 없음, 프로세스 재시작 시 키/기록 초기화, k3s/compose 미등록.

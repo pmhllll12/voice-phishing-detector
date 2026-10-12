@@ -65,6 +65,36 @@ export interface CallAnalysis {
   // 참고). 같으면 가산이 없었다는 뜻이라 배지는 risk_score만 그대로 보여준다.
   base_risk_score: number;
   correlation_matches: CorrelationMatch[];
+  // 역방향 신원확인 POC(모의 시제품): 기관사칭 패턴이나 고위험이면 required=true와 근거
+  // 문구가 온다(apps/api/src/domain/identity_verification.py). 이 필드가 생기기 전 api와도
+  // 동작하도록 optional로 둔다.
+  verification_prompt?: VerificationPrompt;
+  // 이 통화에 붙은 신원확인 결과(오래된 것부터). 국민용 화면에서 검증하면 여기에 쌓이고,
+  // 대시보드 최근 탐지 목록이 마지막 결과를 배지로 보여준다(RecentCallsTable 참고).
+  identity_verifications?: IdentityVerification[];
+}
+
+export interface VerificationPrompt {
+  required: boolean;
+  message?: string;
+}
+
+// apps/api _serialize_verification_record와 같은 형식. verified=true일 때만 기관명/마스킹된
+// 성명/목적/만료시각이 온다.
+export interface IdentityVerification {
+  call_id: string;
+  verified: boolean;
+  reason: string;
+  message: string;
+  verified_at: string;
+  // 입력 실수 재시도: true면 "확인 불가"로 확정하지 않고 재입력을 안내한다(보호자 알림 없음).
+  // 같은 통화의 연속 첫 번째 "없는 코드"일 때만 true (apps/api allows_code_retry).
+  retry_allowed?: boolean;
+  institution_name?: string;
+  staff_display_name?: string;
+  purpose?: string;
+  expires_at?: string;
+  guardian_notification: { notification_id: string; status: string; note: string } | null;
 }
 
 export interface CategoryCount {

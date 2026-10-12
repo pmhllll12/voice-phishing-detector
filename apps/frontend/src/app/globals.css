@@ -100,3 +100,53 @@ body {
   color: var(--text-primary);
   min-height: 100vh;
 }
+
+/* 역방향 신원확인 POC(/verify/*, 모의 시제품) — 고령층 기준: 본문 20px 이상, 결과 문구
+   32px 이상. 결과 배경색은 흰 글자와의 대비가 4.5:1 이상 나오도록 상태 팔레트
+   (--status-good/critical, 차트용 밝은 톤)보다 어두운 톤을 따로 둔다. 라이트/다크 모두
+   같은 값 — 결과 화면은 배경 전체를 칠하므로 테마와 무관하게 읽혀야 한다. */
+/* .verify-scope: 글자 크기/결과 색 토큰 — 단독 페이지(/verify/*)와 대시보드 안 패널이 공유.
+   .verify-screen: 단독 페이지 전용 레이아웃(화면 전체 높이 + 하단 고지 고정). */
+.verify-scope {
+  --verify-ok-bg: #0b6b2f;
+  --verify-fail-bg: #b3261e;
+  --verify-on-result: #ffffff;
+  font-size: 20px;
+  line-height: 1.6;
+}
+
+.verify-screen {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.verify-scope button,
+.verify-scope input,
+.verify-scope select {
+  font: inherit;
+}
+
+.verify-primary-button {
+  width: 100%;
+  min-height: 64px;
+  padding: 14px 20px;
+  border: none;
+  border-radius: 10px;
+  background: var(--series-1);
+  color: #ffffff;
+  font-size: 22px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.verify-primary-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.verify-primary-button:focus-visible,
+.verify-scope input:focus-visible {
+  outline: 3px solid var(--text-primary);
+  outline-offset: 2px;
+}

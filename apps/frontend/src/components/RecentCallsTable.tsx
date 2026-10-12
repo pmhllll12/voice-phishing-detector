@@ -183,6 +183,45 @@ function ContentModal({ call, onClose }: { call: CallAnalysis; onClose: () => vo
   );
 }
 
+// 역방향 신원확인 POC(모의 시제품): 국민용 화면(/verify/citizen?call_id=...)에서 검증한
+// 결과를 이 통화 행에 보여준다 — 대시보드·직원용·국민용 세 화면이 같은 통화 하나로 이어져
+// 있다는 걸 화면만 보고 알 수 있게 하기 위함. 여러 번 검증했으면 마지막 결과만 보여준다.
+// 안내 대상(verification_prompt.required)인데 아직 검증 기록이 없으면 "확인 전"으로, 첫 입력
+// 실수로 재입력을 안내 중이면 "재입력 대기"로 표시한다(확인 불가로 확정되기 전).
+function IdentityVerificationBadge({ call }: { call: CallAnalysis }) {
+  const records = call.identity_verifications ?? [];
+  const latest = records[records.length - 1];
+  const baseStyle = { display: "block", fontSize: "11px", marginTop: "4px", whiteSpace: "normal" } as const;
+
+  if (!latest) {
+    if (!call.verification_prompt?.required) return null;
+    return (
+      <span style={{ ...baseStyle, color: "var(--text-muted)" }}>
+        <span aria-hidden>🪪</span> 신원확인 전
+      </span>
+    );
+  }
+  if (latest.retry_allowed) {
+    return (
+      <span style={{ ...baseStyle, color: "var(--text-secondary)" }} title={latest.message}>
+        <span aria-hidden>🪪</span> 확인 코드 재입력 대기
+      </span>
+    );
+  }
+  if (latest.verified) {
+    return (
+      <span style={{ ...baseStyle, color: "var(--status-good)", fontWeight: 600 }}>
+        <span aria-hidden>✔</span> 신원확인됨 ({latest.institution_name} {latest.staff_display_name})
+      </span>
+    );
+  }
+  return (
+    <span style={{ ...baseStyle, color: "var(--status-critical)", fontWeight: 600 }} title={latest.message}>
+      <span aria-hidden>✖</span> 신원확인 불가{latest.guardian_notification ? " · 보호자 알림(모의)" : ""}
+    </span>
+  );
+}
+
 export function RecentCallsTable({ calls }: { calls: CallAnalysis[] }) {
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const [expandedCall, setExpandedCall] = useState<CallAnalysis | null>(null);
@@ -287,6 +326,7 @@ export function RecentCallsTable({ calls }: { calls: CallAnalysis[] }) {
                       {call.base_risk_score} → {call.risk_score} (크로스채널 가산)
                     </span>
                   )}
+                  <IdentityVerificationBadge call={call} />
                 </td>
                 <td style={{ padding: "8px", maxWidth: "320px", color: "var(--text-primary)" }}>
                   {/* 코드 리뷰(2026-09-02) 대응: 이 열의 폭을 <td>의 maxWidth에만 맡기면

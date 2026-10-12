@@ -6,6 +6,7 @@ from typing import Protocol
 
 from .deepvoice import DeepvoiceVerdict
 from .entities import CallAnalysisResult, StatsSummary
+from .identity_verification import CallVerificationRecord, GuardianNotification
 
 
 class DeepvoiceDetectionPort(Protocol):
@@ -41,6 +42,29 @@ class ReportPort(Protocol):
     반환값은 mcp-server REST 응답 그대로의 dict — CallAnalysisPort와 동일한 패턴."""
 
     def submit(self, case_summary: str, risk_level: str) -> dict: ...
+
+
+class IdentityVerificationPort(Protocol):
+    """역방향 신원확인 POC: 국민이 입력한 코드를 verify-worker(/api/v1/verify)에 넘겨
+    검증하는 포트. 반환값은 verify-worker REST 응답 그대로의 dict — CallAnalysisPort와
+    동일한 패턴. verify-worker는 실제 모바일신분증과 연동하지 않는 모의 시제품이다."""
+
+    def verify(self, code: str) -> dict: ...
+
+
+class GuardianNotificationPort(Protocol):
+    """신원확인 결과가 "확인 불가"일 때 보호자 알림(mock)을 남기는 포트."""
+
+    def notify(self, call_id: str, reason: str) -> GuardianNotification: ...
+
+
+class CallVerificationLogPort(Protocol):
+    """통화별 신원확인 결과 저장소. 감사증적 테이블(call_analysis_results)은 append-only
+    트리거로 UPDATE가 막혀 있어서, 판정 결과에 컬럼을 덧붙이지 않고 call_id로 묶이는 별도
+    저장소로 분리했다(현재는 인메모리)."""
+
+    def add(self, record: CallVerificationRecord) -> None: ...
+    def list_for_call(self, call_id: str) -> list[CallVerificationRecord]: ...
 
 
 class MultichannelCorrelationPort(Protocol):

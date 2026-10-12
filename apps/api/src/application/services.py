@@ -15,11 +15,15 @@ from src.domain.entities import (
     StatsSummary,
 )
 from src.domain.entity_extraction import extract_entities
+from src.domain.identity_verification import CallVerificationRecord, allows_code_retry
 from src.domain.pii_masking import mask_pii
 from src.domain.ports import (
     CallAnalysisPort,
     CallLogPort,
+    CallVerificationLogPort,
     DeepvoiceDetectionPort,
+    GuardianNotificationPort,
+    IdentityVerificationPort,
     MultichannelCorrelationPort,
     ReportPort,
     TranscriptionPort,
@@ -226,6 +230,58 @@ class ReportSubmissionService:
 
     def execute(self, case_summary: str, risk_level: str) -> dict:
         return self._report_port.submit(case_summary, risk_level)
+
+
+class CallVerificationService:
+    """역방향 신원확인 POC 유스케이스: 국민이 입력한 코드를 verify-worker로 검증하고, 결과를
+    해당 통화에 붙인다. 확인 불가면 보호자 알림(mock)을 남긴다.
+
+    "AI가 의심하고, 신분증이 확정한다" — F-01/F-02 판정(AnalyzeCallService)은 기관사칭을
+    의심만 하고(domain/identity_verification.py decide_verification_prompt), 상대가 실제
+    직원인지는 여기서 verify-worker의 서명 검증 결과로 확정한다. 검증 로직 자체(서명/폐기/
+    만료/재사용)는 verify-worker에 있고, 여기서는 ReportSubmissionService처럼 오케스트레이션만
+    한다. verify-worker는 실제 모바일신분증과 연동하지 않는 모의 시제품이다.
+
+    call_id가 실제 판정 기록에 있는지는 확인하지 않는다 — 대시보드를 거치지 않고 국민용
+    화면에 바로 들어온 시연(call_id="standalone")도 같은 경로로 기록하기 위해서다.
+    """
+
+    def __init__(
+        self,
+        verification_port: IdentityVerificationPort,
+        guardian_port: GuardianNotificationPort,
+        verification_log_port: CallVerificationLogPort,
+    ):
+        self._verification_port = verification_port
+        self._guardian_port = guardian_port
+        self._verification_log_port = verification_log_port
+
+    def execute(self, call_id: str, code: str) -> CallVerificationRecord:
+        raw = self._verification_port.verify(code)
+        verified = bool(raw["verified"])
+        # 입력 실수 재시도(domain/identity_verification.py allows_code_retry): 같은 통화의 연속
+        # 첫 번째 "없는 코드"는 확인 불가로 확정하지 않고, 보호자 알림도 보내지 않는다.
+        retry_allowed = not verified and allows_code_retry(
+            raw["reason"], self._verification_log_port.list_for_call(call_id)
+        )
+        guardian_notification = (
+            None if verified or retry_allowed else self._guardian_port.notify(call_id, raw["reason"])
+        )
+        record = CallVerificationRecord(
+            call_id=call_id,
+            verified=verified,
+            reason=raw["reason"],
+            message=raw["message"],
+            verified_at=datetime.now(timezone.utc),
+            institution_name=raw.get("institution_name"),
+            staff_display_name=raw.get("staff_display_name"),
+            purpose=raw.get("purpose"),
+            expires_at=raw.get("expires_at"),
+            guardian_notification=guardian_notification,
+            retry_allowed=retry_allowed,
+        )
+        self._verification_log_port.add(record)
+        return record
 
 
 class DeepvoiceDetectionService:
