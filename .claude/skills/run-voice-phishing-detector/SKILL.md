@@ -115,7 +115,21 @@ curl -sf http://localhost:8000/health || {
   cd -
 }
 
-# 5) frontend — defaults to NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+# 5) verify-worker (8400) — 역방향 신원확인 POC (모의 시제품, 실제 모바일신분증과
+#    연동 안 됨). NOT a systemd unit — start manually. In-memory only: every restart
+#    regenerates the mock Ed25519 keys and re-seeds the 2 demo credentials
+#    (demo-bank-staff, demo-district-staff); proofs/revocations are lost.
+#    Only /verify/staff, /verify/citizen and api's POST /api/v1/calls/{id}/verification
+#    need it — the dashboard/analyze path works without it.
+curl -sf http://localhost:8400/health || {
+  cd apps/verify-worker
+  [ -d .venv ] || (python3 -m venv .venv && .venv/bin/pip install -q -r requirements-dev.txt)
+  nohup .venv/bin/uvicorn src.main:app --port 8400 > /tmp/verify-worker.log 2>&1 & disown
+  cd -
+}
+
+# 6) frontend — defaults to NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+#    (and NEXT_PUBLIC_VERIFY_WORKER_URL=http://localhost:8400 for /verify/staff)
 cd apps/frontend && nohup npm run dev > /tmp/frontend.log 2>&1 & disown
 cd -
 ```
@@ -128,6 +142,7 @@ timeout 30 bash -c 'until curl -sf http://localhost:8200/health >/dev/null; do s
 timeout 30 bash -c 'until curl -sf http://localhost:8300/health >/dev/null; do sleep 1; done'
 timeout 30 bash -c 'until curl -sf http://localhost:8100/health >/dev/null; do sleep 1; done'
 timeout 30 bash -c 'until curl -sf http://localhost:8000/health >/dev/null; do sleep 1; done'
+timeout 30 bash -c 'until curl -sf http://localhost:8400/health >/dev/null; do sleep 1; done'
 timeout 30 bash -c 'until grep -q "Local:" /tmp/frontend.log; do sleep 1; done'
 grep "Local:" /tmp/frontend.log   # -> the real frontend URL (3000 or 3001)
 ```
@@ -150,6 +165,7 @@ Stop everything (`fuser`, not `lsof -ti` — see Gotchas):
 ```bash
 FRONTEND_PORT=$(grep -oP 'localhost:\K[0-9]+' /tmp/frontend.log | tail -1)
 fuser -k "${FRONTEND_PORT:-3000}/tcp" 2>/dev/null
+fuser -k 8400/tcp 2>/dev/null   # verify-worker (manual, not systemd)
 # rag-worker, stt-worker, mcp-server, and api are systemd — leave them running, or:
 # systemctl --user stop rag-worker stt-worker mcp-server api
 # vps-postgres holds the audit trail — leave the container running too (docker stop
@@ -157,14 +173,29 @@ fuser -k "${FRONTEND_PORT:-3000}/tcp" 2>/dev/null
 # way; only `docker rm -f` + `docker volume rm vps_postgres_data` actually wipes it).
 ```
 
+Drive the 역방향 신원확인 POC (verify-worker must be up, and api must be running code
+that has `POST /api/v1/calls/{call_id}/verification` — `systemctl --user restart api`
+after pulling it, the unit has no `--reload`). All 3 demo scenarios via curl:
+
+```bash
+apps/verify-worker/scripts/demo_scenarios.sh   # expect: verified / code_not_found / credential_revoked
+```
+
+UI: `<frontend>/verify/staff` → "증명 보내기" → copy the 6-digit code →
+`<frontend>/verify/citizen` → enter it → green "확인된 ○○은행(모의) 직원입니다". An unknown
+code (e.g. `000000`) → red "확인되지 않았습니다. 전화를 끊으세요" + "보호자에게 알렸습니다(모의)".
+Never revoke the seeded `demo-bank-staff` — issue a fresh credential for the 퇴사자 demo.
+
 ## Run (human path)
 
-Same 5 commands as above, each in its own terminal without `nohup`/`&`, then open
+Same commands as above, each in its own terminal without `nohup`/`&`, then open
 the frontend URL in a real browser and use the form. Ctrl-C each terminal to stop.
 
 ## Test
 
-No test suite exists yet in any of the 5 apps as of this writing.
+Each Python app has its own pytest suite (`cd apps/<app> && .venv/bin/python -m pytest -q`).
+verify-worker's suite (`apps/verify-worker/tests`) pins the 3 demo scenarios plus
+expiry/reuse/signature-tamper and needs no other service running.
 
 ---
 
