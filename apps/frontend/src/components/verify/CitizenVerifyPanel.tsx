@@ -182,6 +182,7 @@ export function CitizenVerifyPanel({
     setLoading(true);
     setFailed(false);
     try {
+      // 429(rate_limited)도 verified=false 결과로 돌아와 아래 확인 불가 화면으로 간다(lib/verify.ts).
       const verification = await verifyCallIdentity(callId, code);
       onVerified?.();
       if (verification.retry_allowed) {

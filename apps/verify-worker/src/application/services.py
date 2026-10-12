@@ -22,11 +22,13 @@ from src.domain.entities import (
 from src.domain.ports import (
     ClockPort,
     CredentialRepositoryPort,
+    FailedAttemptStorePort,
     IssuerPublicKeyRegistryPort,
     IssuerSigningPort,
     ProofRepositoryPort,
     SignatureVerifierPort,
 )
+from src.domain.rate_limit import RateLimitPolicy
 
 
 def _random_six_digit_code() -> str:
@@ -192,3 +194,34 @@ class VerifyProofService:
             purpose=proof.purpose,
             expires_at=proof.expires_at,
         )
+
+
+class RateLimitedVerifyService:
+    """VerifyProofService 앞에 클라이언트별 실패 횟수 제한을 건다(domain/rate_limit.py).
+
+    검증 규칙(VerifyProofService)과 제한 규칙을 섞지 않으려고 감싸는 유스케이스로 따로 뒀다.
+    순서: 윈도우 안 실패가 이미 한도면 검증하지 않고 rate_limited → 아니면 검증 → 결과가 실패면
+    (사유 무관) 실패 1회 기록. 성공은 기록하지 않는다.
+    """
+
+    def __init__(
+        self,
+        verify: VerifyProofService,
+        attempts: FailedAttemptStorePort,
+        clock: ClockPort,
+        policy: RateLimitPolicy,
+    ):
+        self._verify = verify
+        self._attempts = attempts
+        self._clock = clock
+        self._policy = policy
+
+    def execute(self, client_key: str, code: str) -> VerificationResult:
+        now = self._clock.now()
+        recent = self._attempts.count_failures_since(client_key, self._policy.window_start(now))
+        if self._policy.is_limited(recent):
+            return VerificationResult.unverified(VerificationReason.RATE_LIMITED)
+        result = self._verify.execute(code)
+        if not result.verified:
+            self._attempts.record_failure(client_key, now)
+        return result

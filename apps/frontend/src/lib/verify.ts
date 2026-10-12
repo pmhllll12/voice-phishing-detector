@@ -102,6 +102,10 @@ export async function verifyCallIdentity(callId: string, code: string): Promise<
   } catch {
     throw new ApiError(`api(${API_BASE_URL})에 연결할 수 없습니다.`);
   }
+  // 429(짧은 시간에 너무 많이 틀림, reason=rate_limited)는 오류가 아니라 판정 결과다 — 본문이
+  // 일반 검증 결과와 같은 형식(verified=false)이라 그대로 돌려주면 국민 화면이 확인 불가(빨강)로
+  // 보여준다. "잠시 후 다시 시도" 안내를 하지 않는 이유: 제한에 걸릴 만큼 틀렸다면 끊는 게 맞다.
+  if (res.status === 429) return res.json();
   if (!res.ok) throw new ApiError(await parseErrorDetail(res), res.status);
   return res.json();
 }

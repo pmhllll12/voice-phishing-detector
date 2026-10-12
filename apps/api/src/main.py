@@ -20,7 +20,7 @@ from datetime import datetime
 
 import httpx
 import psycopg
-from fastapi import Depends, FastAPI, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
@@ -36,9 +36,15 @@ from src.application.services import (
 )
 from src.domain.deepvoice import DeepvoiceVerdict
 from src.domain.entities import CallAnalysisResult, Role, role_satisfies
-from src.domain.identity_verification import CallVerificationRecord, decide_verification_prompt
+from src.domain.identity_verification import (
+    RATE_LIMITED_REASON,
+    CallVerificationRecord,
+    RateLimitPolicy,
+    decide_verification_prompt,
+)
 from src.infrastructure.adapters.api_key_role_auth import require_role
 from src.infrastructure.adapters.deepvoice_adapter import HeuristicDeepvoiceAdapter
+from src.infrastructure.adapters.in_memory_attempt_store import InMemoryFailedAttemptStore
 from src.infrastructure.adapters.in_memory_call_verification_log import InMemoryCallVerificationLog
 from src.infrastructure.adapters.mcp_client_adapter import McpServerCallAnalysisAdapter
 from src.infrastructure.adapters.mcp_correlation_adapter import McpCorrelationAdapter
@@ -54,6 +60,7 @@ from src.infrastructure.metrics import (
     deepvoice_detected_total,
     reports_submitted_total,
     risk_score_distribution,
+    verify_rate_limited_total,
 )
 
 # F-01/F-02/F-05: mcp-server REST 어댑터 주소. docker-compose로 묶이면 컨테이너 네트워크
@@ -74,6 +81,12 @@ STT_WORKER_URL = os.environ.get("STT_WORKER_URL", "http://localhost:8300")
 # 역방향 신원확인 POC: verify-worker 주소(apps/verify-worker/src/main.py 상단 주석 참고).
 # 실제 모바일신분증과 연동하지 않는 모의 시제품이다.
 VERIFY_WORKER_URL = os.environ.get("VERIFY_WORKER_URL", "http://localhost:8400")
+# 확인 코드 무차별 대입 방어: 클라이언트(IP)별로 이 시간 안에 이만큼 틀리면 다음 시도부터 429
+# (domain/identity_verification.py RateLimitPolicy). verify-worker와 같은 환경변수 이름이다.
+VERIFY_RATE_LIMIT_POLICY = RateLimitPolicy(
+    max_failures=int(os.environ.get("VERIFY_RATE_LIMIT_MAX_FAILURES", "5")),
+    window_seconds=int(os.environ.get("VERIFY_RATE_LIMIT_WINDOW_SECONDS", "600")),
+)
 # N-01: 감사증적(call_analysis_results) postgres 주소. 로컬 기본값은 docker로 띄운
 # vps-postgres 컨테이너 기준(infra/db/init.sql, run-voice-phishing-detector 스킬 참고).
 # 프로덕션에서는 반드시 환경변수로 실제 비밀번호를 오버라이드할 것 — 아래 기본값은
@@ -112,7 +125,11 @@ deepvoice_detection_service = DeepvoiceDetectionService(
 report_submission_service = ReportSubmissionService(McpServerReportAdapter(MCP_SERVER_URL, MCP_SERVICE_API_KEY))
 call_verification_log = InMemoryCallVerificationLog()
 call_verification_service = CallVerificationService(
-    VerifyWorkerClientAdapter(VERIFY_WORKER_URL), MockGuardianNotifier(), call_verification_log
+    VerifyWorkerClientAdapter(VERIFY_WORKER_URL),
+    MockGuardianNotifier(),
+    call_verification_log,
+    attempt_store=InMemoryFailedAttemptStore(),
+    rate_limit=VERIFY_RATE_LIMIT_POLICY,
 )
 
 
@@ -463,10 +480,13 @@ class CallVerificationRequest(BaseModel):
     code: str = Field(max_length=20)
 
 
-@app.post("/api/v1/calls/{call_id}/verification")
+@app.post("/api/v1/calls/{call_id}/verification", response_model=None)
 def verify_call_identity(
-    call_id: str, req: CallVerificationRequest, _role: Role = Depends(require_role(Role.HANDLER))
-) -> dict:
+    call_id: str,
+    req: CallVerificationRequest,
+    request: Request,
+    _role: Role = Depends(require_role(Role.HANDLER)),
+) -> dict | JSONResponse:
     """역방향 신원확인 POC: 국민이 상대에게 받은 코드를 verify-worker로 검증하고 결과를 이
     통화에 붙인다. 확인 불가면 보호자 알림(mock, 실제 발송 없음)을 남긴다. 단 같은 통화의
     연속 첫 번째 "없는 코드"는 입력 실수일 수 있어 retry_allowed=true로 재입력만 안내한다
@@ -474,9 +494,14 @@ def verify_call_identity(
     실제 모바일신분증과 연동하지 않는 모의 시제품이다. N-02: analyze_call과 동일하게 "처리"
     행위라 HANDLER 이상 권한이 필요하다. async가 아닌 def인 이유: verify-worker 호출이 동기
     httpx라, def로 둬야 FastAPI가 스레드풀에서 실행해 이벤트 루프를 막지 않는다.
+
+    무차별 대입 방어: 클라이언트 IP별 실패가 한도(VERIFY_RATE_LIMIT_POLICY)를 넘으면 429와
+    reason=rate_limited를 같은 본문 형식으로 돌려준다(통화 기록과 보호자 알림(mock)도 남음).
+    국민 화면은 이 429를 확인 불가와 같은 빨간 화면으로 보여준다.
     """
+    client_key = request.client.host if request.client else "unknown"
     try:
-        record = call_verification_service.execute(call_id, req.code)
+        record = call_verification_service.execute(call_id, req.code, client_key)
     except httpx.HTTPStatusError as e:
         raise HTTPException(
             status_code=422,
@@ -491,6 +516,9 @@ def verify_call_identity(
                 "uvicorn src.main:app --port 8400)."
             ),
         ) from e
+    if record.reason == RATE_LIMITED_REASON:
+        verify_rate_limited_total.inc()
+        return JSONResponse(status_code=429, content=_serialize_verification_record(record))
     return _serialize_verification_record(record)
 
 

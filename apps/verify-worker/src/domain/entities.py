@@ -32,6 +32,7 @@ class VerificationReason(str, Enum):
     CREDENTIAL_REVOKED = "credential_revoked"  # 퇴사자: 자격증명이 폐기됨
     PROOF_EXPIRED = "proof_expired"  # 일회용 증명의 유효시간 경과
     PROOF_ALREADY_USED = "proof_already_used"  # 같은 코드 재사용
+    RATE_LIMITED = "rate_limited"  # 짧은 시간에 너무 많이 틀림(무차별 대입 의심) — domain/rate_limit.py
 
 
 # 사람이 읽을 문구(N-04). 국민용 화면에는 노출하지 않고 API 응답/감사용으로만 쓴다.
@@ -43,6 +44,7 @@ REASON_MESSAGES: dict[VerificationReason, str] = {
     VerificationReason.CREDENTIAL_REVOKED: "자격증명이 폐기되었습니다(퇴사 등으로 더 이상 재직 중이 아님).",
     VerificationReason.PROOF_EXPIRED: "증명 유효시간이 지났습니다. 상대방에게 새 증명을 요청하세요.",
     VerificationReason.PROOF_ALREADY_USED: "이미 한 번 사용된 증명입니다(재사용 시도 의심).",
+    VerificationReason.RATE_LIMITED: "짧은 시간에 확인 코드를 너무 여러 번 틀렸습니다(무차별 대입 의심). 검증하지 않고 거절했습니다.",
 }
 
 

@@ -202,6 +202,14 @@ cd .claude/skills/run-voice-phishing-detector
 node capture_poc.mjs http://localhost:<frontend-port> ../../../docs/images/poc /tmp/poc-responses
 ```
 
+**Rate limit gotcha**: api and verify-worker both reject a client IP after 5 failed codes in 10
+minutes (429 `rate_limited`, in-memory). Everything here comes from 127.0.0.1, and one capture run
+spends 3 failures (impersonator ×2, resigned ×1) — so a second run within 10 minutes hits 429 and
+the red screens still render but the scenario is no longer what it claims. Restart both
+(`systemctl --user restart api`; `fuser -k 8400/tcp` + relaunch) before re-running, or launch them
+with `VERIFY_RATE_LIMIT_MAX_FAILURES=50`. Restarting verify-worker also regenerates the mock issuer
+keys (seeded credentials are re-issued, so nothing visible breaks).
+
 It analyzes the 기관사칭 example 3 times through the real api (LLM included, so allow ~10s
 each), runs the genuine / impersonator / resigned scenarios against those call_ids, and
 fails loudly if `verification_prompt.required` is not true. Risk scores differ run to run

@@ -56,6 +56,17 @@ class ProofRepositoryPort(Protocol):
         ...
 
 
+class FailedAttemptStorePort(Protocol):
+    """클라이언트별 검증 실패 시각 기록(무차별 대입 방어, domain/rate_limit.py). client_key는
+    클라이언트를 구분하는 값(지금은 IP)이다."""
+
+    def record_failure(self, client_key: str, at: datetime) -> None: ...
+
+    def count_failures_since(self, client_key: str, since: datetime) -> int:
+        """since 이후(포함 안 함)의 실패 횟수. 그보다 오래된 기록은 버려도 된다."""
+        ...
+
+
 class ClockPort(Protocol):
     """만료 판정용 현재 시각. 테스트에서 시간을 앞으로 돌려 만료 시나리오를 재현하려고 분리했다."""
 

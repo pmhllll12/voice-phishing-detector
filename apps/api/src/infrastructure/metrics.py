@@ -69,3 +69,11 @@ deepvoice_model_info = Info(
     "vps_deepvoice_model",
     "F-03 v2 deepvoice model name and inference device currently in use",
 )
+
+# 역방향 신원확인 POC: 클라이언트(IP)별 실패 횟수 제한에 걸려 429로 거절한 횟수(api 단 —
+# 국민 화면 경유). verify-worker도 같은 이름의 메트릭을 자기 쪽 제한에 대해 내보내며,
+# Prometheus에서는 job 라벨(vps-api / poc-verify-worker)로 구분된다.
+verify_rate_limited_total = Counter(
+    "vps_verify_rate_limited_total",
+    "Total number of identity verification requests rejected by the per-client failure limit",
+)

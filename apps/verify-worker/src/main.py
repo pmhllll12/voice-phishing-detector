@@ -25,19 +25,21 @@
 # 로컬 시연 범위로 한정한다. 실제 구조라면 발급/폐기는 기관 인증이, 증명 생성은 직원 본인
 # 인증이 필요하다(docs/poc-mobile-id.md "한계" 참고).
 
+import ipaddress
 import logging
 import os
 import time
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field
 
 from src.application.services import (
     CreateProofService,
     IssueCredentialService,
+    RateLimitedVerifyService,
     RevokeCredentialService,
     VerifyProofService,
 )
@@ -50,10 +52,13 @@ from src.domain.entities import (
     CredentialRevokedError,
     Issuer,
     IssuerNotFoundError,
+    VerificationReason,
     VerificationResult,
 )
+from src.domain.rate_limit import RateLimitPolicy
 from src.infrastructure.adapters.ed25519_issuer_signer import Ed25519IssuerSigner
 from src.infrastructure.adapters.ed25519_verifier import Ed25519SignatureVerifier
+from src.infrastructure.adapters.in_memory_attempt_store import InMemoryFailedAttemptStore
 from src.infrastructure.adapters.in_memory_issuer_registry import InMemoryIssuerPublicKeyRegistry
 from src.infrastructure.adapters.in_memory_repository import (
     InMemoryCredentialRepository,
@@ -63,6 +68,7 @@ from src.infrastructure.adapters.in_memory_repository import (
 from src.infrastructure.metrics import (
     credentials_revoked_total,
     proofs_created_total,
+    rate_limited_total,
     verify_duration_seconds,
     verify_requests_total,
 )
@@ -72,6 +78,21 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname
 # 일회용 증명 유효시간. 통화 중에 국민이 코드를 받아 입력하기까지 충분하면서도, 코드가
 # 유출돼도 오래 쓰이지 않을 정도로 짧게 — 기본 3분.
 PROOF_TTL_SECONDS = int(os.environ.get("PROOF_TTL_SECONDS", "180"))
+
+# 확인 코드 무차별 대입 방어(domain/rate_limit.py): 클라이언트(IP)별로 이 시간 안에 이만큼 틀리면
+# 다음 시도부터 429. apps/api도 같은 이름의 환경변수로 같은 규칙을 건다.
+RATE_LIMIT_POLICY = RateLimitPolicy(
+    max_failures=int(os.environ.get("VERIFY_RATE_LIMIT_MAX_FAILURES", "5")),
+    window_seconds=int(os.environ.get("VERIFY_RATE_LIMIT_WINDOW_SECONDS", "600")),
+)
+
+# 국민 검증은 apps/api를 거쳐 들어오므로, 그대로 두면 모든 국민이 api의 IP 하나로 보여 실패
+# 횟수를 함께 쓰게 된다. 그래서 이 목록의 주소(=api가 떠 있는 곳)에서 온 요청에 한해서만
+# X-Forwarded-For의 클라이언트 IP를 믿는다. 아무 데서나 온 X-Forwarded-For를 믿으면 헤더만
+# 바꿔 제한을 우회할 수 있다.
+TRUSTED_PROXIES = {
+    p.strip() for p in os.environ.get("VERIFY_TRUSTED_PROXIES", "127.0.0.1,::1").split(",") if p.strip()
+}
 
 MOCK_NOTICE = "모의 시연용 시제품이며 실제 모바일신분증과 연동되지 않습니다."
 
@@ -102,6 +123,9 @@ revoke_credential_service = RevokeCredentialService(_credentials)
 create_proof_service = CreateProofService(_credentials, _proofs, _clock, ttl_seconds=PROOF_TTL_SECONDS)
 verify_proof_service = VerifyProofService(
     _issuer_registry, Ed25519SignatureVerifier(), _credentials, _proofs, _clock
+)
+rate_limited_verify_service = RateLimitedVerifyService(
+    verify_proof_service, InMemoryFailedAttemptStore(), _clock, RATE_LIMIT_POLICY
 )
 
 # 시연용 고정 자격증명 3건(전화 2 + 방문 1). 직원용 화면이 바로 고를 수 있게 기동 시 발급해둔다
@@ -147,9 +171,36 @@ def _serialize_verification(result: VerificationResult) -> dict:
     return payload
 
 
+def _client_key(request: Request) -> str:
+    """실패 횟수를 셀 클라이언트 IP. 직접 연결한 쪽이 신뢰 프록시(api)일 때만 X-Forwarded-For를
+    오른쪽부터 보며 신뢰 프록시가 아닌 첫 주소를 쓴다(그 왼쪽은 클라이언트가 마음대로 넣을 수
+    있는 값이라 믿지 않는다)."""
+    peer = request.client.host if request.client else "unknown"
+    if peer not in TRUSTED_PROXIES:
+        return peer
+    forwarded = [h.strip() for h in request.headers.get("x-forwarded-for", "").split(",") if h.strip()]
+    for hop in reversed(forwarded):
+        if hop in TRUSTED_PROXIES:
+            continue
+        try:
+            ipaddress.ip_address(hop)
+        except ValueError:
+            break
+        return hop
+    return peer
+
+
 @app.get("/health")
 async def health() -> dict:
-    return {"status": "ok", "proof_ttl_seconds": PROOF_TTL_SECONDS, "notice": MOCK_NOTICE}
+    return {
+        "status": "ok",
+        "proof_ttl_seconds": PROOF_TTL_SECONDS,
+        "rate_limit": {
+            "max_failures": RATE_LIMIT_POLICY.max_failures,
+            "window_seconds": RATE_LIMIT_POLICY.window_seconds,
+        },
+        "notice": MOCK_NOTICE,
+    }
 
 
 @app.get("/metrics")
@@ -263,18 +314,22 @@ class VerifyRequest(BaseModel):
     code: str = Field(max_length=20)
 
 
-@app.post("/api/v1/verify")
-async def verify(req: VerifyRequest) -> dict:
-    """국민이 코드를 넣어 검증한다. 어떤 실패든 200 + verified=false로 응답한다 — "확인 불가"는
-    오류가 아니라 정상적인 판정 결과다."""
+@app.post("/api/v1/verify", response_model=None)
+async def verify(req: VerifyRequest, request: Request) -> dict | JSONResponse:
+    """국민이 코드를 넣어 검증한다. 검증 실패는 200 + verified=false로 응답한다 — "확인 불가"는
+    오류가 아니라 정상적인 판정 결과다. 단 클라이언트별 실패 한도(RATE_LIMIT_POLICY)를 넘으면
+    검증하지 않고 429 + reason=rate_limited(본문 형식은 같음)로 거절한다."""
     started_at = time.perf_counter()
-    result = verify_proof_service.execute(req.code)
-    verify_duration_seconds.observe(time.perf_counter() - started_at)
+    result = rate_limited_verify_service.execute(_client_key(request), req.code)
     verify_requests_total.labels(
         result="verified" if result.verified else "unverified", reason=result.reason.value
     ).inc()
+    if result.reason == VerificationReason.RATE_LIMITED:
+        rate_limited_total.inc()
+        return JSONResponse(status_code=429, content=_serialize_verification(result))
+    verify_duration_seconds.observe(time.perf_counter() - started_at)
     return _serialize_verification(result)
 
 
-# TODO: 증명 코드 무차별 대입(10^6 공간)에 대비해 검증 요청에 속도 제한을 걸 것 — 지금은
-#       TTL(기본 180초)과 일회용 처리만으로 완화한다.
+# TODO: 실패 횟수 기록(InMemoryFailedAttemptStore)은 프로세스 메모리라 워커/인스턴스를 늘리면
+#       공유되지 않는다 — 여러 대로 늘릴 때는 같은 포트(FailedAttemptStorePort)의 Redis 구현이 필요.

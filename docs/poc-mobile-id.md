@@ -83,6 +83,7 @@
 | `credential_revoked` | 자격증명이 폐기됨 | 퇴사자 |
 | `proof_expired` | 증명 유효시간(기본 180초) 경과 | 오래된 코드 |
 | `proof_already_used` | 이미 한 번 검증에 쓰인 코드 | 재사용 시도 |
+| `rate_limited` | 같은 클라이언트가 짧은 시간에 너무 많이 틀려 검증하지 않고 거절(HTTP 429) | 무차별 대입 |
 
 **입력 실수 재시도**(api `allows_code_retry`): `code_not_found`는 사칭범일 수도, 어르신이 숫자
 하나를 잘못 누른 것일 수도 있다. 그래서 같은 통화에서 **연속 첫 번째** `code_not_found`는
@@ -103,6 +104,30 @@
 > 안에서 QR을 읽어야 한다.** 국민에게 "QR을 찍어 열린 링크를 믿으라"고 가르치면, 가짜 QR이 가짜
 > 확인 화면을 띄우는 QR 링크 피싱(큐싱)에 그대로 노출된다. 이 POC가 링크를 여는 방식을 쓴 것은
 > 휴대폰 기본 카메라만으로 시연하기 위한 편의일 뿐이다.
+
+**코드 입력 횟수 제한(무차별 대입 방어)**: 클라이언트(IP)별로 **10분에 실패 5회**를 넘으면
+다음 시도부터 검증하지 않고 **HTTP 429 + `reason: rate_limited`**로 거절한다. 환경변수
+`VERIFY_RATE_LIMIT_MAX_FAILURES`, `VERIFY_RATE_LIMIT_WINDOW_SECONDS`로 조정한다. 새 의존성 없이
+인메모리 슬라이딩 윈도우로 구현했다.
+
+- api(`POST /api/v1/calls/{call_id}/verification`)와 verify-worker(`POST /api/v1/verify`) 양쪽에
+  같은 규칙을 건다. api를 거치지 않고 verify-worker를 직접 두드려도 막힌다.
+- 국민 검증은 api를 거쳐 오므로 verify-worker에는 모든 요청이 api의 IP로 보인다. 그래서 api가
+  실제 클라이언트 IP를 `X-Forwarded-For`로 넘기고, verify-worker는 신뢰 프록시
+  (`VERIFY_TRUSTED_PROXIES`, 기본 `127.0.0.1,::1`)에서 온 요청일 때만 이 헤더를 믿는다. 아무
+  데서나 온 헤더를 믿으면 헤더만 바꿔 제한을 우회할 수 있다.
+- **"실패"는 `verified=false`인 모든 결과**다. 입력 실수 재입력 안내(`retry_allowed: true`)도
+  실패 1회로 센다. 재입력 허용은 보호자 알림을 미루는 것이지, 시도 횟수를 공짜로 주는 게
+  아니다. 성공은 세지 않고, 제한으로 거절된 시도도 다시 세지 않는다.
+- 제한에 걸리면 그 사이에 맞는 코드를 넣어도 통과시키지 않는다. 정상 증명도 소모하지 않는다.
+- 재입력 허용 규칙과의 관계: 한 번이라도 제한에 걸린 통화는 윈도우가 지나도 재입력 허용이
+  되살아나지 않는다(`allows_code_retry`).
+- 국민 화면은 429를 "잠시 후 다시 시도하세요"가 아니라 **확인 불가와 같은 빨간 화면**으로
+  보여준다. 제한에 걸릴 만큼 틀렸다면 끊는 게 맞다. 그래서 api는 이 경우에도 통화 기록과 보호자
+  알림(모의)을 확인 불가와 똑같이 남긴다.
+- 메트릭 `vps_verify_rate_limited_total`이 api와 verify-worker 양쪽에 있다. Prometheus에서는
+  job 라벨로 구분한다. verify-worker의 `vps_verify_requests_total`에도 `reason="rate_limited"`로
+  남는다.
 
 국민용 화면은 사유 코드를 보여주지 않고 두 결과만 보여준다. 사유 코드와 사람이 읽을
 문구(`message`)는 API 응답과 통화 기록, 메트릭 라벨에 남는다(N-04).
@@ -247,26 +272,62 @@ $ POST :8000/api/v1/calls/standalone/verification {"code":"673281"}
 ![09 QR 주소로 연 국민 화면(미리 채움)](images/poc/09-visit-citizen-prefilled.png)
 ![10 방문 확인됨](images/poc/10-visit-verified.png)
 
+### 코드 입력 횟수 제한 (실제 실행, 2026-10-12)
+
+api와 verify-worker를 재시작해 기록을 비운 뒤, 같은 클라이언트(127.0.0.1)에서 api로 발급된 적
+없는 코드를 6번 넣었다.
+
+```
+1: 200 code_not_found  retry_allowed=true   보호자 알림 없음   # 입력 실수 재입력 안내 — 실패 1회로 셈
+2: 200 code_not_found  retry_allowed=false  보호자 알림(모의)
+3~5: 200 code_not_found  retry_allowed=false  보호자 알림(모의)
+6: 429
+{"call_id":"live-rl-1791792328","verified":false,"reason":"rate_limited",
+ "message":"짧은 시간에 확인 코드를 너무 여러 번 틀렸습니다(무차별 대입 의심). 검증하지 않고 거절했습니다.",
+ "verified_at":"2026-10-12T08:05:28.596774+00:00","retry_allowed":false,
+ "guardian_notification":{"notification_id":"ca2c18ae-1fb5-4086-a72d-d4c105132c5f","status":"logged",…}}
+```
+
+이어서 같은 클라이언트가 api를 거치지 않고 verify-worker(`:8400/api/v1/verify`)를 직접 호출해도
+`429 rate_limited`였다. api가 넘긴 `X-Forwarded-For`로 verify-worker 쪽에도 실패 5회가 쌓였기
+때문이다. 다른 IP(`X-Forwarded-For: 198.51.100.20`)는 같은 시각에 막히지 않고 `200
+code_not_found`였다. 이때 메트릭은 api `vps_verify_rate_limited_total 1.0`, verify-worker
+`vps_verify_rate_limited_total 1.0`이었다. 국민 화면(Playwright)에서 제한에 걸린 상태로 코드를
+넣으면 429를 받고, 확인 불가와 같은 빨간 화면과 "보호자에게 알렸습니다(모의)"가 떴다. 화면은
+05번 캡처와 같아서 따로 싣지 않았다.
+
 같은 세 시나리오를 curl로만 돌리려면 `apps/verify-worker/scripts/demo_scenarios.sh`를 쓴다
 (분석 단계 없이 고정 call_id 사용).
 
 ## 4. 실측 검증 소요시간
 
 측정 환경: Intel i7-8700(12 스레드), WSL2, Python 3.14, uvicorn 단일 워커, 같은 호스트의
-루프백. 측정일 2026-10-12. warm-up 5건 후, 매번 새 증명을 만들어 `verified=true` 경로만
-경로별로 200건 순차 측정했다.
+루프백. warm-up 5건 후, 매번 새 증명을 만들어 `verified=true` 경로만 경로별로 200건 순차
+측정했다(httpx 클라이언트 1개 재사용). 두 번 측정했고, 방법은 같다.
 
-| 구간 | 평균 | p50 | p95 | 최대 |
-|---|---|---|---|---|
-| 서버 내부: 검증 유스케이스 1건 (`vps_verify_duration_seconds` 증분 sum/count) | 0.146ms | – | – | – |
-| HTTP 왕복: verify-worker `POST /api/v1/verify` 직접 | 0.96ms | 0.91ms | 1.21ms | 2.08ms |
-| HTTP 왕복: api `POST /api/v1/calls/{id}/verification` 경유 | 8.73ms | 8.72ms | 9.44ms | 10.17ms |
+| 구간 | 측정 | 평균 | p50 | p95 | 최대 |
+|---|---|---|---|---|---|
+| 서버 내부: 검증 1건 (`vps_verify_duration_seconds` 증분 sum/count) | 1차 | 0.146ms | – | – | – |
+| | **2차** | **0.180ms** | – | – | – |
+| HTTP 왕복: verify-worker `POST /api/v1/verify` 직접 | 1차 | 0.96ms | 0.91ms | 1.21ms | 2.08ms |
+| | **2차** | **1.03ms** | **0.98ms** | **1.33ms** | **1.59ms** |
+| HTTP 왕복: api `POST /api/v1/calls/{id}/verification` 경유 | 1차 | 8.73ms | 8.72ms | 9.44ms | 10.17ms |
+| | **2차** | **9.63ms** | **9.24ms** | **11.03ms** | **41.02ms** |
 
+- **1차**(2026-10-12, 작업 3·4 전): 서명과 검증이 한 어댑터에 있고, 속도 제한은 없었다. api는
+  당시 브랜치 코드를 8010 포트에 따로 띄워 쟀다.
+- **2차**(2026-10-12, 작업 3·4 후): 공개키 레지스트리 조회 + 공개키 검증(2장)으로 바뀌었다.
+  verify-worker와 api 양쪽에 실패 횟수 제한이 붙었고, api는 systemd로 띄운 8000 포트를 쟀다.
+  서버 내부 시간은 2차부터 실패 횟수 제한 확인(인메모리 조회)을 포함한다. 히스토그램 관측
+  위치가 제한 확인을 감싸는 유스케이스로 옮겨졌기 때문이다.
+- 1차와 2차의 차이가 구조 변경 때문인지 실행마다 생기는 편차인지는 가르지 않았다(각 1회
+  측정). 2차 api 경유 최대값 41.02ms는 200건 중 1건이고, 원인은 확인하지 않았다.
 - 서버 내부 시간은 코드 조회, Ed25519 서명 검증, 폐기/만료/사용 확인을 합친 값이다.
   히스토그램이라 p50/p95는 버킷 경계로만 알 수 있어서 평균만 적었다.
 - api 경유가 약 8ms 더 걸리는 원인은 측정하지 않았다(api→verify-worker 호출마다 httpx
   연결을 새로 맺는 비용과 스레드풀 전환이 후보).
-- 동시 요청, 실패 경로(`code_not_found` 등), 다른 하드웨어에서는 측정하지 않았다.
+- 동시 요청, 실패 경로(`code_not_found`, `rate_limited` 등), 다른 하드웨어에서는 측정하지
+  않았다.
 
 ## 5. 범위와 한계
 
@@ -285,8 +346,17 @@ $ POST :8000/api/v1/calls/standalone/verification {"code":"673281"}
   휴대폰에서 열려면 QR 주소와 api 주소를 휴대폰이 닿는 주소로 바꿔 띄워야 한다(README).
 - **인증 없음**: verify-worker의 발급/폐기/증명 생성 엔드포인트에는 RBAC를 걸지 않았다(로컬
   시연 범위). api의 검증 엔드포인트는 기존과 같이 HANDLER 키가 필요하다.
-- **무차별 대입**: 6자리 코드(10^6)에 대한 속도 제한이 없다. TTL(기본 180초)과 일회용
-  처리로만 완화한다.
+- **무차별 대입 방어는 IP 단위·인메모리**: 클라이언트 IP별 실패 횟수 제한(10분 5회, 2장)을
+  api와 verify-worker에 걸었다. 다만 다음은 다루지 않았다.
+  - IP를 바꿔 가며 시도하는 분산 대입
+  - 같은 IP를 쓰는 여러 사람(공용 NAT)이 서로의 한도를 깎는 문제
+  - 워커/인스턴스가 여러 개일 때 기록 공유: 지금은 프로세스 메모리라 재시작하면 초기화된다.
+    여러 대로 늘리려면 같은 포트의 Redis 구현이 필요하다.
+  - 동시 요청: 확인과 기록이 한 번에 묶여 있지 않아, 한꺼번에 몰리면 한도를 몇 번 넘을 수 있다.
+  - 오래 조용한 IP 기록의 정리: 조회할 때만 지운다.
+
+  실제 구조라면 계정·기기 단위 제한과 공유 저장소가 필요하다. 로컬에서 시연을 여러 번 반복하면
+  같은 IP(127.0.0.1)에 실패가 쌓여 429가 날 수 있다(README 시연 안내 참고).
 - **검증 기록 영속화 없음**: 통화별 신원확인 기록은 api 메모리에만 있다. 감사증적 테이블
   (`call_analysis_results`)이 append-only라 UPDATE로 붙일 수 없어서, 영속화하려면 별도
   append-only 테이블을 추가해야 한다.
