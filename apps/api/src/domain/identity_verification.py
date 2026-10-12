@@ -44,7 +44,7 @@ def decide_verification_prompt(result: CallAnalysisResult) -> VerificationPrompt
     return VerificationPrompt(
         required=True,
         message=(
-            f"{evidence} 상대방에게 신원확인 코드를 요청해 실제 기관 직원인지 확인하세요. "
+            f"{evidence} 상대방에게 '확인 코드'를 불러 달라고 해서 실제 기관 직원인지 확인하세요. "
             "확인되기 전에는 송금, 앱 설치, 개인정보 제공을 하지 마세요."
         ),
     )

@@ -5,7 +5,7 @@
 //   확인 불가면 보호자 알림(mock)을 남기는 건 api의 책임이기 때문이다
 //   (apps/api/src/main.py verify_call_identity 참고).
 
-import { ApiError } from "@/lib/api";
+import { ApiError, type IdentityVerification } from "@/lib/api";
 
 const VERIFY_WORKER_URL = process.env.NEXT_PUBLIC_VERIFY_WORKER_URL ?? "http://localhost:8400";
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
@@ -33,18 +33,7 @@ export interface CreatedProof {
   ttl_seconds: number;
 }
 
-export interface CallVerification {
-  call_id: string;
-  verified: boolean;
-  reason: string;
-  message: string;
-  verified_at: string;
-  institution_name?: string;
-  staff_display_name?: string;
-  purpose?: string;
-  expires_at?: string;
-  guardian_notification: { notification_id: string; status: string; note: string } | null;
-}
+export type CallVerification = IdentityVerification;
 
 async function parseErrorDetail(res: Response): Promise<string> {
   try {

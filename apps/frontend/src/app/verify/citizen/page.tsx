@@ -67,6 +67,20 @@ function VerifiedResult({ result }: { result: CallVerification }) {
         <dt style={{ fontWeight: 700 }}>목적</dt>
         <dd style={{ margin: 0 }}>{result.purpose}</dd>
       </dl>
+      {/* "확인됨"은 "이 사람이 그 기관 직원"까지만 보증한다 — "시키는 대로 해도 된다"로 읽히지
+          않도록, 진짜 직원이라도 끊어야 하는 요구를 결과 화면 안에 함께 적는다. */}
+      <p
+        style={{
+          margin: "20px 0 0",
+          padding: "12px 14px",
+          borderRadius: "10px",
+          background: "rgba(0, 0, 0, 0.22)",
+          fontWeight: 700,
+        }}
+      >
+        <span aria-hidden="true">⚠ </span>직원이 맞아도 송금, 비밀번호, 앱 설치를 요구하면 전화를 끊으세요. 통화
+        내용이 위 목적과 다를 때도 끊으세요.
+      </p>
     </ResultPanel>
   );
 }
@@ -76,6 +90,7 @@ function UnverifiedResult({ result }: { result: CallVerification }) {
     <ResultPanel tone="fail" icon="✖" label="확인 불가">
       <p style={resultHeadlineStyle}>확인되지 않았습니다. 전화를 끊으세요</p>
       <p style={{ margin: 0 }}>돈을 보내거나 앱을 설치하지 마세요.</p>
+      <p style={{ margin: "8px 0 0" }}>궁금하면 그 기관의 대표번호로 직접 전화해 확인하세요.</p>
       {result.guardian_notification && (
         <p style={{ margin: "16px 0 0", fontWeight: 700 }}>
           <span aria-hidden="true">📨 </span>보호자에게 알렸습니다(모의)
@@ -92,17 +107,19 @@ function CitizenVerify() {
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<CallVerification | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (code.length !== 6) return;
     setLoading(true);
-    setError(null);
+    setFailed(false);
     try {
       setResult(await verifyCallIdentity(callId, code));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "확인 요청에 실패했습니다.");
+      // 서버 오류 상세(실행 명령 등 개발자용 안내)는 국민 화면에 보여주지 않고 콘솔에만 남긴다.
+      console.error("신원확인 요청 실패:", err instanceof ApiError ? err.message : err);
+      setFailed(true);
     } finally {
       setLoading(false);
     }
@@ -111,7 +128,7 @@ function CitizenVerify() {
   function reset() {
     setCode("");
     setResult(null);
-    setError(null);
+    setFailed(false);
   }
 
   if (result) {
@@ -127,7 +144,7 @@ function CitizenVerify() {
 
   // 시스템 오류(서버 꺼짐 등)는 "확인 불가(빨강)"와 섞지 않는다 — 검증 자체를 못 한 것이지
   // 상대가 사칭범으로 판정된 게 아니다. 대신 확인 전까지 송금하지 말라는 안내는 똑같이 준다.
-  if (error) {
+  if (failed) {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
         <section
@@ -137,8 +154,7 @@ function CitizenVerify() {
           <p style={{ margin: 0, fontSize: "32px", fontWeight: 800 }}>
             <span aria-hidden="true">⚠ </span>지금은 확인할 수 없습니다
           </p>
-          <p style={{ margin: "12px 0 0" }}>확인되기 전에는 돈을 보내지 마세요.</p>
-          <p style={{ margin: "12px 0 0", color: "var(--text-secondary)", wordBreak: "break-all" }}>{error}</p>
+          <p style={{ margin: "12px 0 0" }}>잠시 후 다시 시도하세요. 확인되기 전에는 돈을 보내지 마세요.</p>
         </section>
         <button type="button" className="verify-primary-button" onClick={reset}>
           다시 시도
@@ -153,8 +169,13 @@ function CitizenVerify() {
         <p style={{ margin: 0, color: "var(--text-secondary)" }}>국민용 · 모의 시연</p>
         <h1 style={{ margin: "4px 0 0", fontSize: "32px", lineHeight: 1.35 }}>전화한 사람이 진짜 직원인지 확인하기</h1>
       </header>
+      <p style={{ margin: 0 }}>
+        <strong>1.</strong> 전화한 사람에게 <strong>&ldquo;확인 코드를 불러 주세요&rdquo;</strong>라고 말하세요.
+      </p>
       <label style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-        <span>상대방에게 받은 숫자 6자리를 입력하세요</span>
+        <span>
+          <strong>2.</strong> 불러 준 확인 코드 6자리를 입력하세요.
+        </span>
         <input
           value={code}
           onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
@@ -175,6 +196,9 @@ function CitizenVerify() {
           }}
         />
       </label>
+      <p style={{ margin: 0, color: "var(--status-critical)", fontWeight: 700 }}>
+        <span aria-hidden="true">⚠ </span>확인 코드를 못 대거나 둘러대면 사칭일 수 있습니다. 전화를 끊으세요.
+      </p>
       <button type="submit" className="verify-primary-button" disabled={loading || code.length !== 6}>
         {loading ? "확인 중…" : "확인하기"}
       </button>

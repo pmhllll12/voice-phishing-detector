@@ -69,11 +69,29 @@ export interface CallAnalysis {
   // 문구가 온다(apps/api/src/domain/identity_verification.py). 이 필드가 생기기 전 api와도
   // 동작하도록 optional로 둔다.
   verification_prompt?: VerificationPrompt;
+  // 이 통화에 붙은 신원확인 결과(오래된 것부터). 국민용 화면에서 검증하면 여기에 쌓이고,
+  // 대시보드 최근 탐지 목록이 마지막 결과를 배지로 보여준다(RecentCallsTable 참고).
+  identity_verifications?: IdentityVerification[];
 }
 
 export interface VerificationPrompt {
   required: boolean;
   message?: string;
+}
+
+// apps/api _serialize_verification_record와 같은 형식. verified=true일 때만 기관명/마스킹된
+// 성명/목적/만료시각이 온다.
+export interface IdentityVerification {
+  call_id: string;
+  verified: boolean;
+  reason: string;
+  message: string;
+  verified_at: string;
+  institution_name?: string;
+  staff_display_name?: string;
+  purpose?: string;
+  expires_at?: string;
+  guardian_notification: { notification_id: string; status: string; note: string } | null;
 }
 
 export interface CategoryCount {

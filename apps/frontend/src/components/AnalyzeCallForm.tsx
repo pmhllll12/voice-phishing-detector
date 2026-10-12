@@ -81,6 +81,9 @@ export function AnalyzeCallForm({ onAnalyzed }: { onAnalyzed: () => void }) {
 
     setTextLoading(true);
     setTextError(null);
+    // 이전 통화의 신원확인 안내/링크가 새 결과가 올 때까지 남아 있으면, 그 링크로 들어가 검증한
+    // 결과가 엉뚱한(이전) 통화 기록에 붙는다 — 새 분석을 시작하는 순간 지운다.
+    setLastAnalysis(null);
     try {
       setLastAnalysis(await analyzeCall(trimmed));
       setTranscript("");
@@ -118,6 +121,7 @@ export function AnalyzeCallForm({ onAnalyzed }: { onAnalyzed: () => void }) {
         stream.getTracks().forEach((track) => track.stop());
         const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
         setAudioLoading(true);
+        setLastAnalysis(null);
         try {
           setLastAnalysis(await analyzeCallAudio(blob));
           onAnalyzed();
