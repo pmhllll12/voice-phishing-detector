@@ -3,4 +3,4 @@
 fastapi
 uvicorn[standard]
 prometheus-client
-cryptography        # 모의 기관 자격증명의 Ed25519 서명/검증 (infrastructure/adapters/ed25519_signer.py 참고)
+cryptography        # 모의 기관 자격증명의 Ed25519 서명/검증 (infrastructure/adapters/ed25519_issuer_signer.py, ed25519_verifier.py 참고)

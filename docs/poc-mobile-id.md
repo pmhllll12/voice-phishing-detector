@@ -28,8 +28,9 @@
 │ domain        Credential / Proof / VerificationResult           │  │ domain                   │
 │               사유 코드(N-04), 성명 마스킹(김○○)                 │  │  decide_verification_    │
 │ application   발급 / 폐기 / 증명 생성 / 검증 유스케이스           │◄─┤  prompt()  ← F-01 결과   │
-│ infrastructure Ed25519 서명 어댑터(모의 키, 메모리)               │⑤ │ application              │
-│               인메모리 저장소(자격증명, 폐기 목록, 증명)          │  │  CallVerificationService │
+│ infrastructure 발급 측: Ed25519 기관별 개인키(모의 키, 메모리)     │⑤ │ application              │
+│               검증 측: 공개키 레지스트리 + 공개키 검증기          │  │  CallVerificationService │
+│               인메모리 저장소(자격증명, 폐기 목록, 증명)          │  │                          │
 │               FastAPI, /metrics (vps_verify_*)                  │  │ infrastructure           │
 └─────────────────────────────────────────────────────────────────┘  │  verify-worker 클라이언트 │
      ▲                                                               │  보호자 알림 mock         │
@@ -38,7 +39,37 @@
  ⑤ api가 /api/v1/verify 호출 → 결과를 call_id 통화 기록에 붙임 → 확인 불가면 보호자 알림(mock)
 ```
 
-검증 판정 순서(`VerifyProofService`): **코드 없음 → 서명 불일치 → 폐기 → 만료 → 이미 사용됨**.
+### 발급(서명)과 검증(공개키)의 분리
+
+모의 발급 기관은 3곳이고 기관마다 서로 다른 Ed25519 키쌍을 갖는다.
+
+| `issuer_id` | 기관 | 시드 자격증명 |
+|---|---|---|
+| `mock-bank` | ○○은행(모의) | `demo-bank-staff` 김민수, 대출상담 직원 |
+| `mock-district` | △△구청(모의) | `demo-district-staff` 이영희, 복지 담당 주무관 |
+| `mock-gas` | □□도시가스(모의) | `demo-gas-staff` 박준호, 안전점검원(방문 시나리오) |
+
+```
+ 발급 측                                         검증 측
+ IssueCredentialService                          VerifyProofService
+   └ IssuerSigningPort.sign(issuer_id, …)          ├ IssuerPublicKeyRegistryPort.get_public_key(issuer_id)
+       = Ed25519IssuerSigner (개인키 보유)          └ SignatureVerifierPort.verify(public_key, …)
+            │ 기동 시 공개키 바이트만 등록                 = Ed25519SignatureVerifier (상태 없음)
+            ▼
+   InMemoryIssuerPublicKeyRegistry (공개키 + 기관 정보만) ── GET /api/v1/issuers
+                                                         GET /api/v1/issuers/{issuer_id}/public-key
+```
+
+- 자격증명에 `issuer_id`가 들어가고 서명 대상에도 포함된다. 발급 기관을 바꿔치기하면 서명이
+  깨진다.
+- 검증 유스케이스는 서명 포트를 생성자 인자로 받지 않는다. 그래서 코드 구조상 개인키에 닿을 수
+  없다. 레지스트리는 `register(issuer, public_key: bytes)`로 공개키 바이트만 받는다.
+- 검증 측이 레지스트리 객체를 공유하지 않고 공개키 바이트 사본만 받아도 검증되는 것을 테스트로
+  고정했다(`test_verification_needs_only_public_key_copy`).
+- 레지스트리 응답은 공개키를 raw(hex)와 PEM으로 함께 주고, 모의 키라는 고지를 붙인다.
+
+검증 판정 순서(`VerifyProofService`): **코드 없음 → 발급 기관 불명 → 서명 불일치 → 폐기 → 만료 →
+이미 사용됨**.
 하나라도 걸리면 `verified=false`이고 사유 코드만 다르다. 서명을 먼저 보는 이유는, 위·변조된
 자격증명이 "만료" 같은 가벼운 사유로 가려지지 않게 하기 위해서다. 사용 처리는 모든 검사를
 통과한 뒤에만 한다(실패한 시도가 정상 증명을 소모하지 않음).
@@ -47,7 +78,8 @@
 |---|---|---|
 | `verified` | 서명·폐기·만료·사용 여부 모두 통과 | 정상 직원 |
 | `code_not_found` | 그 코드로 발급된 증명이 없음 | 사칭범 |
-| `signature_invalid` | 자격증명 내용과 기관 서명이 불일치 | 위·변조 |
+| `issuer_unknown` | 자격증명이 주장하는 발급 기관(`issuer_id`)이 공개키 레지스트리에 없음 | 출처 불명 자격증명 |
+| `signature_invalid` | 자격증명 내용과 기관 서명이 불일치(다른 기관 키로 서명된 경우 포함) | 위·변조 |
 | `credential_revoked` | 자격증명이 폐기됨 | 퇴사자 |
 | `proof_expired` | 증명 유효시간(기본 180초) 경과 | 오래된 코드 |
 | `proof_already_used` | 이미 한 번 검증에 쓰인 코드 | 재사용 시도 |
@@ -155,6 +187,9 @@ $ POST :8000/api/v1/calls/9a76146f-5907-4204-9e2d-f8b70324471f/verification {"co
 
 ### 시나리오 3: 퇴사자 (증명 생성 → 폐기 → 검증) → 확인 불가
 
+(이 실행 이후 발급·검증 분리(2장)로 자격증명 응답에 `"issuer_id":"mock-bank"` 필드가 추가됐다.
+기관명으로 발급하는 아래 요청은 그대로 받는다. 등록된 모의 기관과 대응시키는 방식이다.)
+
 직원용 화면에는 폐기 버튼이 없어서, 발급·증명 생성·폐기는 verify-worker API를 직접 호출했다.
 시드 자격증명(`demo-bank-staff`)은 폐기하지 않고 새로 발급한 것을 폐기했다. 그 뒤 새로 분석한
 통화의 국민용 화면에 코드를 넣었다.
@@ -236,9 +271,14 @@ $ POST :8000/api/v1/calls/standalone/verification {"code":"673281"}
 ## 5. 범위와 한계
 
 - **실제 연동 없음**: 모바일신분증, 기관 인사 시스템, 문자/푸시 발송과 연동하지 않는다.
-- **키 관리**: 모의 기관 개인키를 verify-worker 메모리에 두고 검증도 같은 프로세스가 한다.
-  실제 구조라면 검증 측은 기관 공개키 레지스트리만 조회해야 한다. 재시작하면 키와 기록이
-  전부 사라진다.
+- **키 관리**: 모의 기관 3곳이 각자 다른 Ed25519 키쌍을 갖는다. 발급 유스케이스는 개인키 서명
+  포트만, 검증 유스케이스는 공개키 레지스트리와 공개키 검증기만 받도록 포트를 나눴다(2장).
+  다만 분리는 코드 구조 수준이다. 발급 측과 검증 측이 같은 verify-worker 프로세스 안에 있고,
+  개인키와 공개키 레지스트리 모두 **메모리에만 있어서 재시작하면 키와 기록이 전부 새로
+  만들어지거나 사라진다**. 키 보관(HSM 등), 키 교체(rotation), 레지스트리 자체의 진위 보증(누가
+  레지스트리에 기관을 등록할 수 있는가)은 다루지 않았다. 레지스트리에 없는 기관은
+  `issuer_unknown`, 다른 기관 키로 서명된 자격증명은 `signature_invalid`로 떨어지는 것을 단위
+  테스트로 확인했다. API로는 그런 자격증명을 만들 수 없어서 라이브 실행으로는 재현하지 않았다.
 - **QR은 링크 방식(시연용)**: 방문 QR은 국민용 화면 주소를 담고 휴대폰 기본 카메라로 연다.
   실제 구조라면 정부 앱 안에서만 QR을 읽어야 한다(2장 "실제 구조와의 차이"). 카메라 스캔 기능은
   만들지 않았고, 휴대폰 실기기로 QR을 읽는 경로는 확인하지 않았다(브라우저로 주소를 열어 확인함).

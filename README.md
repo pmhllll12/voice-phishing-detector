@@ -320,7 +320,7 @@ uvicorn src.main:app --port 8300
 cd apps/verify-worker
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
-pytest -q                               # 시연 시나리오 3개 + 만료/재사용/서명변조 등 13건
+pytest -q                               # 시연 시나리오 3개 + 만료/재사용/서명변조 + 발급·검증 분리 등 24건
 uvicorn src.main:app --port 8400        # 증명 유효시간 조정: PROOF_TTL_SECONDS=60 uvicorn ...
 ```
 

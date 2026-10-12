@@ -34,6 +34,7 @@ export const MOCK_NOTICE = "모의 시연 화면이며 실제 모바일신분증
 
 export interface StaffCredential {
   credential_id: string;
+  issuer_id: string; // 발급 모의 기관(GET /api/v1/issuers의 공개키 레지스트리 항목)
   institution_name: string;
   staff_display_name: string;
   role: string;

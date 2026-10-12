@@ -2,11 +2,16 @@
 #
 # 이 서비스는 실제 모바일신분증 시스템과 연동하지 않는, 구조만 모사한 시제품이다.
 # 발급 기관은 전부 "○○은행(모의)" 같은 가상 기관이고, 서명 키는 기동 시 메모리에서
-# 만든 모의 키다(infrastructure/adapters/ed25519_signer.py 참고).
+# 만든 모의 키다(infrastructure/adapters/ed25519_issuer_signer.py 참고).
 #
 # 헥사고날 계층 구성: domain(Credential/Proof/VerificationResult, 포트 인터페이스)
 # -> application(발급/증명 생성/검증/폐기 유스케이스) -> infrastructure(인메모리 저장소,
-# Ed25519 서명 어댑터, 이 FastAPI 진입점).
+# Ed25519 발급 서명/검증 어댑터, 공개키 레지스트리, 이 FastAPI 진입점).
+#
+# 발급과 검증의 분리: 모의 기관(MOCK_ISSUERS)마다 키쌍을 따로 만들고, 개인키는 발급 서명
+# 어댑터만, 공개키는 레지스트리만 갖는다. 발급 유스케이스는 서명 어댑터를, 검증 유스케이스는
+# 레지스트리 + 공개키 검증기만 받는다(아래 조립 참고). 레지스트리는 GET /api/v1/issuers로
+# 공개한다. 한 프로세스 안에서 나눈 것이라 "물리적" 분리는 아니다(docs/poc-mobile-id.md 5장).
 #
 # 흐름: 모의 기관이 직원에게 자격증명 발급(POST /credentials)
 #   -> 직원이 통화/방문 중 일회용 증명 생성(POST /proofs, 6자리 코드)
@@ -36,8 +41,20 @@ from src.application.services import (
     RevokeCredentialService,
     VerifyProofService,
 )
-from src.domain.entities import Credential, CredentialNotFoundError, CredentialRevokedError, VerificationResult
-from src.infrastructure.adapters.ed25519_signer import Ed25519CredentialSigner
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+from src.domain.entities import (
+    Credential,
+    CredentialNotFoundError,
+    CredentialRevokedError,
+    Issuer,
+    IssuerNotFoundError,
+    VerificationResult,
+)
+from src.infrastructure.adapters.ed25519_issuer_signer import Ed25519IssuerSigner
+from src.infrastructure.adapters.ed25519_verifier import Ed25519SignatureVerifier
+from src.infrastructure.adapters.in_memory_issuer_registry import InMemoryIssuerPublicKeyRegistry
 from src.infrastructure.adapters.in_memory_repository import (
     InMemoryCredentialRepository,
     InMemoryProofRepository,
@@ -64,26 +81,39 @@ app = FastAPI(title="Voice Phishing Detector — Verify Worker (모의 시제품
 # 직원용 화면(/verify/staff)이 이 서비스를 직접 호출한다.
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-_signer = Ed25519CredentialSigner()
+# 모의 발급 기관. 기관마다 서로 다른 Ed25519 키쌍을 기동 시 만든다 — 전부 가상 기관이다.
+MOCK_ISSUERS = [
+    Issuer("mock-bank", "○○은행(모의)"),
+    Issuer("mock-district", "△△구청(모의)"),
+    Issuer("mock-gas", "□□도시가스(모의)"),
+]
+
+_issuer_signer = Ed25519IssuerSigner()  # 발급 측: 개인키
+_issuer_registry = InMemoryIssuerPublicKeyRegistry()  # 검증 측: 공개키만
+for _issuer in MOCK_ISSUERS:
+    _issuer_registry.register(_issuer, _issuer_signer.create_key(_issuer.issuer_id))
+
 _credentials = InMemoryCredentialRepository()
 _proofs = InMemoryProofRepository()
 _clock = SystemClock()
 
-issue_credential_service = IssueCredentialService(_signer, _credentials, _clock)
+issue_credential_service = IssueCredentialService(_issuer_signer, _issuer_registry, _credentials, _clock)
 revoke_credential_service = RevokeCredentialService(_credentials)
 create_proof_service = CreateProofService(_credentials, _proofs, _clock, ttl_seconds=PROOF_TTL_SECONDS)
-verify_proof_service = VerifyProofService(_signer, _credentials, _proofs, _clock)
+verify_proof_service = VerifyProofService(
+    _issuer_registry, Ed25519SignatureVerifier(), _credentials, _proofs, _clock
+)
 
 # 시연용 고정 자격증명 3건(전화 2 + 방문 1). 직원용 화면이 바로 고를 수 있게 기동 시 발급해둔다
 # — 이름도 기관도 전부 가상이다. 퇴사자 시나리오는 이 둘을 폐기하지 말고 새로 발급해서 시연할 것
 # (README "역방향 신원확인 POC" 시연 순서 참고).
 DEMO_CREDENTIALS = [
-    ("demo-bank-staff", "○○은행(모의)", "김민수", "대출상담 직원"),
-    ("demo-district-staff", "△△구청(모의)", "이영희", "복지 담당 주무관"),
-    ("demo-gas-staff", "□□도시가스(모의)", "박준호", "안전점검원"),  # 방문 시나리오(QR)
+    ("demo-bank-staff", "mock-bank", "김민수", "대출상담 직원"),
+    ("demo-district-staff", "mock-district", "이영희", "복지 담당 주무관"),
+    ("demo-gas-staff", "mock-gas", "박준호", "안전점검원"),  # 방문 시나리오(QR)
 ]
-for _cid, _inst, _name, _role in DEMO_CREDENTIALS:
-    issue_credential_service.execute(_inst, _name, _role, credential_id=_cid)
+for _cid, _issuer_id, _name, _role in DEMO_CREDENTIALS:
+    issue_credential_service.execute(_issuer_id, _name, _role, credential_id=_cid)
 
 
 def _serialize_credential(credential: Credential) -> dict:
@@ -91,6 +121,7 @@ def _serialize_credential(credential: Credential) -> dict:
     (서명은 비밀이 아니다). 국민용 검증 응답에는 이 함수를 쓰지 않는다."""
     return {
         "credential_id": credential.credential_id,
+        "issuer_id": credential.issuer_id,
         "institution_name": credential.institution_name,
         "staff_display_name": credential.staff_display_name,
         "role": credential.role,
@@ -126,19 +157,66 @@ async def metrics_endpoint() -> PlainTextResponse:
     return PlainTextResponse(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
+def _serialize_issuer(issuer: Issuer) -> dict:
+    """공개키 레지스트리 항목. 공개키는 비밀이 아니므로 그대로 공개한다 — raw(hex)와 PEM 둘 다
+    준다. 모의 기관의 모의 키라는 고지를 응답마다 붙인다."""
+    raw = _issuer_registry.get_public_key(issuer.issuer_id) or b""
+    pem = Ed25519PublicKey.from_public_bytes(raw).public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo)
+    return {
+        "issuer_id": issuer.issuer_id,
+        "institution_name": issuer.institution_name,
+        "algorithm": "Ed25519",
+        "public_key_hex": raw.hex(),
+        "public_key_pem": pem.decode("ascii"),
+        "notice": MOCK_NOTICE,
+    }
+
+
+@app.get("/api/v1/issuers")
+async def list_issuers() -> dict:
+    """공개키 레지스트리: 등록된 모의 발급 기관과 각 공개키. 검증 측이 조회하는 정보다."""
+    return {"issuers": [_serialize_issuer(i) for i in _issuer_registry.list_issuers()]}
+
+
+@app.get("/api/v1/issuers/{issuer_id}/public-key")
+async def get_issuer_public_key(issuer_id: str) -> dict:
+    issuer = _issuer_registry.get_issuer(issuer_id)
+    if issuer is None:
+        raise HTTPException(status_code=404, detail=f"등록되지 않은 발급 기관입니다: {issuer_id}")
+    return _serialize_issuer(issuer)
+
+
 class IssueCredentialRequest(BaseModel):
-    institution_name: str = Field(min_length=1, max_length=50)
+    # issuer_id(권장) 또는 institution_name(기존 호출 호환) 중 하나. institution_name만 오면
+    # 등록된 모의 기관 중 같은 이름을 찾아 쓴다.
+    issuer_id: str | None = Field(default=None, max_length=50)
+    institution_name: str | None = Field(default=None, min_length=1, max_length=50)
     staff_display_name: str = Field(min_length=1, max_length=30)
     role: str = Field(min_length=1, max_length=50)
 
 
+def _resolve_issuer_id(req: IssueCredentialRequest) -> str:
+    if req.issuer_id:
+        return req.issuer_id
+    if req.institution_name:
+        for issuer in _issuer_registry.list_issuers():
+            if issuer.institution_name == req.institution_name:
+                return issuer.issuer_id
+    registered = ", ".join(f"{i.issuer_id}({i.institution_name})" for i in _issuer_registry.list_issuers())
+    raise HTTPException(
+        status_code=422,
+        detail=f"등록된 모의 발급 기관이 아닙니다. issuer_id 또는 기관명으로 다음 중 하나를 지정하세요: {registered}",
+    )
+
+
 @app.post("/api/v1/credentials")
 async def issue_credential(req: IssueCredentialRequest) -> dict:
-    """모의 기관이 직원에게 재직 자격증명을 서명해 발급한다. 기관명에 "(모의)"가 없으면 422."""
+    """모의 기관이 직원에게 재직 자격증명을 서명해 발급한다. 등록된 모의 기관(GET /api/v1/issuers)만
+    발급할 수 있고, 그 밖의 기관(예: "(모의)" 표시 없는 기관명)은 422."""
     try:
-        credential = issue_credential_service.execute(req.institution_name, req.staff_display_name, req.role)
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e)) from e
+        credential = issue_credential_service.execute(_resolve_issuer_id(req), req.staff_display_name, req.role)
+    except IssuerNotFoundError as e:
+        raise HTTPException(status_code=422, detail=f"등록되지 않은 발급 기관입니다: {e}") from e
     return _serialize_credential(credential)
 
 
@@ -198,6 +276,5 @@ async def verify(req: VerifyRequest) -> dict:
     return _serialize_verification(result)
 
 
-# TODO: 실제 구조로 옮긴다면 (1) 검증 측이 개인키 없이 기관 공개키 레지스트리만 조회하도록
-#       서명/검증 어댑터를 분리하고, (2) 증명 코드 무차별 대입(10^6 공간)에 대비해 검증
-#       요청에 속도 제한을 걸 것 — 지금은 TTL(기본 180초)과 일회용 처리만으로 완화한다.
+# TODO: 증명 코드 무차별 대입(10^6 공간)에 대비해 검증 요청에 속도 제한을 걸 것 — 지금은
+#       TTL(기본 180초)과 일회용 처리만으로 완화한다.
