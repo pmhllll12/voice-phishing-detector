@@ -117,6 +117,11 @@ function IdentityVerificationSection({ call, onVerified }: { call: CallAnalysis;
   );
 }
 
+// 역방향 신원확인 시연용 예시. 분석 결과가 신원확인 대상(기관사칭 또는 고위험)이어야 아래
+// 직원/고객 패널이 뜨므로, 기관사칭 + 긴급송금유도가 분명한 문장을 쓴다(합성 문장, 실제 통화 아님).
+const AUTHORITY_IMPERSONATION_EXAMPLE =
+  "서울중앙지검 수사관입니다. 고객님 명의 계좌가 범죄에 연루돼 안전계좌로 이체하셔야 합니다";
+
 export function AnalyzeCallForm({ onAnalyzed }: { onAnalyzed: () => void }) {
   const [transcript, setTranscript] = useState("");
   const [lastAnalysis, setLastAnalysis] = useState<CallAnalysis | null>(null);
@@ -256,10 +261,35 @@ export function AnalyzeCallForm({ onAnalyzed }: { onAnalyzed: () => void }) {
             {audioLoading ? "음성 분석 중…" : isRecording ? "■ 녹음 중지" : "🎤 음성으로 분석"}
           </button>
 
+          <button
+            type="button"
+            onClick={() => setTranscript(AUTHORITY_IMPERSONATION_EXAMPLE)}
+            disabled={textLoading}
+            style={{
+              padding: "8px 16px",
+              borderRadius: "6px",
+              border: "1px dashed var(--series-1)",
+              background: "transparent",
+              color: "var(--series-1)",
+              fontSize: "14px",
+              cursor: textLoading ? "default" : "pointer",
+            }}
+          >
+            기관사칭 예시 넣기
+          </button>
+
           {textError && <span style={{ color: "var(--status-critical)", fontSize: "13px" }}>{textError}</span>}
           {audioError && <span style={{ color: "var(--status-critical)", fontSize: "13px" }}>{audioError}</span>}
         </div>
       </form>
+      {/* 신원확인 패널은 분석 결과가 대상일 때만 뜨므로, 그 전에는 기능이 있다는 걸 알 수 없다 —
+          패널이 떠 있지 않을 때만 이 안내를 보여준다. */}
+      {!lastAnalysis?.verification_prompt?.required && (
+        <p style={{ margin: 0, fontSize: "13px", color: "var(--text-secondary)" }}>
+          🪪 기관사칭이 의심되는 통화는 분석 결과 아래에서 <strong>상대 신원 확인(모의)</strong>까지 시연할 수
+          있습니다 — &ldquo;기관사칭 예시 넣기&rdquo; → &ldquo;텍스트로 분석하기&rdquo;를 눌러 보세요.
+        </p>
+      )}
       {lastAnalysis && <IdentityVerificationSection call={lastAnalysis} onVerified={onAnalyzed} />}
     </div>
   );
