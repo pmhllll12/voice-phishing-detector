@@ -148,6 +148,14 @@ export default function LandingPage() {
             href="/dashboard"
           />
           <ProjectCard
+            path="~/projects/personal/mini-mes"
+            title="미니 MES — 생산실적·OEE·이상탐지"
+            description="가상 설비 데이터로 생산실적·OEE·품질이력을 집계하고, Isolation Forest 이상탐지와 자연어 질의(LLM 도구 호출)를 붙인 개인 프로젝트. Terraform으로 만든 Oracle Cloud ARM VM의 K3s에 Helm으로 배포해 운영 중."
+            tags={["FastAPI", "PostgreSQL", "K3s/Helm", "Terraform", "Prometheus/Grafana", "Isolation Forest"]}
+            href="https://mes.pmhllll12.cloud/"
+            external
+          />
+          <ProjectCard
             path="~/projects/team/supersub"
             title="SUPERSUB"
             description="← 팀 프로젝트 한 줄 설명을 여기에 넣으세요 (예: 4인 팀 프로젝트, 담당 역할 포함)."
