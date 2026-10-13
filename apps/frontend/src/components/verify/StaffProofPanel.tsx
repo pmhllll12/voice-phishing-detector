@@ -5,13 +5,34 @@
 // 일회용 증명(6자리 코드)을 만들고, 그 코드를 국민에게 말로 불러준다(어디로도 전송하지 않음 —
 // 버튼 이름을 "증명 보내기"에서 "확인 코드 만들기"로 바꾼 이유). 국민은 /verify/citizen에서
 // 코드를 입력해 확인한다. 자격증명은 verify-worker가 기동 시 시드한 모의 기관 것들이다.
+//
+// 방문 시나리오: 코드와 같은 증명을 담은 QR(/verify/citizen?code=XXXXXX)도 함께 보여준다.
+// 방문자가 이 QR을 보여주면 거주자가 휴대폰 기본 카메라로 읽어 국민용 화면을 연다(시연용 —
+// 실제 구조에서는 정부 앱 안에서 읽어야 한다, lib/verify.ts citizenVerifyUrl 참고).
 
+import { QRCodeSVG } from "qrcode.react";
 import { useEffect, useState } from "react";
 
 import { ApiError } from "@/lib/api";
-import { createProof, listStaffCredentials, type CreatedProof, type StaffCredential } from "@/lib/verify";
+import {
+  PROOF_PURPOSES,
+  citizenVerifyUrl,
+  createProof,
+  listStaffCredentials,
+  type CreatedProof,
+  type StaffCredential,
+} from "@/lib/verify";
 
-const DEFAULT_PURPOSE = "대출 상담 전화";
+const DEFAULT_PURPOSE: string = PROOF_PURPOSES[0];
+const CUSTOM_PURPOSE = "__custom__";
+
+const textFieldStyle = {
+  padding: "12px 14px",
+  borderRadius: "8px",
+  border: "1px solid var(--baseline)",
+  background: "var(--surface-1)",
+  color: "var(--text-primary)",
+} as const;
 
 function useRemainingSeconds(expiresAt: string | null): number | null {
   const [now, setNow] = useState(() => Date.now());
@@ -33,7 +54,10 @@ function formatMinSec(totalSeconds: number): string {
 export function StaffProofPanel() {
   const [credentials, setCredentials] = useState<StaffCredential[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
-  const [purpose, setPurpose] = useState(DEFAULT_PURPOSE);
+  // 선택지 중 하나이거나 CUSTOM_PURPOSE(직접 입력). 직접 입력한 문구는 customPurpose에 둔다.
+  const [purposeChoice, setPurposeChoice] = useState<string>(DEFAULT_PURPOSE);
+  const [customPurpose, setCustomPurpose] = useState("");
+  const purpose = purposeChoice === CUSTOM_PURPOSE ? customPurpose : purposeChoice;
   const [proof, setProof] = useState<CreatedProof | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -70,7 +94,8 @@ export function StaffProofPanel() {
         <p style={{ margin: 0, color: "var(--text-secondary)" }}>직원용 · 모의 시연</p>
         <h1 style={{ margin: "4px 0 0", fontSize: "30px" }}>고객에게 불러줄 확인 코드</h1>
         <p style={{ margin: "8px 0 0", color: "var(--text-secondary)" }}>
-          코드는 어디로도 전송되지 않습니다. 화면에 나온 6자리를 통화 중인 고객에게 말로 불러주세요.
+          코드는 어디로도 전송되지 않습니다. 통화 중이면 화면에 나온 6자리를 고객에게 말로 불러주고, 방문했다면
+          코드 아래의 QR을 보여주세요.
         </p>
       </header>
 
@@ -101,19 +126,25 @@ export function StaffProofPanel() {
 
       <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
         <span style={{ fontWeight: 700 }}>2. 통화/방문 목적</span>
-        <input
-          value={purpose}
-          onChange={(e) => setPurpose(e.target.value)}
-          maxLength={50}
-          style={{
-            padding: "12px 14px",
-            borderRadius: "8px",
-            border: "1px solid var(--baseline)",
-            background: "var(--surface-1)",
-            color: "var(--text-primary)",
-          }}
-        />
+        <select value={purposeChoice} onChange={(e) => setPurposeChoice(e.target.value)} style={textFieldStyle}>
+          {PROOF_PURPOSES.map((p) => (
+            <option key={p} value={p}>
+              {p}
+            </option>
+          ))}
+          <option value={CUSTOM_PURPOSE}>직접 입력</option>
+        </select>
       </label>
+      {purposeChoice === CUSTOM_PURPOSE && (
+        <input
+          aria-label="목적 직접 입력"
+          placeholder="예: 전입 신고 확인 방문(모의)"
+          value={customPurpose}
+          onChange={(e) => setCustomPurpose(e.target.value)}
+          maxLength={50}
+          style={textFieldStyle}
+        />
+      )}
 
       <button
         type="button"
@@ -159,6 +190,23 @@ export function StaffProofPanel() {
             {expired ? "⏱ 만료됨 — 새 확인 코드를 만드세요" : `⏱ 남은 시간 ${formatMinSec(remaining)}`}
           </p>
           <p style={{ margin: "8px 0 0", color: "var(--text-secondary)" }}>목적: {proof.purpose} · 1회만 사용 가능</p>
+          {!expired && (
+            <div style={{ marginTop: "16px", paddingTop: "16px", borderTop: "1px solid var(--border)" }}>
+              <p style={{ margin: "0 0 10px", fontWeight: 700 }}>방문했다면 이 QR을 보여주세요</p>
+              <div style={{ display: "inline-block", padding: "10px", background: "#ffffff", borderRadius: "8px" }}>
+                <QRCodeSVG
+                  value={citizenVerifyUrl(proof.code)}
+                  size={176}
+                  marginSize={1}
+                  title={`확인 코드 ${proof.code} QR (모의)`}
+                />
+              </div>
+              <p style={{ margin: "10px 0 0", fontSize: "15px", color: "var(--text-secondary)" }}>
+                QR에는 위 6자리와 같은 확인 코드가 들어 있습니다. 모의 시연에서는 휴대폰 기본 카메라로 읽으면
+                국민용 화면이 열리고, 실제 구조에서는 정부 앱 안에서만 읽습니다.
+              </p>
+            </div>
+          )}
         </section>
       )}
     </div>

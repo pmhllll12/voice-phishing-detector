@@ -320,14 +320,23 @@ uvicorn src.main:app --port 8300
 cd apps/verify-worker
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
-pytest -q                               # 시연 시나리오 3개 + 만료/재사용/서명변조 등 13건
+pytest -q                               # 시연 시나리오 3개 + 만료/재사용/서명변조 + 발급·검증 분리 등 24건
 uvicorn src.main:app --port 8400        # 증명 유효시간 조정: PROOF_TTL_SECONDS=60 uvicorn ...
 ```
 
 떠 있는지 확인: `curl http://localhost:8400/health` → `{"status":"ok","proof_ttl_seconds":180,...}`.
-기동하면 시연용 모의 자격증명 2건(`demo-bank-staff` ○○은행(모의) 김민수,
-`demo-district-staff` △△구청(모의) 이영희)이 자동 발급됩니다. 저장소가 인메모리라
-재시작하면 증명/폐기 기록이 전부 초기화됩니다.
+기동하면 시연용 모의 자격증명 3건(`demo-bank-staff` ○○은행(모의) 김민수,
+`demo-district-staff` △△구청(모의) 이영희, 방문 시연용 `demo-gas-staff` □□도시가스(모의)
+박준호)이 자동 발급됩니다. 발급 기관별 공개키는 `curl http://localhost:8400/api/v1/issuers`로 볼 수
+있습니다(모의 키). 저장소와 키가 인메모리라 재시작하면 증명/폐기 기록이 초기화되고 키도 새로
+만들어집니다.
+
+**코드 입력 횟수 제한**: 같은 IP가 10분 안에 5번 틀리면 다음부터 429(`rate_limited`)로 거절하고, 국민
+화면은 확인 불가(빨강)로 보여줍니다. api와 verify-worker 양쪽에 걸리고 `VERIFY_RATE_LIMIT_MAX_FAILURES`,
+`VERIFY_RATE_LIMIT_WINDOW_SECONDS`로 조정합니다. **로컬에서 시연을 여러 번 리허설하면** 모든 요청이 같은
+IP라 사칭범 시나리오(2회 실패)와 퇴사자 시나리오(1회 실패)가 쌓여 429가 날 수 있습니다. 녹화 직전에
+api와 verify-worker를 재시작하거나(`systemctl --user restart api`, verify-worker 재기동), 두 서비스를
+`VERIFY_RATE_LIMIT_MAX_FAILURES=50`처럼 늘려서 띄우세요.
 
 국민용 화면은 api(`POST /api/v1/calls/{call_id}/verification`)를 거칩니다 — api가
 이 브랜치 코드로 재시작돼 있어야 하고(systemd면 `systemctl --user restart api`),
@@ -352,6 +361,21 @@ verify-worker가 꺼져 있으면 api가 502와 실행 방법을 반환합니다
 3. **퇴사자**: 새 자격증명 발급 → 증명 생성 → 자격증명 폐기 → 그 코드로 검증 → 빨강
    (화면에는 폐기 버튼이 없어 curl로 진행 — `apps/verify-worker/scripts/demo_scenarios.sh`가
    세 시나리오를 전부 curl로 재현함. 시연용 시드 자격증명은 폐기하지 말 것)
+4. **방문(QR)**: `/verify/staff`에서 □□도시가스(모의) 선택, 목적 "가스 점검 방문(모의)" →
+   "확인 코드 만들기" → 코드 아래에 같은 증명을 담은 QR이 뜸 → QR을 휴대폰 기본 카메라로 읽으면
+   `/verify/citizen?code=XXXXXX`가 열리고 코드가 미리 채워짐 → 거주자가 "확인하기"를 직접 눌러야
+   검증됨(링크를 연 것만으로는 검증되지 않음). 문구도 방문 상황("문을 열어 주지 마세요")으로 바뀜.
+   **실제 구조에서는 링크를 여는 게 아니라 정부 앱 안에서 QR을 읽어야 합니다**(가짜 QR 링크
+   피싱 방지). 이 POC의 링크 방식은 시연 편의를 위한 것입니다.
+
+   휴대폰으로 QR을 읽어 시연하려면, QR 속 주소와 국민 화면이 호출하는 api 주소를 휴대폰이 열 수
+   있어야 합니다. 기본값은 `localhost`라 휴대폰에서는 열리지 않습니다. PC와 휴대폰을 같은 Wi-Fi에
+   두고, Windows(WSL2)라면 관리자 PowerShell에서 3000(또는 3001)·8000 포트를 portproxy로 열고
+   방화벽을 허용한 뒤, PC의 IP로 frontend를 띄웁니다:
+   `NEXT_PUBLIC_CITIZEN_BASE_URL=http://<PC IP>:3001 NEXT_PUBLIC_API_BASE_URL=http://<PC IP>:8000 npm run dev`.
+   설정 없이 한 PC로만 보여줄 때는 QR 아래 화면 대신 브라우저 새 창에서
+   `/verify/citizen?code=XXXXXX`를 직접 열면 됩니다. (휴대폰 실기기로 QR을 읽는 경로는 아직 직접
+   확인하지 않았습니다. QR 내용과 미리 채우기는 브라우저로 확인함.)
 
 대시보드(`/dashboard`)에서 기관사칭 문구를 분석하면 결과 아래에 "상대 신원 확인 권장" 안내와
 `/verify/citizen?call_id=...` 링크가 뜨고, 그 링크로 검증한 결과는 해당 통화 기록의
@@ -929,3 +953,18 @@ stt-worker) 전부에 대한 scrape 대상이 설정돼 있고, k3s(`kubectl app
          p95 1.21ms, api 경유 p95 9.44ms.
       5. 한계: 인증(RBAC)은 verify-worker에 미적용(로컬 시연 범위), 코드 무차별 대입에
          대한 속도 제한 없음, 프로세스 재시작 시 키/기록 초기화, k3s/compose 미등록.
+- [x] 역방향 신원확인 POC 공모전 제출 전 보완 (2026-10-12, 모의 시제품, `feat/verify-hardening`)
+      1. 전체 경로 실실행: postgres/Ollama/백엔드 5개/frontend를 모두 띄워 분석
+         (`verification_prompt.required=true` 라이브 응답) → 코드 생성 → 확인됨 / 사칭(2회) /
+         퇴사자 → 대시보드 배지까지 확인, 캡처 `docs/images/poc/01~10`
+         (`.claude/skills/run-voice-phishing-detector/capture_poc.mjs`로 재현).
+      2. 방문 시나리오(QR): 직원 화면에 코드와 같은 증명을 담은 QR, 국민 화면은 주소의 코드를
+         미리 채우고 확인은 사람이 누름(실제 구조에서는 정부 앱 안에서 QR을 읽어야 함을 명시).
+         `qrcode.react` 4.2.0 추가.
+      3. 발급/검증 분리: 모의 기관 3곳 기관별 키쌍, `issuer_id`, 공개키 레지스트리
+         (`GET /api/v1/issuers`), 검증 유스케이스는 공개키만 사용, 사유 코드 `issuer_unknown` 추가.
+      4. 코드 입력 횟수 제한: IP별 10분 5회 실패 → 429 `rate_limited`(api·verify-worker 양쪽,
+         인메모리 슬라이딩 윈도우), 메트릭 `vps_verify_rate_limited_total`.
+      5. 테스트: verify-worker 13→36건, api 88→95건(postgres 포함 전부 통과). 검증 소요시간 재측정
+         (서버 내부 평균 0.180ms, verify-worker 직접 p95 1.33ms, api 경유 p95 11.03ms —
+         docs/poc-mobile-id.md 4장).

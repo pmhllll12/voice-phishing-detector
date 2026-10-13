@@ -30,3 +30,11 @@ credentials_revoked_total = Counter(
     "vps_verify_credentials_revoked_total",
     "Total number of credentials revoked (e.g. resigned staff)",
 )
+
+# 클라이언트별 실패 횟수 제한(domain/rate_limit.py)에 걸려 검증하지 않고 429로 거절한 횟수.
+# 늘어나면 누군가 확인 코드를 대입하고 있다는 신호다. vps_verify_requests_total에도
+# reason="rate_limited"로 함께 남는다.
+rate_limited_total = Counter(
+    "vps_verify_rate_limited_total",
+    "Total number of verification requests rejected by the per-client failure limit",
+)

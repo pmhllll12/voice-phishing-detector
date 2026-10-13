@@ -2,6 +2,7 @@
 # mcp-server HTTP 호출, 인메모리 저장소 등)은 infrastructure에 맡기고, application은
 # 이 인터페이스에만 의존한다.
 
+from datetime import datetime
 from typing import Protocol
 
 from .deepvoice import DeepvoiceVerdict
@@ -49,7 +50,11 @@ class IdentityVerificationPort(Protocol):
     검증하는 포트. 반환값은 verify-worker REST 응답 그대로의 dict — CallAnalysisPort와
     동일한 패턴. verify-worker는 실제 모바일신분증과 연동하지 않는 모의 시제품이다."""
 
-    def verify(self, code: str) -> dict: ...
+    def verify(self, code: str, client_key: str | None = None) -> dict:
+        """client_key는 국민 쪽 클라이언트 IP — verify-worker가 자기 쪽 실패 횟수 제한을
+        api의 IP 하나가 아니라 실제 클라이언트별로 세도록 넘긴다. verify-worker가 제한에 걸어
+        429를 돌려주면 예외 대신 그 본문(reason=rate_limited)을 그대로 돌려준다."""
+        ...
 
 
 class GuardianNotificationPort(Protocol):
@@ -65,6 +70,15 @@ class CallVerificationLogPort(Protocol):
 
     def add(self, record: CallVerificationRecord) -> None: ...
     def list_for_call(self, call_id: str) -> list[CallVerificationRecord]: ...
+
+
+class FailedAttemptStorePort(Protocol):
+    """역방향 신원확인: 클라이언트별 검증 실패 시각 기록(무차별 대입 방어, domain/
+    identity_verification.py RateLimitPolicy)."""
+
+    def record_failure(self, client_key: str, at: datetime) -> None: ...
+
+    def count_failures_since(self, client_key: str, since: datetime) -> int: ...
 
 
 class MultichannelCorrelationPort(Protocol):

@@ -34,13 +34,17 @@ too — api's `/ready` and `/api/v1/calls/analyze` both fail without it, and so 
 rag-worker's `/ready` now (unlike stt-worker/Ollama, there's no graceful degrade here, see
 apps/api/src/main.py `_check_database_ready` and apps/rag-worker/src/infrastructure/readiness.py):
 
+The container is published on host port **5433** (not 5432) on this machine — the systemd
+units for api/mcp-server/rag-worker get `DATABASE_URL=…@localhost:5433/vps_detector` from a
+drop-in. Keep `-p 5433` on every `psql` below.
+
 ```bash
 docker exec vps-postgres pg_isready -U vps_app -d vps_detector 2>/dev/null || {
   docker start vps-postgres 2>/dev/null || docker run -d --name vps-postgres --restart unless-stopped \
     -e POSTGRES_USER=vps_app -e POSTGRES_PASSWORD=vps_dev_password -e POSTGRES_DB=vps_detector \
-    -p 5432:5432 -v vps_postgres_data:/var/lib/postgresql/data pgvector/pgvector:pg16
+    -p 5433:5432 -v vps_postgres_data:/var/lib/postgresql/data pgvector/pgvector:pg16
   until docker exec vps-postgres pg_isready -U vps_app -d vps_detector 2>/dev/null; do sleep 1; done
-  PGPASSWORD=vps_dev_password psql -h localhost -U vps_app -d vps_detector -f infra/db/init.sql
+  PGPASSWORD=vps_dev_password psql -h localhost -p 5433 -U vps_app -d vps_detector -f infra/db/init.sql
 }
 ```
 
@@ -59,7 +63,7 @@ it's empty (fresh container, new `vps_postgres_data` volume, or dataset changes 
 `apps/rag-worker/data/fraud_cases.json`):
 
 ```bash
-FRAUD_CASE_COUNT=$(PGPASSWORD=vps_dev_password psql -h localhost -U vps_app -d vps_detector -tAc "SELECT count(*) FROM fraud_cases")
+FRAUD_CASE_COUNT=$(PGPASSWORD=vps_dev_password psql -h localhost -p 5433 -U vps_app -d vps_detector -tAc "SELECT count(*) FROM fraud_cases")
 [ "$FRAUD_CASE_COUNT" = "0" ] && (cd apps/rag-worker && .venv/bin/python -m scripts.seed_fraud_cases)
 ```
 
@@ -117,8 +121,9 @@ curl -sf http://localhost:8000/health || {
 
 # 5) verify-worker (8400) — 역방향 신원확인 POC (모의 시제품, 실제 모바일신분증과
 #    연동 안 됨). NOT a systemd unit — start manually. In-memory only: every restart
-#    regenerates the mock Ed25519 keys and re-seeds the 2 demo credentials
-#    (demo-bank-staff, demo-district-staff); proofs/revocations are lost.
+#    regenerates the mock Ed25519 keys and re-seeds the 3 demo credentials
+#    (demo-bank-staff, demo-district-staff, demo-gas-staff — the last one is for the
+#    방문(QR) demo); proofs/revocations are lost.
 #    Only /verify/staff, /verify/citizen and api's POST /api/v1/calls/{id}/verification
 #    need it — the dashboard/analyze path works without it.
 curl -sf http://localhost:8400/health || {
@@ -188,6 +193,27 @@ code (e.g. `000000`) → first a yellow "숫자가 맞지 않습니다" retry no
 no guardian alert); a second wrong code on the same call → red "확인되지 않았습니다. 전화를
 끊으세요" + "보호자에게 알렸습니다(모의)".
 Never revoke the seeded `demo-bank-staff` — issue a fresh credential for the 퇴사자 demo.
+
+Proposal screenshots (`docs/images/poc/`, numbered in demo order) plus the raw api responses
+of the same run come from a second Playwright script in this folder:
+
+```bash
+cd .claude/skills/run-voice-phishing-detector
+node capture_poc.mjs http://localhost:<frontend-port> ../../../docs/images/poc /tmp/poc-responses
+```
+
+**Rate limit gotcha**: api and verify-worker both reject a client IP after 5 failed codes in 10
+minutes (429 `rate_limited`, in-memory). Everything here comes from 127.0.0.1, and one capture run
+spends 3 failures (impersonator ×2, resigned ×1) — so a second run within 10 minutes hits 429 and
+the red screens still render but the scenario is no longer what it claims. Restart both
+(`systemctl --user restart api`; `fuser -k 8400/tcp` + relaunch) before re-running, or launch them
+with `VERIFY_RATE_LIMIT_MAX_FAILURES=50`. Restarting verify-worker also regenerates the mock issuer
+keys (seeded credentials are re-issued, so nothing visible breaks).
+
+It analyzes the 기관사칭 example 3 times through the real api (LLM included, so allow ~10s
+each), runs the genuine / impersonator / resigned scenarios against those call_ids, and
+fails loudly if `verification_prompt.required` is not true. Risk scores differ run to run
+(LLM) — that's expected; the prompt itself is pattern-based.
 
 ## Run (human path)
 
@@ -259,9 +285,11 @@ expiry/reuse/signature-tamper and needs no other service running.
   `POST /api/v1/calls/analyze` 500s**: postgres isn't reachable. `docker ps --filter
   name=vps-postgres` — if it's not there or not `Up`, follow the Prerequisites step
   above to (re)create/start it. If it's up but still erroring, check the connection
-  string matches (`DATABASE_URL`, default `postgresql://vps_app:vps_dev_password@
-  localhost:5432/vps_detector`) and that `infra/db/init.sql` was actually applied
-  (`PGPASSWORD=vps_dev_password psql -h localhost -U vps_app -d vps_detector -c '\dt'`
+  string matches (`DATABASE_URL` — the code default is `postgresql://vps_app:vps_dev_password@
+  localhost:5432/vps_detector`, but on this machine the container is published on **5433** and
+  the systemd units override it via a drop-in, `Environment=DATABASE_URL=…localhost:5433/…`;
+  a manual `uvicorn` launch must export the same 5433 URL) and that `infra/db/init.sql` was actually applied
+  (`PGPASSWORD=vps_dev_password psql -h localhost -p 5433 -U vps_app -d vps_detector -c '\dt'`
   should list `call_analysis_results` and `report_records`).
 - **Driver prints `WARNING: 총 분석 건수가 늘지 않았습니다`**: the POST to
   `/api/v1/calls/analyze` didn't complete in 25s or errored. Check `/tmp/api.log` and

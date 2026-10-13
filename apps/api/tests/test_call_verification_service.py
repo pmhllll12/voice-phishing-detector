@@ -13,8 +13,10 @@ class _FakeVerificationPort:
         self._response = response
         self.received_code: str | None = None
 
-    def verify(self, code: str) -> dict:
+    def verify(self, code: str, client_key: str | None = None) -> dict:
         self.received_code = code
+        self.received_client_key = client_key
+        self.calls = getattr(self, "calls", 0) + 1
         return self._response
 
 

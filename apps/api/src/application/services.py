@@ -3,6 +3,7 @@
 # 통해서만 위임한다 — 그래야 이 계층을 테스트할 때 진짜 DB 없이도 테스트할 수 있다.
 
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timezone
 
 from src.domain.deepvoice import DeepvoiceVerdict
@@ -15,13 +16,20 @@ from src.domain.entities import (
     StatsSummary,
 )
 from src.domain.entity_extraction import extract_entities
-from src.domain.identity_verification import CallVerificationRecord, allows_code_retry
+from src.domain.identity_verification import (
+    RATE_LIMITED_MESSAGE,
+    RATE_LIMITED_REASON,
+    CallVerificationRecord,
+    RateLimitPolicy,
+    allows_code_retry,
+)
 from src.domain.pii_masking import mask_pii
 from src.domain.ports import (
     CallAnalysisPort,
     CallLogPort,
     CallVerificationLogPort,
     DeepvoiceDetectionPort,
+    FailedAttemptStorePort,
     GuardianNotificationPort,
     IdentityVerificationPort,
     MultichannelCorrelationPort,
@@ -244,6 +252,11 @@ class CallVerificationService:
 
     call_id가 실제 판정 기록에 있는지는 확인하지 않는다 — 대시보드를 거치지 않고 국민용
     화면에 바로 들어온 시연(call_id="standalone")도 같은 경로로 기록하기 위해서다.
+
+    무차별 대입 방어(attempt_store + rate_limit이 주어졌을 때): client_key별 실패가 한도면
+    verify-worker를 호출하지 않고 rate_limited로 확정한다. 국민 화면에서는 확인 불가와 같게
+    다루므로 보호자 알림(mock)도 같게 남긴다. verify-worker가 자기 쪽 한도로 rate_limited를
+    돌려준 경우도 같은 결과로 처리한다.
     """
 
     def __init__(
@@ -251,13 +264,32 @@ class CallVerificationService:
         verification_port: IdentityVerificationPort,
         guardian_port: GuardianNotificationPort,
         verification_log_port: CallVerificationLogPort,
+        attempt_store: FailedAttemptStorePort | None = None,
+        rate_limit: RateLimitPolicy | None = None,
+        now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     ):
         self._verification_port = verification_port
         self._guardian_port = guardian_port
         self._verification_log_port = verification_log_port
+        self._attempt_store = attempt_store
+        self._rate_limit = rate_limit
+        self._now = now
 
-    def execute(self, call_id: str, code: str) -> CallVerificationRecord:
-        raw = self._verification_port.verify(code)
+    def _is_rate_limited(self, client_key: str, now: datetime) -> bool:
+        if self._attempt_store is None or self._rate_limit is None:
+            return False
+        recent = self._attempt_store.count_failures_since(client_key, self._rate_limit.window_start(now))
+        return self._rate_limit.is_limited(recent)
+
+    def execute(self, call_id: str, code: str, client_key: str = "unknown") -> CallVerificationRecord:
+        now = self._now()
+        if self._is_rate_limited(client_key, now):
+            raw = {"verified": False, "reason": RATE_LIMITED_REASON, "message": RATE_LIMITED_MESSAGE}
+        else:
+            raw = self._verification_port.verify(code, client_key)
+            if not raw["verified"] and raw["reason"] != RATE_LIMITED_REASON and self._attempt_store is not None:
+                # 재입력 안내(retry_allowed)가 될 실패도 센다(RateLimitPolicy 참고).
+                self._attempt_store.record_failure(client_key, now)
         verified = bool(raw["verified"])
         # 입력 실수 재시도(domain/identity_verification.py allows_code_retry): 같은 통화의 연속
         # 첫 번째 "없는 코드"는 확인 불가로 확정하지 않고, 보호자 알림도 보내지 않는다.
@@ -272,7 +304,7 @@ class CallVerificationService:
             verified=verified,
             reason=raw["reason"],
             message=raw["message"],
-            verified_at=datetime.now(timezone.utc),
+            verified_at=now,
             institution_name=raw.get("institution_name"),
             staff_display_name=raw.get("staff_display_name"),
             purpose=raw.get("purpose"),

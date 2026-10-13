@@ -6,7 +6,7 @@
 # verify-worker는 실제 모바일신분증과 연동하지 않는 모의 시제품이다.
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from .entities import CallAnalysisResult, RiskLevel
 
@@ -59,12 +59,21 @@ def decide_verification_prompt(result: CallAnalysisResult) -> VerificationPrompt
 RETRYABLE_REASON = "code_not_found"
 MAX_CODE_ENTRY_ATTEMPTS = 2
 
+# 무차별 대입 방어: 클라이언트(IP)별 실패 횟수 제한에 걸렸을 때의 사유 코드. verify-worker의
+# VerificationReason.RATE_LIMITED와 같은 값(앱 간 직접 의존 금지라 값만 맞춘다).
+RATE_LIMITED_REASON = "rate_limited"
+RATE_LIMITED_MESSAGE = "짧은 시간에 확인 코드를 너무 여러 번 틀렸습니다(무차별 대입 의심). 검증하지 않고 거절했습니다."
+
 
 def allows_code_retry(reason: str, previous_records: list["CallVerificationRecord"]) -> bool:
     """이번 결과(reason)를 재입력 안내로 처리할지. previous_records는 같은 통화의 이전 검증
     기록(오래된 것부터). 연속 횟수는 맨 뒤에서부터 code_not_found가 이어진 만큼만 센다 —
     중간에 확인됨 등 다른 결과가 있었으면 거기서 다시 0부터 센다."""
     if reason != RETRYABLE_REASON:
+        return False
+    # 한 번이라도 실패 횟수 제한에 걸린 통화는 더 이상 입력 실수로 봐주지 않는다 — 제한 기록이
+    # 연속 횟수를 끊어서 윈도우가 지난 뒤 재입력 허용이 되살아나는 것을 막는다.
+    if any(record.reason == RATE_LIMITED_REASON for record in previous_records):
         return False
     consecutive_failures = 0
     for record in reversed(previous_records):
@@ -104,3 +113,29 @@ class CallVerificationRecord:
     # True면 "확인 불가"로 확정하지 않고 재입력을 안내한다(allows_code_retry 참고) — 이때는
     # 보호자 알림도 남기지 않는다.
     retry_allowed: bool = False
+
+
+@dataclass(frozen=True)
+class RateLimitPolicy:
+    """확인 코드 무차별 대입 방어: 클라이언트(IP)별로 window_seconds 안에 max_failures회
+    틀리면 다음 시도부터 검증하지 않고 rate_limited(429)로 거절한다(슬라이딩 윈도우).
+
+    - "실패"는 verified=false인 모든 결과다 — 입력 실수 재입력 안내(retry_allowed=true)도 센다.
+      재입력 허용은 "보호자 알림을 미루는 것"이지 시도 횟수를 공짜로 주는 게 아니다.
+    - 성공은 세지 않고, 제한으로 거절된 시도도 다시 세지 않는다.
+    verify-worker(apps/verify-worker/src/domain/rate_limit.py)도 같은 규칙을 건다 — api를
+    거치지 않고 verify-worker를 직접 두드리는 경우까지 막기 위해서다.
+    """
+
+    max_failures: int = 5
+    window_seconds: int = 600
+
+    def __post_init__(self):
+        if self.max_failures < 1 or self.window_seconds < 1:
+            raise ValueError("max_failures와 window_seconds는 1 이상이어야 합니다.")
+
+    def window_start(self, now: datetime) -> datetime:
+        return now - timedelta(seconds=self.window_seconds)
+
+    def is_limited(self, recent_failures: int) -> bool:
+        return recent_failures >= self.max_failures

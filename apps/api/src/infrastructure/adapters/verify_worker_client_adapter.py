@@ -15,7 +15,15 @@ class VerifyWorkerClientAdapter:
         self._base_url = base_url
         self._timeout = timeout
 
-    def verify(self, code: str) -> dict:
-        response = httpx.post(f"{self._base_url}/api/v1/verify", json={"code": code}, timeout=self._timeout)
+    def verify(self, code: str, client_key: str | None = None) -> dict:
+        # verify-worker는 신뢰 프록시(api)에서 온 요청에 한해 X-Forwarded-For로 실패 횟수를
+        # 클라이언트별로 센다(apps/verify-worker/src/main.py TRUSTED_PROXIES).
+        headers = {"X-Forwarded-For": client_key} if client_key else {}
+        response = httpx.post(
+            f"{self._base_url}/api/v1/verify", json={"code": code}, headers=headers, timeout=self._timeout
+        )
+        # 429(실패 횟수 제한)는 오류가 아니라 판정 결과다 — 본문(reason=rate_limited)을 그대로 쓴다.
+        if response.status_code == 429:
+            return response.json()
         response.raise_for_status()
         return response.json()

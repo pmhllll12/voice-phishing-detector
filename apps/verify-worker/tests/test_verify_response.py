@@ -1,5 +1,5 @@
 # 국민용 검증 응답이 허용된 필드만 내보내는지 고정한다. main.py는 import해도 GPU/외부
-# 서비스 의존이 없어서(인메모리 + 시드 2건) stt-worker와 달리 직접 import해도 가볍다.
+# 서비스 의존이 없어서(인메모리 + 시드 3건) stt-worker와 달리 직접 import해도 가볍다.
 
 from datetime import datetime, timezone
 
