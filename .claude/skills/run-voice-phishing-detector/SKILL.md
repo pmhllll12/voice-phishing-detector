@@ -202,8 +202,17 @@ cd .claude/skills/run-voice-phishing-detector
 node capture_poc.mjs http://localhost:<frontend-port> ../../../docs/images/poc /tmp/poc-responses
 ```
 
+A ~1.5-minute demo video of the same path (one 1440x900 window, human-speed typing, a caption
+per scene in the top-right corner) comes from a third script. It needs `ffmpeg` for the mp4
+(falls back to printing the raw Playwright `.webm` path), and spends the same 3 failures — see the
+rate limit gotcha below. `*.mp4` is gitignored in this folder; write it outside the repo anyway:
+
+```bash
+node record_demo.mjs http://localhost:<frontend-port> /tmp/demo.mp4
+```
+
 **Rate limit gotcha**: api and verify-worker both reject a client IP after 5 failed codes in 10
-minutes (429 `rate_limited`, in-memory). Everything here comes from 127.0.0.1, and one capture run
+minutes (429 `rate_limited`, in-memory). Everything here comes from 127.0.0.1, and one capture (or record) run
 spends 3 failures (impersonator ×2, resigned ×1) — so a second run within 10 minutes hits 429 and
 the red screens still render but the scenario is no longer what it claims. Restart both
 (`systemctl --user restart api`; `fuser -k 8400/tcp` + relaunch) before re-running, or launch them
