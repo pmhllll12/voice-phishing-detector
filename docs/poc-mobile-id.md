@@ -353,6 +353,7 @@ code_not_found`였다. 이때 메트릭은 api `vps_verify_rate_limited_total 1.
   api와 verify-worker에 걸었다. 다만 다음은 다루지 않았다.
   - IP를 바꿔 가며 시도하는 분산 대입
   - 같은 IP를 쓰는 여러 사람(공용 NAT)이 서로의 한도를 깎는 문제
+  - **프록시 뒤 배포**(아래 "배포 시 주의" 참고)
   - 워커/인스턴스가 여러 개일 때 기록 공유: 지금은 프로세스 메모리라 재시작하면 초기화된다.
     여러 대로 늘리려면 같은 포트의 Redis 구현이 필요하다.
   - 동시 요청: 확인과 기록이 한 번에 묶여 있지 않아, 한꺼번에 몰리면 한도를 몇 번 넘을 수 있다.
@@ -360,6 +361,26 @@ code_not_found`였다. 이때 메트릭은 api `vps_verify_rate_limited_total 1.
 
   실제 구조라면 계정·기기 단위 제한과 공유 저장소가 필요하다. 로컬에서 시연을 여러 번 반복하면
   같은 IP(127.0.0.1)에 실패가 쌓여 429가 날 수 있다(README 시연 안내 참고).
+
+  **배포 시 주의 — 프록시 뒤에서는 모든 사용자가 한 IP로 묶인다**: api는 실패 횟수를
+  `request.client.host`(api에 직접 연결한 쪽의 IP)로 센다. 로컬에서는 이게 브라우저의 IP라
+  문제가 없지만, `docs/design.md` 4장 설계대로 api를 Cloudflare Tunnel(`cloudflared`)이나
+  Nginx·k3s Ingress 뒤에 두면 api에 직접 연결하는 쪽은 항상 그 프록시 하나다. 그러면 전국의
+  모든 국민이 같은 실패 횟수를 함께 쓰게 되어, **누군가 5번 틀리는 순간 모든 사용자의 검증이
+  10분 동안 429로 막힌다**(무차별 대입 방어가 오히려 서비스 거부 수단이 된다). verify-worker도
+  같다 — `VERIFY_TRUSTED_PROXIES` 기본값은 `127.0.0.1,::1`이라, docker compose/k3s처럼 api가
+  다른 컨테이너 IP로 붙으면 api가 넘긴 `X-Forwarded-For`를 믿지 않고 api의 IP 하나로 센다.
+
+  배포할 때 해야 할 일(지금은 배포 미등록이라 적용하지 않았다):
+  1. api가 프록시가 넘긴 원래 클라이언트 IP를 쓰게 한다. uvicorn을
+     `--proxy-headers --forwarded-allow-ips=<프록시 주소>`로 띄우면 그 프록시에서 온 요청에
+     한해 `X-Forwarded-For`로 `request.client.host`를 바꿔 준다(코드 변경 없음). Cloudflare만
+     거친다면 `CF-Connecting-IP`를 쓰는 방법도 있다. 어느 쪽이든 **api가 프록시를 거쳐서만 닿을
+     수 있어야** 한다 — 직접 닿으면 헤더를 위조해 제한을 우회할 수 있다(verify-worker가
+     신뢰 프록시를 따로 두는 것과 같은 이유).
+  2. verify-worker의 `VERIFY_TRUSTED_PROXIES`에 api의 실제 주소(컨테이너/파드 IP 대역)를 넣는다.
+  3. 배포 후 서로 다른 두 클라이언트에서 한쪽만 5회 틀리고, 다른 쪽은 막히지 않는지 확인한다
+     (3장 라이브 확인과 같은 방법).
 - **검증 기록 영속화 없음**: 통화별 신원확인 기록은 api 메모리에만 있다. 감사증적 테이블
   (`call_analysis_results`)이 append-only라 UPDATE로 붙일 수 없어서, 영속화하려면 별도
   append-only 테이블을 추가해야 한다.
