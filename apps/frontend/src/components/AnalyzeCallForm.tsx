@@ -136,7 +136,19 @@ export function AnalyzeCallForm({ onAnalyzed }: { onAnalyzed: () => void }) {
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    const trimmed = transcript.trim();
+    await runTextAnalysis(transcript);
+  }
+
+  // 시연용: 예시 문장을 입력칸에 넣고 곧바로 분석까지 한다 — 넣기와 분석을 따로 누르게 하면
+  // 처음 보는 사람이 두 번째 클릭을 놓쳐 신원확인 패널까지 가지 못한다. 분석 중에는 입력칸에
+  // 예시가 보여서 무엇을 분석하는지 알 수 있다.
+  async function analyzeExample() {
+    setTranscript(AUTHORITY_IMPERSONATION_EXAMPLE);
+    await runTextAnalysis(AUTHORITY_IMPERSONATION_EXAMPLE);
+  }
+
+  async function runTextAnalysis(text: string) {
+    const trimmed = text.trim();
     if (!trimmed) return;
 
     setTextLoading(true);
@@ -263,7 +275,7 @@ export function AnalyzeCallForm({ onAnalyzed }: { onAnalyzed: () => void }) {
 
           <button
             type="button"
-            onClick={() => setTranscript(AUTHORITY_IMPERSONATION_EXAMPLE)}
+            onClick={analyzeExample}
             disabled={textLoading}
             style={{
               padding: "8px 16px",
@@ -275,7 +287,7 @@ export function AnalyzeCallForm({ onAnalyzed }: { onAnalyzed: () => void }) {
               cursor: textLoading ? "default" : "pointer",
             }}
           >
-            기관사칭 예시 넣기
+            {textLoading ? "분석 중…" : "기관사칭 예시로 바로 분석"}
           </button>
 
           {textError && <span style={{ color: "var(--status-critical)", fontSize: "13px" }}>{textError}</span>}
@@ -287,7 +299,7 @@ export function AnalyzeCallForm({ onAnalyzed }: { onAnalyzed: () => void }) {
       {!lastAnalysis?.verification_prompt?.required && (
         <p style={{ margin: 0, fontSize: "13px", color: "var(--text-secondary)" }}>
           🪪 기관사칭이 의심되는 통화는 분석 결과 아래에서 <strong>상대 신원 확인(모의)</strong>까지 시연할 수
-          있습니다 — &ldquo;기관사칭 예시 넣기&rdquo; → &ldquo;텍스트로 분석하기&rdquo;를 눌러 보세요.
+          있습니다 — &ldquo;기관사칭 예시로 바로 분석&rdquo;을 눌러 보세요.
         </p>
       )}
       {lastAnalysis && <IdentityVerificationSection call={lastAnalysis} onVerified={onAnalyzed} />}

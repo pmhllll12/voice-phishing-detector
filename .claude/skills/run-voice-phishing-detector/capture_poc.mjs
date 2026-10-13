@@ -87,10 +87,9 @@ try {
   page.on("pageerror", (e) => consoleErrors.push("pageerror: " + e.message));
 
   await page.goto(`${url}/dashboard`, { waitUntil: "networkidle", timeout: 30000 });
-  await page.getByRole("button", { name: "기관사칭 예시 넣기" }).click();
   const [analyzeResponse] = await Promise.all([
     page.waitForResponse((r) => r.url().includes("/api/v1/calls/analyze"), { timeout: 60000 }),
-    page.getByRole("button", { name: "텍스트로 분석하기" }).click(),
+    page.getByRole("button", { name: "기관사칭 예시로 바로 분석" }).click(),
   ]);
   const analyzed = await analyzeResponse.json();
   saveJson("01-analyze.json", { status: analyzeResponse.status(), body: analyzed });
