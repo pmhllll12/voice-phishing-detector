@@ -87,6 +87,25 @@ def test_window_slides():
     assert service.execute("call-9", "123456", "10.0.0.1").verified is True
 
 
+def test_repeated_rate_limit_on_same_call_notifies_guardian_only_once():
+    """제한에 걸린 뒤 같은 통화로 계속 두드려도 보호자 알림(mock)은 첫 제한 때 한 번만 — 기록은
+    매번 남는다. 다른 통화의 첫 제한은 그 통화 기준으로 다시 알린다."""
+    service, _port, notifier, log = _service(_NOT_FOUND)
+    for _ in range(5):
+        service.execute("call-1", "000000", "10.0.0.1")
+    sent_before = len(notifier.sent)
+
+    first = service.execute("call-1", "000000", "10.0.0.1")
+    repeats = [service.execute("call-1", "000000", "10.0.0.1") for _ in range(3)]
+    other_call = service.execute("call-2", "000000", "10.0.0.1")
+
+    assert first.reason == "rate_limited" and first.guardian_notification is not None
+    assert all(r.reason == "rate_limited" and r.guardian_notification is None for r in repeats)
+    assert other_call.reason == "rate_limited" and other_call.guardian_notification is not None
+    assert len(notifier.sent) == sent_before + 2
+    assert [r.reason for r in log.list_for_call("call-1")].count("rate_limited") == 4
+
+
 def test_rate_limited_call_gets_no_more_typo_retry():
     """제한에 걸린 기록이 있는 통화는 윈도우가 지나도 "입력 실수 재입력" 허용이 되살아나지 않는다."""
     clock = _Clock()

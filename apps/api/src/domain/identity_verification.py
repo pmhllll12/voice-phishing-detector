@@ -83,6 +83,15 @@ def allows_code_retry(reason: str, previous_records: list["CallVerificationRecor
     return consecutive_failures + 1 < MAX_CODE_ENTRY_ATTEMPTS
 
 
+def is_repeated_rate_limit(reason: str, previous_records: list["CallVerificationRecord"]) -> bool:
+    """이번 결과가 같은 통화에서 두 번째 이상의 rate_limited인지. 그렇다면 보호자 알림(mock)을
+    다시 보내지 않는다 — 제한에 걸린 뒤 계속 두드리는 요청마다 알림이 쌓이면 보호자에게 알림
+    폭탄이 된다. 첫 제한 때 한 번 알렸으면 충분하다. 검증 기록 자체는 감사용으로 매번 남긴다."""
+    return reason == RATE_LIMITED_REASON and any(
+        record.reason == RATE_LIMITED_REASON for record in previous_records
+    )
+
+
 @dataclass(frozen=True)
 class GuardianNotification:
     """확인 불가 시 보호자 알림(mock). 실제 문자/푸시 발송은 하지 않고, 알림을 "보냈어야
