@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { analyzeCall, analyzeCallAudio, ApiError, type CallAnalysis } from "@/lib/api";
 import { CitizenVerifyPanel } from "@/components/verify/CitizenVerifyPanel";
@@ -119,6 +119,10 @@ function IdentityVerificationSection({ call, onVerified }: { call: CallAnalysis;
 
 // 역방향 신원확인 시연용 예시. 분석 결과가 신원확인 대상(기관사칭 또는 고위험)이어야 아래
 // 직원/고객 패널이 뜨므로, 기관사칭 + 긴급송금유도가 분명한 문장을 쓴다(합성 문장, 실제 통화 아님).
+// 데모 링크 쿼리: /dashboard?demo=verify (아래 autoDemo 참고).
+const DEMO_QUERY_KEY = "demo";
+const DEMO_QUERY_VERIFY = "verify";
+
 const AUTHORITY_IMPERSONATION_EXAMPLE =
   "서울중앙지검 수사관입니다. 고객님 명의 계좌가 범죄에 연루돼 안전계좌로 이체하셔야 합니다";
 
@@ -133,6 +137,22 @@ export function AnalyzeCallForm({ onAnalyzed }: { onAnalyzed: () => void }) {
   const [audioError, setAudioError] = useState<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
+  // 데모 링크(/dashboard?demo=verify): 심사위원/채용담당자에게 이 링크만 주면 클릭 없이 예시
+  // 분석 → 신원확인 패널까지 보이게 한다. 평소 /dashboard 방문에는 자동 분석하지 않는다 — 매
+  // 방문마다 LLM 호출과 감사 기록(append-only)이 쌓이면 안 되기 때문이다. ref는 개발 모드
+  // StrictMode가 effect를 두 번 실행해도 분석을 한 번만 보내게 막는다.
+  const autoDemoStartedRef = useRef(false);
+  const [autoDemo, setAutoDemo] = useState(false);
+
+  useEffect(() => {
+    if (autoDemoStartedRef.current) return;
+    if (new URLSearchParams(window.location.search).get(DEMO_QUERY_KEY) !== DEMO_QUERY_VERIFY) return;
+    autoDemoStartedRef.current = true;
+    setAutoDemo(true);
+    void analyzeExample();
+    // 처음 한 번만 — analyzeExample은 매 렌더 새로 만들어지지만 다시 실행할 이유가 없다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -294,9 +314,15 @@ export function AnalyzeCallForm({ onAnalyzed }: { onAnalyzed: () => void }) {
           {audioError && <span style={{ color: "var(--status-critical)", fontSize: "13px" }}>{audioError}</span>}
         </div>
       </form>
+      {autoDemo && textLoading && (
+        <p role="status" style={{ margin: 0, fontSize: "13px", color: "var(--series-1)", fontWeight: 600 }}>
+          🪪 데모: 기관사칭 예시 통화(합성 문장)를 자동으로 분석하고 있습니다. 10초 정도 뒤 아래에 상대 신원
+          확인(모의) 화면이 나타납니다.
+        </p>
+      )}
       {/* 신원확인 패널은 분석 결과가 대상일 때만 뜨므로, 그 전에는 기능이 있다는 걸 알 수 없다 —
           패널이 떠 있지 않을 때만 이 안내를 보여준다. */}
-      {!lastAnalysis?.verification_prompt?.required && (
+      {!lastAnalysis?.verification_prompt?.required && !(autoDemo && textLoading) && (
         <p style={{ margin: 0, fontSize: "13px", color: "var(--text-secondary)" }}>
           🪪 기관사칭이 의심되는 통화는 분석 결과 아래에서 <strong>상대 신원 확인(모의)</strong>까지 시연할 수
           있습니다 — &ldquo;기관사칭 예시로 바로 분석&rdquo;을 눌러 보세요.
