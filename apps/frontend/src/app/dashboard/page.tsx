@@ -114,6 +114,17 @@ export default function DashboardPage() {
       <p style={{ color: "var(--text-secondary)", fontSize: "14px", marginTop: 0 }}>
         F-06 — 탐지 현황 / 위험도 분포 / 처리 통계 (10초마다 자동 갱신)
       </p>
+      {/* 데모 진입점: 같은 화면을 ?demo=verify로 다시 열어 예시 분석 → 신원확인 패널을 자동으로
+          띄운다. next/link가 아니라 <a>인 이유: 같은 경로의 쿼리만 바꾸는 클라이언트 이동은 폼을
+          다시 마운트하지 않아 자동 분석(마운트 시 1회)이 실행되지 않는다. */}
+      <p style={{ fontSize: "14px", margin: "0 0 20px" }}>
+        <a href="/dashboard?demo=verify" style={{ color: "var(--series-1)", fontWeight: 600 }}>
+          ▶ 신원확인 데모 보기
+        </a>
+        <span style={{ color: "var(--text-muted)", marginLeft: "8px", fontSize: "13px" }}>
+          기관사칭 예시 통화를 자동으로 분석하고 상대 신원 확인(모의)까지 보여줍니다
+        </span>
+      </p>
 
       {loadError && (
         <div
