@@ -499,6 +499,8 @@ def verify_call_identity(
     reason=rate_limited를 같은 본문 형식으로 돌려준다(통화 기록과 보호자 알림(mock)도 남음).
     국민 화면은 이 429를 확인 불가와 같은 빨간 화면으로 보여준다.
     """
+    # 프록시(Cloudflare Tunnel/Nginx/Ingress) 뒤에서는 이 값이 프록시 IP 하나라 모든 사용자가
+    # 실패 횟수를 함께 쓰게 된다 — 배포 시 uvicorn --proxy-headers 설정 필요(docs/poc-mobile-id.md 5장).
     client_key = request.client.host if request.client else "unknown"
     try:
         record = call_verification_service.execute(call_id, req.code, client_key)
