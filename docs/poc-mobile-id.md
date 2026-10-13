@@ -124,7 +124,9 @@
   되살아나지 않는다(`allows_code_retry`).
 - 국민 화면은 429를 "잠시 후 다시 시도하세요"가 아니라 **확인 불가와 같은 빨간 화면**으로
   보여준다. 제한에 걸릴 만큼 틀렸다면 끊는 게 맞다. 그래서 api는 이 경우에도 통화 기록과 보호자
-  알림(모의)을 확인 불가와 똑같이 남긴다.
+  알림(모의)을 확인 불가와 똑같이 남긴다. 단 보호자 알림은 **같은 통화에서 첫 제한 때 한 번만**
+  보낸다. 제한에 걸린 뒤 계속 두드리는 요청마다 알림이 가면 보호자에게 알림 폭탄이 되기
+  때문이다. 반복된 시도도 통화 기록에는 매번 남는다(`is_repeated_rate_limit`).
 - 메트릭 `vps_verify_rate_limited_total`이 api와 verify-worker 양쪽에 있다. Prometheus에서는
   job 라벨로 구분한다. verify-worker의 `vps_verify_requests_total`에도 `reason="rate_limited"`로
   남는다.

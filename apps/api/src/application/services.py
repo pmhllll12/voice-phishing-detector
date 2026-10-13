@@ -22,6 +22,7 @@ from src.domain.identity_verification import (
     CallVerificationRecord,
     RateLimitPolicy,
     allows_code_retry,
+    is_repeated_rate_limit,
 )
 from src.domain.pii_masking import mask_pii
 from src.domain.ports import (
@@ -255,8 +256,9 @@ class CallVerificationService:
 
     무차별 대입 방어(attempt_store + rate_limit이 주어졌을 때): client_key별 실패가 한도면
     verify-worker를 호출하지 않고 rate_limited로 확정한다. 국민 화면에서는 확인 불가와 같게
-    다루므로 보호자 알림(mock)도 같게 남긴다. verify-worker가 자기 쪽 한도로 rate_limited를
-    돌려준 경우도 같은 결과로 처리한다.
+    다루므로 보호자 알림(mock)도 같게 남긴다 — 단 같은 통화에서는 첫 제한 때 한 번만 알리고,
+    이후 반복되는 rate_limited는 기록만 남긴다(is_repeated_rate_limit). verify-worker가 자기 쪽
+    한도로 rate_limited를 돌려준 경우도 같은 결과로 처리한다.
     """
 
     def __init__(
@@ -293,12 +295,11 @@ class CallVerificationService:
         verified = bool(raw["verified"])
         # 입력 실수 재시도(domain/identity_verification.py allows_code_retry): 같은 통화의 연속
         # 첫 번째 "없는 코드"는 확인 불가로 확정하지 않고, 보호자 알림도 보내지 않는다.
-        retry_allowed = not verified and allows_code_retry(
-            raw["reason"], self._verification_log_port.list_for_call(call_id)
-        )
-        guardian_notification = (
-            None if verified or retry_allowed else self._guardian_port.notify(call_id, raw["reason"])
-        )
+        previous_records = self._verification_log_port.list_for_call(call_id)
+        retry_allowed = not verified and allows_code_retry(raw["reason"], previous_records)
+        # 같은 통화의 반복 rate_limited는 기록만 남기고 보호자 알림(mock)은 첫 제한 때 한 번만.
+        skip_notification = verified or retry_allowed or is_repeated_rate_limit(raw["reason"], previous_records)
+        guardian_notification = None if skip_notification else self._guardian_port.notify(call_id, raw["reason"])
         record = CallVerificationRecord(
             call_id=call_id,
             verified=verified,
