@@ -150,7 +150,9 @@ export default function LandingPage() {
             title="보이스피싱 실시간 탐지 및 대응 시스템"
             description="← 프로젝트 한 줄 설명을 여기에 넣으세요 (예: 통화 내용을 실시간으로 분석해 위험도를 판별하고 딥보이스를 탐지하는 개인 프로젝트)."
             tags={["FastAPI", "RAG", "딥보이스 판별"]}
-            href="/dashboard"
+            // 데모 링크: 채용담당자가 클릭 없이 탐지 → 상대 신원확인(모의) 흐름부터 보게 한다
+            // (components/AnalyzeCallForm.tsx autoDemo 참고).
+            href="/dashboard?demo=verify"
           />
           <ProjectCard
             path="~/projects/personal/mini-mes"
