@@ -104,7 +104,7 @@ try {
   await page.screenshot({ path: shot("01-analyze.png"), clip: { x: 0, y: 0, width: 1440, height: promptBox.y + promptBox.height + 16 } });
 
   await page.getByRole("button", { name: "확인 코드 만들기" }).click();
-  const codeText = await section.locator("section[aria-live] p").nth(1).innerText();
+  const codeText = await section.getByTestId("proof-code").innerText();
   const code = codeText.replace(/\D/g, "");
   await section.screenshot({ path: shot("02-staff-code.png") });
 
@@ -174,9 +174,11 @@ try {
   await v.getByRole("radio", { name: /□□도시가스\(모의\)/ }).check();
   await v.getByRole("combobox").selectOption("가스 점검 방문(모의)");
   await v.getByRole("button", { name: "확인 코드 만들기" }).click();
+  // QR은 영상 인터폰용 보조 경로라 접혀 있다 — 펼쳐서 찍는다.
+  await v.getByText("QR로 보여주기").click();
   const qr = v.locator("svg").filter({ has: v.locator("title") }).first();
   await qr.waitFor();
-  const visitCode = (await v.locator("section[aria-live] p").nth(1).innerText()).replace(/\D/g, "");
+  const visitCode = (await v.getByTestId("proof-code").innerText()).replace(/\D/g, "");
   await qr.screenshot({ path: path.join(responsesDir, "visit-qr.png") });
   await v.screenshot({ path: shot("08-visit-staff-qr.png"), fullPage: true });
 

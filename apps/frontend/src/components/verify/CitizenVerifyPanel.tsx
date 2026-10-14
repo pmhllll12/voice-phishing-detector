@@ -12,18 +12,25 @@
 // 이 컴포넌트를 함께 쓴다. callId로 넘긴 통화 기록에 검증 결과가 붙는다(apps/api
 // CallVerificationService 참고).
 //
-// 방문 시나리오(QR): 직원 화면의 QR이 /verify/citizen?code=XXXXXX를 담고 있어서, 주소로 코드가
-// 들어오면(initialCode) 입력칸에 미리 채우고 문구를 방문 상황("문을 열어 주지 마세요")으로
-// 바꾼다. 확인 버튼은 사람이 직접 누른다 — 링크를 연 것만으로 검증되면 안 된다. 이 링크 방식은
-// 시연 편의용이고, 실제 구조에서는 정부 앱 안에서 QR을 읽어야 한다(가짜 QR 링크 피싱 방지,
-// docs/poc-mobile-id.md 참고).
+// 방문 시나리오: 문을 연 채로 확인하면 의미가 없으므로 기본은 방문자가 문 너머·인터폰으로
+// 6자리를 불러주는 방식이다(전화와 같은 입력). 단독 페이지에서는 "전화가 왔어요 / 누가
+// 찾아왔어요"를 골라 문구를 바꾼다(allowSceneSwitch, ?scene=visit로도 시작 가능).
+// QR은 보조 경로다 — 공동현관 영상 인터폰처럼 화면 너머로 보여줄 수 있을 때만 쓴다. 직원 화면의
+// QR이 /verify/citizen?code=XXXXXX를 담고 있어서, 주소로 코드가 들어오면(initialCode) 입력칸에
+// 미리 채운다. 확인 버튼은 사람이 직접 누른다 — 링크를 연 것만으로 검증되면 안 된다. 이 링크
+// 방식은 시연 편의용이고, 실제 구조에서는 정부 앱 안에서 QR을 읽어야 한다(가짜 QR 링크 피싱
+// 방지, docs/poc-mobile-id.md 참고).
 
 import { useState, type FormEvent } from "react";
 
 import { ApiError } from "@/lib/api";
 import { verifyCallIdentity, type CallVerification } from "@/lib/verify";
 
-type Scene = "call" | "visit";
+// visitQr: 방문 + QR로 코드가 미리 채워진 경우. 결과 문구는 visit과 같다.
+type Scene = "call" | "visit" | "visitQr";
+
+const VISIT_OK_CAUTION =
+  "직원이 맞아도 송금, 비밀번호, 앱 설치를 요구하면 돌려보내세요. 방문 내용이 위 목적과 다를 때도 돌려보내세요.";
 
 // 전화/방문에 따라 달라지는 문구만 모았다. 결과는 어느 쪽이든 확인됨/확인 불가 두 가지다.
 const SCENE_TEXT: Record<
@@ -55,15 +62,29 @@ const SCENE_TEXT: Record<
     title: "찾아온 사람이 진짜 직원인지 확인하기",
     step1: (
       <>
-        <strong>1.</strong> 찾아온 사람이 보여준 <strong>QR로 확인 코드가 입력</strong>되어 있습니다. 상대방 화면의
-        6자리와 같은지 확인하세요.
+        <strong>1.</strong> <strong>문을 열지 말고</strong>, 인터폰이나 문 너머로{" "}
+        <strong>&ldquo;확인 코드를 불러 주세요&rdquo;</strong>라고 말하세요.
       </>
     ),
-    step2: "숫자가 같으면 아래 \"확인하기\"를 누르세요. 다르면 상대방 화면의 6자리를 직접 입력하세요.",
-    retry: "숫자가 맞지 않습니다. 상대방에게 확인 코드를 한 번 더 보여 달라고 하세요. 한 번 더 맞지 않으면 확인 불가로 처리됩니다.",
-    warning: "QR이나 확인 코드를 못 보여 주거나 둘러대면 사칭일 수 있습니다. 문을 열어 주지 마세요.",
+    step2: "불러 준 확인 코드 6자리를 입력하세요.",
+    retry: "숫자가 맞지 않습니다. 문을 연 채로 기다리지 말고, 확인 코드를 한 번 더 불러 달라고 하세요. 한 번 더 맞지 않으면 확인 불가로 처리됩니다.",
+    warning: "확인 코드를 못 대거나 둘러대면 사칭일 수 있습니다. 문을 열어 주지 마세요.",
     failHeadline: "확인되지 않았습니다. 문을 열어 주지 마세요",
-    okCaution: "직원이 맞아도 송금, 비밀번호, 앱 설치를 요구하면 돌려보내세요. 방문 내용이 위 목적과 다를 때도 돌려보내세요.",
+    okCaution: VISIT_OK_CAUTION,
+  },
+  visitQr: {
+    title: "찾아온 사람이 진짜 직원인지 확인하기",
+    step1: (
+      <>
+        <strong>1.</strong> 영상 인터폰으로 보여준 <strong>QR로 확인 코드가 입력</strong>되어 있습니다. 상대방
+        화면의 6자리와 같은지 확인하세요.
+      </>
+    ),
+    step2: "숫자가 같으면 아래 \"확인하기\"를 누르세요. 다르면 상대방에게 6자리를 불러 달라고 해서 직접 입력하세요.",
+    retry: "숫자가 맞지 않습니다. 확인 코드를 한 번 더 불러 달라고 하세요. 한 번 더 맞지 않으면 확인 불가로 처리됩니다.",
+    warning: "QR이나 확인 코드를 못 대거나 둘러대면 사칭일 수 있습니다. 문을 열어 주지 마세요.",
+    failHeadline: "확인되지 않았습니다. 문을 열어 주지 마세요",
+    okCaution: VISIT_OK_CAUTION,
   },
 };
 
@@ -160,14 +181,20 @@ export function CitizenVerifyPanel({
   resultMinHeight = "55vh",
   onVerified,
   initialCode,
+  initialScene = "call",
+  allowSceneSwitch = false,
 }: {
   callId: string;
   resultMinHeight?: string;
   onVerified?: () => void;
   initialCode?: string;
+  initialScene?: "call" | "visit";
+  // 단독 페이지에서만 켠다. 대시보드는 통화 기록에 붙는 화면이라 전화 상황으로 고정한다.
+  allowSceneSwitch?: boolean;
 }) {
   const prefilled = (initialCode ?? "").replace(/\D/g, "").slice(0, 6);
-  const scene: Scene = prefilled ? "visit" : "call";
+  const [baseScene, setBaseScene] = useState<"call" | "visit">(prefilled ? "visit" : initialScene);
+  const scene: Scene = prefilled ? "visitQr" : baseScene;
   const [code, setCode] = useState(prefilled);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<CallVerification | null>(null);
@@ -250,6 +277,42 @@ export function CitizenVerifyPanel({
         <p style={{ margin: 0, color: "var(--text-secondary)" }}>국민용 · 모의 시연</p>
         <h1 style={{ margin: "4px 0 0", fontSize: "32px", lineHeight: 1.35 }}>{SCENE_TEXT[scene].title}</h1>
       </header>
+      {allowSceneSwitch && !prefilled && (
+        <div role="group" aria-label="상황 고르기" style={{ display: "flex", gap: "10px" }}>
+          {(
+            [
+              ["call", "📞 전화가 왔어요"],
+              ["visit", "🚪 누가 찾아왔어요"],
+            ] as const
+          ).map(([value, label]) => {
+            const active = baseScene === value;
+            return (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={active}
+                onClick={() => {
+                  setBaseScene(value);
+                  setRetryNotice(false);
+                }}
+                style={{
+                  flex: 1,
+                  padding: "14px 10px",
+                  fontSize: "20px",
+                  fontWeight: 700,
+                  borderRadius: "10px",
+                  cursor: "pointer",
+                  border: `2px solid ${active ? "var(--series-1)" : "var(--baseline)"}`,
+                  background: "var(--surface-1)",
+                  color: active ? "var(--text-primary)" : "var(--text-secondary)",
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      )}
       <p style={{ margin: 0 }}>{SCENE_TEXT[scene].step1}</p>
       <label style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
         <span>
