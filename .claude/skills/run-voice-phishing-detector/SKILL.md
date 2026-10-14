@@ -123,7 +123,7 @@ curl -sf http://localhost:8000/health || {
 #    연동 안 됨). NOT a systemd unit — start manually. In-memory only: every restart
 #    regenerates the mock Ed25519 keys and re-seeds the 3 demo credentials
 #    (demo-bank-staff, demo-district-staff, demo-gas-staff — the last one is for the
-#    방문(QR) demo); proofs/revocations are lost.
+#    방문 demo); proofs/revocations are lost.
 #    Only /verify/staff, /verify/citizen and api's POST /api/v1/calls/{id}/verification
 #    need it — the dashboard/analyze path works without it.
 curl -sf http://localhost:8400/health || {

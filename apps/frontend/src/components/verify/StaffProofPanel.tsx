@@ -6,9 +6,11 @@
 // 버튼 이름을 "증명 보내기"에서 "확인 코드 만들기"로 바꾼 이유). 국민은 /verify/citizen에서
 // 코드를 입력해 확인한다. 자격증명은 verify-worker가 기동 시 시드한 모의 기관 것들이다.
 //
-// 방문 시나리오: 코드와 같은 증명을 담은 QR(/verify/citizen?code=XXXXXX)도 함께 보여준다.
-// 방문자가 이 QR을 보여주면 거주자가 휴대폰 기본 카메라로 읽어 국민용 화면을 연다(시연용 —
-// 실제 구조에서는 정부 앱 안에서 읽어야 한다, lib/verify.ts citizenVerifyUrl 참고).
+// 방문 시나리오: 거주자가 문을 열지 않고 확인해야 하므로 방문도 기본은 6자리를 문 너머·인터폰으로
+// 불러주는 것이다. 같은 증명을 담은 QR(/verify/citizen?code=XXXXXX)은 접어 둔 보조 경로로,
+// 공동현관 영상 인터폰처럼 화면 너머로 보여줄 수 있을 때만 쓴다. 시연에서는 휴대폰 기본 카메라로
+// 읽어 국민용 화면을 연다(실제 구조에서는 정부 앱 안에서 읽어야 한다, lib/verify.ts
+// citizenVerifyUrl 참고).
 
 import { QRCodeSVG } from "qrcode.react";
 import { useEffect, useState } from "react";
@@ -94,8 +96,8 @@ export function StaffProofPanel() {
         <p style={{ margin: 0, color: "var(--text-secondary)" }}>직원용 · 모의 시연</p>
         <h1 style={{ margin: "4px 0 0", fontSize: "30px" }}>고객에게 불러줄 확인 코드</h1>
         <p style={{ margin: "8px 0 0", color: "var(--text-secondary)" }}>
-          코드는 어디로도 전송되지 않습니다. 통화 중이면 화면에 나온 6자리를 고객에게 말로 불러주고, 방문했다면
-          코드 아래의 QR을 보여주세요.
+          코드는 어디로도 전송되지 않습니다. 화면에 나온 6자리를 고객에게 말로 불러주세요. 방문했다면 문을 열어
+          달라고 하지 말고, 닫힌 문 너머나 인터폰으로 불러주세요.
         </p>
       </header>
 
@@ -173,7 +175,11 @@ export function StaffProofPanel() {
           }}
         >
           <p style={{ margin: 0 }}>고객에게 이 코드를 불러주세요</p>
+          <p style={{ margin: "4px 0 0", fontSize: "15px", color: "var(--text-secondary)" }}>
+            방문 중이면 문이 닫힌 채로, 인터폰이나 문 너머로
+          </p>
           <p
+            data-testid="proof-code"
             style={{
               margin: "8px 0",
               fontSize: "48px",
@@ -191,8 +197,10 @@ export function StaffProofPanel() {
           </p>
           <p style={{ margin: "8px 0 0", color: "var(--text-secondary)" }}>목적: {proof.purpose} · 1회만 사용 가능</p>
           {!expired && (
-            <div style={{ marginTop: "16px", paddingTop: "16px", borderTop: "1px solid var(--border)" }}>
-              <p style={{ margin: "0 0 10px", fontWeight: 700 }}>방문했다면 이 QR을 보여주세요</p>
+            <details style={{ marginTop: "16px", paddingTop: "16px", borderTop: "1px solid var(--border)" }}>
+              <summary style={{ cursor: "pointer", fontWeight: 700, marginBottom: "10px" }}>
+                QR로 보여주기 (영상 인터폰용)
+              </summary>
               <div style={{ display: "inline-block", padding: "10px", background: "#ffffff", borderRadius: "8px" }}>
                 <QRCodeSVG
                   value={citizenVerifyUrl(proof.code)}
@@ -202,10 +210,11 @@ export function StaffProofPanel() {
                 />
               </div>
               <p style={{ margin: "10px 0 0", fontSize: "15px", color: "var(--text-secondary)" }}>
-                QR에는 위 6자리와 같은 확인 코드가 들어 있습니다. 모의 시연에서는 휴대폰 기본 카메라로 읽으면
-                국민용 화면이 열리고, 실제 구조에서는 정부 앱 안에서만 읽습니다.
+                QR에는 위 6자리와 같은 확인 코드가 들어 있습니다. 공동현관 영상 인터폰처럼 화면 너머로 보여줄 수
+                있을 때만 쓰세요. 모의 시연에서는 휴대폰 기본 카메라로 읽으면 국민용 화면이 열리고, 실제 구조에서는
+                정부 앱 안에서만 읽습니다.
               </p>
-            </div>
+            </details>
           )}
         </section>
       )}
