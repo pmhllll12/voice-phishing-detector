@@ -1,0 +1,14 @@
+[Unit]
+Description=voice-phishing-detector frontend (next start 프로덕션, vps.pmhllll12.cloud 터널 원본. 3000은 mini-mes grafana가 점유)
+After=network.target api.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/projects/voice-phishing-detector/apps/frontend
+ExecStart=/usr/bin/env npx next start -p 3001
+Environment=PATH=%h/.nvm/versions/node/v24.18.0/bin:/usr/local/bin:/usr/bin:/bin
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

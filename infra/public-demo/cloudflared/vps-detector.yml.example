@@ -1,0 +1,8 @@
+# ~/.cloudflared/vps-detector.yml 로 복사 후 <TUNNEL_ID>를 `cloudflared tunnel create vps-detector`
+# 출력값으로 바꾼다. credentials-file(<TUNNEL_ID>.json)은 터널 비밀키라 저장소에 절대 넣지 않는다.
+tunnel: <TUNNEL_ID>
+credentials-file: /home/<USER>/.cloudflared/<TUNNEL_ID>.json
+ingress:
+  - hostname: vps.pmhllll12.cloud
+    service: http://127.0.0.1:3001
+  - service: http_status:404
