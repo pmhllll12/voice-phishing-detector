@@ -21,6 +21,8 @@ Full(strict) SSL 구성 경험을 이 프로젝트에도 재사용할 예정입�
       위반이 트레이드오프). 리소스 값은 러프한 추정치라 실배포 후 재조정 필요.
 - [ ] Nginx 리버스 프록시 설정 (`infra/nginx/` 폴더에 conf 작성 — gpu-fleet-ops 설정 참고)
 - [ ] Cloudflare Tunnel 설정 (`cloudflared` config.yml, DNS 라우팅)
+      — 개인 PC 공개 데모용으로 먼저 구성함(2026-10-26, `infra/public-demo/`,
+      https://vps.pmhllll12.cloud). 클라우드 배포용 구성은 아직.
 - [ ] Full(strict) SSL 모드 확인 (Cloudflare ↔ origin 서버 간 인증서)
 - [ ] 배포 스크립트 또는 GitHub Actions CI/CD 파이프라인 (.github/workflows/)
 - [ ] 시크릿 관리 방식 결정 (.env를 서버에 어떻게 안전하게 전달할지)

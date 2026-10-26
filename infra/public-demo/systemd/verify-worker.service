@@ -1,0 +1,13 @@
+[Unit]
+Description=voice-phishing-detector verify-worker (uvicorn)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/projects/voice-phishing-detector/apps/verify-worker
+ExecStart=%h/projects/voice-phishing-detector/apps/verify-worker/.venv/bin/uvicorn src.main:app --host 0.0.0.0 --port 8400
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

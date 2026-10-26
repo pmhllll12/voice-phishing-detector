@@ -1,0 +1,11 @@
+[Unit]
+Description=Cloudflare tunnel for voice-phishing-detector public demo (vps.pmhllll12.cloud)
+After=network-online.target frontend.service
+
+[Service]
+ExecStart=%h/.local/bin/cloudflared tunnel --no-autoupdate --config %h/.cloudflared/vps-detector.yml run vps-detector
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
